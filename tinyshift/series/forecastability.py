@@ -46,9 +46,9 @@ def foreca(
 
     References
     ----------
-    [1] Goerg (2013), "Forecastable Component Analysis" (JMLR)
-    [2] Hyndman et al. (2015), "Large unusual observations in time series"
-    [3] Manokhin (2025), "Mastering Modern Time Series Forecasting: The Complete Guide to
+    - Goerg (2013), "Forecastable Component Analysis" (JMLR)
+    - Hyndman et al. (2015), "Large unusual observations in time series"
+    - Manokhin (2025), "Mastering Modern Time Series Forecasting: The Complete Guide to
         Statistical, Machine Learning & Deep Learning Models in Python", Ch. 2.4.12
     """
     _, psd = periodogram(X)
@@ -135,28 +135,36 @@ def sample_entropy(
 
     Parameters
     ----------
-    X : array-like, shape (n_samples,)
+    X : Union[np.ndarray, List[float]]
         1D time series data.
-    m : int
+    m : int, optional, default=1
         Length of sequences to be compared (embedding dimension).
-    tolerance : float, optional (default=None)
-        Tolerance for accepting matches. If None, it is set to 0.1 * std(X).
+    tolerance : float, optional, default=None
+        Tolerance for accepting matches. If None, it is set to 0.2 * std(X).
+    detrend : bool, optional, default=False
+        Whether to detrend the series before calculating entropy.
+
     Returns
     -------
-    sampen : float
+    float
         The Sample Entropy of the time series. Returns np.nan if A or B is zero.
-    References
-    ----------
-    - Richman, J. S., & Moorman, J. R. (2000). Physiological time-series analysis using approximate entropy and sample entropy. American Journal of Physiology-Heart and Circulatory Physiology, 278(6), H2039-H2049.
-    - Lake, D. E., Richman, J. S., Griffin, M. P., & Moorman, J. R. (2002). Sample entropy analysis of neonatal heart rate variability. American Journal of Physiology-Regulatory, Integrative and Comparative Physiology, 283(3), R789-R797.
+
     Notes
     -----
     - SampEn is less biased than Approximate Entropy (ApEn) and does not count self-matches.
     - Higher SampEn values indicate more complexity and irregularity in the time series.
     - Employs Chebyshev distance (maximum norm) for pattern comparison
     - The function assumes the input time series is 1-dimensional.
-    - The function uses the Chebyshev distance (maximum norm) for comparing sequences.
     - If either A or B is zero, SampEn is undefined and np.nan is returned.
+
+    References
+    ----------
+    - Richman, J. S., & Moorman, J. R. (2000). Physiological time-series analysis using
+      approximate entropy and sample entropy. American Journal of Physiology-Heart and
+      Circulatory Physiology, 278(6), H2039-H2049.
+    - Lake, D. E., Richman, J. S., Griffin, M. P., & Moorman, J. R. (2002). Sample entropy
+      analysis of neonatal heart rate variability. American Journal of Physiology-Regulatory,
+      Integrative and Comparative Physiology, 283(3), R789-R797.
     """
 
     X = np.asarray(X, dtype=np.float64)
@@ -278,29 +286,48 @@ def permutation_entropy(
     """
     Calculate the Permutation Entropy of a time series.
 
+    Permutation Entropy (PE) is a complexity measure that quantifies the regularity
+    and predictability of a time series by analyzing ordinal patterns. It focuses on
+    the relative order of values rather than their actual magnitudes, making it robust
+    to noise and outliers.
+
     Parameters
     ----------
-        X : array-like, shape (n_samples,)
-            Time series data (e.g., closing prices).
-        m : int, optional (default=3)
-            The embedding dimension (length of the pattern).
-        delay : int, optional (default=1)
-            The time delay (spacing between elements in the pattern).
-        normalize : bool, optional (default=False)
-            If True, normalize the entropy to the range [0, 1].
+    X : Union[np.ndarray, List[float]]
+        Time series data (e.g., closing prices, measurements).
+    m : int, optional, default=3
+        The embedding dimension (length of ordinal patterns to analyze).
+        Common values are 3-7, with 3-5 being most typical.
+    delay : int, optional, default=1
+        The time delay (spacing between elements in patterns).
+        delay=1 uses consecutive elements.
+    normalize : bool, optional, default=True
+        If True, normalize PE by log₂(m!) to get values in [0,1].
+        If False, return raw entropy values.
 
     Returns
     -------
     float
-        The Permutation Entropy of the time series.
+        The Permutation Entropy of the time series:
+        - If normalized: 0 (completely regular) to 1 (completely random)
+        - If not normalized: 0 to log₂(m!)
 
     Notes
     -----
-    - The Permutation Entropy quantifies the complexity of a time series based on the order relations between values.
-    - It is calculated by mapping the time series to a sequence of ordinal patterns and computing the
-    Shannon entropy of the distribution of these patterns.
-    - Higher values indicate more complexity and randomness in the time series.
-    - The function preserves the length of the input series.
+    - PE analyzes ordinal patterns by comparing relative ordering of m consecutive values
+    - Higher PE values indicate more complexity/randomness in ordinal structure
+    - Lower PE values suggest more regular/predictable ordinal patterns
+    - Robust to noise and non-linear dynamics
+    - Time complexity: O(N×m×log(m)) where N is series length
+    - Requires at least (m-1)×delay + 1 data points
+
+    References
+    ----------
+    - Bandt, C., & Pompe, B. (2002). Permutation entropy: A natural complexity
+      measure for time series. Physical Review Letters, 88(17), 174102.
+    - Zanin, M., Zunino, L., Rosso, O. A., & Papo, D. (2012). Permutation entropy
+      and its main biomedical and econophysics applications: a comprehensive review.
+      Entropy, 14(8), 1553-1577.
     """
     X = np.asarray(X, dtype=np.float64)
 
@@ -365,9 +392,9 @@ def theoretical_limit(
 
     References
     ----------
-    [1] Bandt, C., & Pompe, B. (2002). Permutation entropy: a natural complexity
-        measure for time series. Physical review letters, 88(17), 174102.
-    [2] Song, C., Qu, Z., Blumm, N., & Barabási, A. L. (2010). Limits of
+    - Bandt, C., & Pompe, B. (2002). Permutation entropy: A natural complexity
+      measure for time series. Physical Review Letters, 88(17), 174102.
+    - Song, C., Qu, Z., Blumm, N., & Barabási, A. L. (2010). Limits of
         predictability in human mobility. Science, 327(5968), 1018-1021.
     """
     pe = permutation_entropy(X, m=m, delay=delay, normalize=True)
@@ -415,6 +442,15 @@ def permutation_auto_mutual_information(
     - Higher PAMI values indicate stronger temporal dependencies between ordinal patterns
     - Values near zero suggest independence between current and lagged patterns
     - Useful for detecting non-linear predictive relationships in time series
+
+    References
+    ----------
+    - Ouyang, Gaoxiang & Li, Xiaoli. (2009). Auto Mutual Information Analysis with
+        Order Patterns for Epileptic EEG. 6th International Conference on Fuzzy Systems
+        and Knowledge Discovery, FSKD 2009. 5. 23-27. 10.1109/FSKD.2009.33.
+    - Liang, Zhenhu & Wang, Yinghua & Ouyang, Gaoxiang & Voss, Logan & Sleigh, Jamie
+        & Li, Xiaoli. (2013). Permutation auto-mutual information of electroencephalogram
+        in anesthesia. Journal of Neural Engineering. 10. 026004. 10.1088/1741-2560/10/2/026004.
     """
     X = np.asarray(X, dtype=np.float64)
 

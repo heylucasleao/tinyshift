@@ -12,7 +12,7 @@ import pandas as pd
 
 def hampel_filter(
     X: Union[np.ndarray, List[float]],
-    rolling_window: int = 3,
+    window_size: int = 3,
     factor: float = 3.0,
     scale: float = 1.4826,
 ) -> np.ndarray:
@@ -28,7 +28,7 @@ def hampel_filter(
     ----------
     X : ndarray of shape (n_samples,) or list of float
         Input 1D data to be filtered.
-    rolling_window : int, default=3
+    window_size : int, default=3
         Size of the rolling window (must be odd and >= 3).
     factor : float, default=3.0
         Recommended values for common distributions (95% confidence):
@@ -57,7 +57,7 @@ def hampel_filter(
     Raises
     ------
     ValueError
-        If rolling_window is even or too small.
+        If window_size is even or too small.
         If input data is not 1-dimensional.
 
     Notes
@@ -69,8 +69,8 @@ def hampel_filter(
     compared to the iterative version.
     """
 
-    if rolling_window < 3:
-        raise ValueError("rolling_window must be >= 3")
+    if window_size < 3:
+        raise ValueError("window_size must be >= 3")
     index = X.index if hasattr(X, "index") else list(range(len(X)))
     X = np.asarray(X, dtype=np.float64)
     if X.ndim != 1:
@@ -79,9 +79,9 @@ def hampel_filter(
     n_samples = X.shape[0]
     is_outlier = np.zeros(n_samples, dtype=bool)
 
-    start_index = rolling_window - 1
+    start_index = window_size - 1
     center_indices = np.arange(start_index, n_samples)
-    offsets = np.arange(-rolling_window + 1, 1)
+    offsets = np.arange(-window_size + 1, 1)
     window_indices = center_indices[:, None] + offsets[None, :]
 
     if window_indices.shape[0] == 0:
