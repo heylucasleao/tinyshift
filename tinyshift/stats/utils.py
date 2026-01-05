@@ -261,3 +261,96 @@ def is_obsolete(group, days_obsoletes):
     cutoff_date = last_date - pd.Timedelta(days=days_obsoletes)
     recent_data = group[group["ds"] >= cutoff_date]
     return (recent_data["y"] == 0).all()
+
+
+def assess_comparability(
+    df: pd.DataFrame,
+    features: Union[str, List[str]],
+    group_col: str = "group",
+    treatment: Union[str, List[str]] = "treatment",
+    control: str = "control",
+):
+    """
+
+    Assesses the statistical balance (comparability) of treatment and control groups
+    by calculating Cohen's d effect size for comparing groups across specified features.
+
+    This function computes Cohen's d, a standardized measure of effect size, to quantify
+    the difference between treatment and control groups for each specified feature.
+    High values of Cohen's d (typically > 0.4 or 0.5) suggest **group imbalance** (selection bias)
+    on that feature. Cohen's d represents the difference between group means in terms of
+    pooled standard deviation units.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing the data to analyze.
+    features : str or list of str
+        Feature column name(s) to analyze. If a string is provided, it will be
+        converted to a single-element list.
+    group_col : str, optional (default="group")
+        Name of the column that identifies the groups.
+    treatment : str or list of str, optional (default="treatment")
+        Name(s) of the treatment group(s) to compare against control.
+        If a string is provided, it will be converted to a single-element list.
+    control : str, optional (default="control")
+        Name of the control group to use as baseline for comparison.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns ['group', 'feature', 'cohen_d'] containing
+        Cohen's d values for each treatment group and feature combination.
+
+    Raises
+    ------
+    ValueError
+        If any specified features are not found in the DataFrame columns.
+
+    Notes
+    -----
+    Cohen's d is calculated as:
+    d = |mean_treatment - mean_control| / sqrt(pooled_variance)
+
+    Where pooled_variance = (var_treatment + var_control) / 2
+
+    Interpretation guidelines for Cohen's d:
+    - 0.2: small effect
+    - 0.5: medium effect
+    - 0.8: large effect
+    """
+
+    if not all(feature in df.columns for feature in features):
+        missing_features = [
+            feature for feature in features if feature not in df.columns
+        ]
+        raise ValueError(f"Features not found in DataFrame columns: {missing_features}")
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("Input data must be a pandas DataFrame.")
+
+    if isinstance(features, str):
+        features = [features]
+    if isinstance(treatment, str):
+        treatment = [treatment]
+
+    results = []
+
+    stats = df.groupby(group_col, group_keys=True)[features].agg(["mean", "var"])
+
+    for group in treatment:
+
+        for feature in features:
+
+            mean_diff = np.abs(
+                stats.loc[control][feature]["mean"] - stats.loc[group][feature]["mean"]
+            )
+            pooled_var = (
+                stats.loc[control][feature]["var"] + stats.loc[group][feature]["var"]
+            ) / 2
+            cohen_d_value = mean_diff / np.sqrt(pooled_var)
+
+            results.append(
+                {"group": group, "feature": feature, "cohen_d": cohen_d_value}
+            )
+
+    return pd.DataFrame(results)

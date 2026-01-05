@@ -127,15 +127,14 @@ efficiency_curve(
 #### **Statistical Distributions**
 
 #### **`beta_confidence_analysis`**
-Analyzes model confidence for production deployment using Beta distribution visualization to assess model reliability.
+Plots Beta distribution PDF with filled area, useful for Bayesian analysis and calibration studies.
 
 ```python
 from tinyshift.plot import beta_confidence_analysis
 
-# High confidence model (many successes, few failures)
 beta_confidence_analysis(
-    alpha=95,  # successes/correct predictions
-    beta_param=5,  # failures/incorrect predictions
+    alpha=2,
+    beta_param=5,
     fig_type=None
 )
 
@@ -156,7 +155,71 @@ beta_confidence_analysis(alpha=15, beta_param=85)
 
 ---
 
-### 2. Correlation Analysis (`correlation.py`)
+### 2. Statistical Power Analysis (`power.py`)
+
+#### **A/B Testing & Experimental Design**
+
+#### **`power_curve`**
+Generates an interactive power analysis plot showing the relationship between sample size and statistical power for two-sample t-tests.
+
+```python
+from tinyshift.plot import power_curve
+
+power_curve(
+    effect_size=0.5,
+    alpha=0.05,
+    power_target=0.80,
+    height=500,
+    width=600
+)
+```
+
+**Parameters:**
+- `effect_size`: Cohen's d effect size to be detected (must be positive)
+- `alpha`: Significance level (Type I error probability) (default: 0.05)
+- `power_target`: Target statistical power level (default: 0.80)
+- `height`, `width`: Figure dimensions in pixels (default: 500x600)
+- `fig_type`: Display renderer (default: None)
+
+**When to use:**
+- Plan sample sizes for A/B tests and experiments
+- Understand power-sample size trade-offs
+- Validate experimental design before data collection
+- Assess detectability of effect sizes
+
+---
+
+#### **`power_vs_allocation`**
+Visualizes how treatment allocation proportion affects statistical power while keeping total sample size fixed.
+
+```python
+from tinyshift.plot import power_vs_allocation
+
+power_vs_allocation(
+    effect_size=0.3,
+    sample_size=1000,
+    alpha=0.05,
+    height=500,
+    width=600
+)
+```
+
+**Parameters:**
+- `effect_size`: Cohen's d effect size to be detected (must be positive)
+- `sample_size`: Total sample size (control + treatment combined)
+- `alpha`: Significance level (Type I error probability) (default: 0.05)
+- `height`, `width`: Figure dimensions in pixels (default: 500x600)
+- `fig_type`: Display renderer (default: None)
+
+**When to use:**
+- Optimize treatment allocation in A/B tests
+- Understand why balanced allocation (50/50) maximizes power
+- Assess impact of unbalanced experimental designs
+- Plan resource allocation in experiments
+
+---
+
+### 3. Correlation Analysis (`correlation.py`)
 
 #### **`corr_heatmap`**
 Generates an interactive correlation heatmap with diverging color scale and automatic feature handling.
@@ -182,7 +245,7 @@ corr_heatmap(X, width=800, height=600)
 
 ---
 
-### 3. Time Series Diagnostics (`diagnostic.py`)
+### 4. Time Series Diagnostics (`diagnostic.py`)
 
 #### **`seasonal_decompose`**
 Performs MSTL (Multiple Seasonal-Trend decomposition using Loess) with trend significance testing and residual analysis.
@@ -310,7 +373,39 @@ pami(
 
 ---
 
+#### **`forest_plot`**
+Creates a forest-style plot of group means with their confidence intervals.
+
+```python
+from tinyshift.plot import forest_plot
+
+fig = forest_plot(
+    df=df,
+    feature='outcome',
+    group_col='group',
+    confidence=0.95
+)
+```
+
+**Parameters:**
+- `df`: pandas DataFrame containing the data.
+- `feature`: Name of the numeric column to summarize.
+- `group_col`: Name of the categorical column used for grouping.
+- `confidence`: Confidence level between 0 and 1 (default 0.95).
+- `fig_type`, `height`, `width`: Plot rendering options.
+
+**When to use:**
+- Compare group means with confidence intervals across categories.
+- Present effect estimates in a compact forest-style plot.
+
 ## Function Comparison Matrix
+
+### Statistical Power Analysis
+
+| Function | Purpose | Input Type | Key Output | Best Use Case |
+|----------|---------|------------|------------|---------------|
+| **`power_curve`** | Sample size planning | Effect size + parameters | Power vs sample size curve | A/B test planning, experimental design |
+| **`power_vs_allocation`** | Allocation optimization | Effect size + total sample | Power vs allocation curve | Treatment allocation planning |
 
 ### Binary Classification Model Evaluation
 
@@ -336,15 +431,24 @@ pami(
 
 ## Integration with TinyShift Workflow
 
+### **Experimental Design & A/B Testing**
+```python
+# 1. Plan sample sizes for experiments
+power_curve(effect_size=0.3, alpha=0.05, power_target=0.80)
+
+# 2. Optimize treatment allocation
+power_vs_allocation(effect_size=0.3, sample_size=1000)
+```
+
 ### **Classification Model Validation**
 ```python
-# 1. Model calibration assessment
+# 3. Model calibration assessment
 reliability_curve(clf, X_test, y_test, model_name="XGBoost")
 
-# 2. Prediction confidence analysis
+# 4. Prediction confidence analysis
 score_distribution(clf, X_test)
 
-# 3. Performance evaluation
+# 5. Performance evaluation
 confusion_matrix(clf, X_test, y_test)
 
 # 4. Production deployment confidence
@@ -353,37 +457,43 @@ beta_confidence_analysis(alpha=successes, beta_param=failures)
 
 ### **Conformal Prediction Optimization**
 ```python
-# 4. Efficiency-validity trade-off analysis
+# 6. Efficiency-validity trade-off analysis
 efficiency_curve(conformal_clf, X_test)
 ```
 
 ### **Data Quality Assessment**
 ```python
-# 5. Correlation analysis for feature engineering
+# 7. Correlation analysis for feature engineering
 corr_heatmap(X_features)
 
-# 6. Stationarity check before drift detection
+# 8. Stationarity check before drift detection
 stationarity_analysis(target_series)
 ```
 
 ### **Model Validation**
 ```python
-# 7. Residual diagnostics after model fitting
+# 9. Residual diagnostics after model fitting
 residual_analysis(model.residuals_)
 
-# 8. Seasonal validation for time series models
+# 10. Seasonal validation for time series models
 seasonal_decompose(y_true - y_pred, periods=[7, 30])
 ```
 
 ### **Advanced Pattern Detection**
 ```python
-# 9. Nonlinear autocorrelation analysis
+# 11. Nonlinear autocorrelation analysis
 pami(feature_series, max_lag=48)
 ```
 
 ---
 
-## Summary: Classification Function Quick Reference
+## Summary: Function Quick Reference
+
+### Statistical Power Analysis
+| Metric/Function | Input Required | Output | Question You Want to Answer |
+|----------------|----------------|--------|----------------------------|
+| **`power_curve`** | Effect size + parameters | Power vs sample size curve | "How many samples do I need to detect this effect?" |
+| **`power_vs_allocation`** | Effect size + total sample | Power vs allocation curve | "How should I split my sample between groups?" |
 
 ### Model Calibration & Performance
 | Metric/Function | Input Required | Output | Question You Want to Answer |

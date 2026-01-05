@@ -6,3 +6,4 @@
 from .correlation import *
 from .diagnostic import *
 from .calibration import *
+from .power import *

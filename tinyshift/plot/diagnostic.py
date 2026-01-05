@@ -668,3 +668,111 @@ def pami(
         width=width,
     )
     return fig.show(fig_type)
+
+
+def forest_plot(
+    df: pd.DataFrame,
+    feature: str,
+    group_col: str,
+    confidence: float = 0.95,
+    fig_type: Optional[str] = None,
+    height: int = 500,
+    width: int = 700,
+) -> go.Figure:
+    """
+    Creates a forest-style plot of group means with their confidence intervals.
+
+    This function computes group means and Student's t-based confidence intervals
+    for a numeric `feature` grouped by `group_col`, and returns an interactive
+    Plotly figure in forest-plot style (mean points with horizontal error bars).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame containing the data to analyze.
+    feature : str
+        Name of the numeric column to summarize (must exist in `df`).
+    group_col : str
+        Name of the categorical column used to group the data (must exist in `df`).
+    confidence : float, default=0.95
+        Confidence level for the intervals (between 0 and 1).
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+        Interactive Plotly figure showing group means and confidence intervals in
+        a forest-plot layout. Hover shows mean and CI bounds.
+
+    Raises
+    ------
+    ValueError
+        If confidence is not between 0 and 1 or if `df` is not a DataFrame.
+    KeyError
+        If `feature` or `group_col` are not columns in `df`.
+    """
+
+    def t_confidence_interval(
+        data: np.ndarray,
+        confidence: float = 0.95,
+    ) -> tuple:
+        """
+        Calculates the confidence interval (lower, upper) for the mean
+        using the Student's t-distribution.
+        """
+
+        if isinstance(data, pd.Series):
+            data = data.to_numpy()
+
+        if len(data) < 2:
+            return (np.nan, np.nan)
+
+        return scipy.stats.t.interval(
+            confidence, len(data) - 1, loc=np.mean(data), scale=scipy.stats.sem(data)
+        )
+
+    stats = df.groupby(group_col)[feature].agg(["mean"]).reset_index()
+
+    intervals = df.groupby(group_col)[feature].apply(
+        t_confidence_interval, confidence=confidence
+    )
+    intervals_df = intervals.apply(pd.Series).rename(
+        columns={0: "ci_lower", 1: "ci_upper"}
+    )
+    intervals_df = intervals_df.reset_index()
+
+    plot_data = pd.merge(stats, intervals_df, on=group_col)
+
+    plot_data["error_minus"] = plot_data["mean"] - plot_data["ci_lower"]
+    plot_data["error_plus"] = plot_data["ci_upper"] - plot_data["mean"]
+
+    fig = px.scatter(
+        plot_data,
+        x=group_col,
+        y="mean",
+        error_y="error_plus",
+        error_y_minus="error_minus",
+        title=f"Mean and {int(confidence*100)}% Confidence Interval of {feature} by {group_col}",
+        labels={"mean": f"Mean of {feature}", group_col: group_col},
+    )
+
+    fig.update_traces(
+        marker_color="#2E86AB",
+        name="Mean",
+        hovertemplate=f"<b>{group_col}:</b> %{{x}}<br><b>Mean:</b> %{{y:.2f}}<br><b>CI:</b> [%{{customdata[0]:.2f}}, %{{customdata[1]:.2f}}] <extra></extra>",
+        customdata=plot_data[["ci_lower", "ci_upper"]].values,
+    )
+
+    fig.update_layout(
+        title_x=0.5,
+        xaxis=dict(
+            title_font=dict(size=14), tickfont=dict(size=12), gridcolor="lightgray"
+        ),
+        yaxis=dict(
+            title_font=dict(size=14), tickfont=dict(size=12), gridcolor="lightgray"
+        ),
+        hovermode="x unified",
+        height=height,
+        width=width,
+    )
+
+    return fig.show(fig_type)
