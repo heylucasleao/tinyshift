@@ -369,6 +369,31 @@ pami(
 
 ---
 
+#### **`forest_plot`**
+Creates a forest-style plot of group means with their confidence intervals.
+
+```python
+from tinyshift.plot import forest_plot
+
+fig = forest_plot(
+    df=df,
+    feature='outcome',
+    group_col='group',
+    confidence=0.95
+)
+```
+
+**Parameters:**
+- `df`: pandas DataFrame containing the data.
+- `feature`: Name of the numeric column to summarize.
+- `group_col`: Name of the categorical column used for grouping.
+- `confidence`: Confidence level between 0 and 1 (default 0.95).
+- `fig_type`, `height`, `width`: Plot rendering options.
+
+**When to use:**
+- Compare group means with confidence intervals across categories.
+- Present effect estimates in a compact forest-style plot.
+
 ## Function Comparison Matrix
 
 ### Statistical Power Analysis
