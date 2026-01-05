@@ -670,7 +670,7 @@ def pami(
     return fig.show(fig_type)
 
 
-def confidence_intervals(
+def forest_plot(
     df: pd.DataFrame,
     feature: str,
     group_col: str,
@@ -680,51 +680,36 @@ def confidence_intervals(
     width: int = 700,
 ) -> go.Figure:
     """
-    Calculates and plots the confidence interval for the mean of a feature,
-    grouped by a categorical column, using the Student's t-distribution.
+    Creates a forest-style plot of group means with their confidence intervals.
 
-    This function creates an interactive scatter plot with error bars showing the mean
-    values and confidence intervals for a numerical feature across different groups.
-    The confidence intervals are calculated using the Student's t-distribution, which
-    is appropriate for small sample sizes and when the population standard deviation
-    is unknown.
+    This function computes group means and Student's t-based confidence intervals
+    for a numeric `feature` grouped by `group_col`, and returns an interactive
+    Plotly figure in forest-plot style (mean points with horizontal error bars).
 
     Parameters
     ----------
     df : pd.DataFrame
-        The input DataFrame containing the data to analyze.
+        Input DataFrame containing the data to analyze.
     feature : str
-        The name of the numerical column for which to calculate the mean and
-        confidence interval. Must be a column name that exists in the DataFrame.
+        Name of the numeric column to summarize (must exist in `df`).
     group_col : str
-        The name of the categorical column to group by. Must be a column name
-        that exists in the DataFrame.
+        Name of the categorical column used to group the data (must exist in `df`).
     confidence : float, default=0.95
-        The desired confidence level (between 0 and 1). Common values are 0.90,
-        0.95, and 0.99. Default is 0.95 (95% confidence interval).
+        Confidence level for the intervals (between 0 and 1).
 
     Returns
     -------
     plotly.graph_objects.Figure
-        A Plotly Figure object displaying the means and their confidence intervals
-        as a scatter plot with error bars. The plot includes hover information
-        showing the exact confidence interval bounds.
+        Interactive Plotly figure showing group means and confidence intervals in
+        a forest-plot layout. Hover shows mean and CI bounds.
 
     Raises
     ------
     ValueError
-        If confidence level is not between 0 and 1.
+        If confidence is not between 0 and 1 or if `df` is not a DataFrame.
     KeyError
-        If feature or group_col columns do not exist in the DataFrame.
+        If `feature` or `group_col` are not columns in `df`.
     """
-    if not (0 < confidence < 1):
-        raise ValueError("Confidence level must be between 0 and 1.")
-    if not isinstance(df, pd.DataFrame):
-        raise ValueError("Input data must be a pandas DataFrame.")
-    if feature not in df.columns:
-        raise KeyError(f"Feature column '{feature}' not found in DataFrame.")
-    if group_col not in df.columns:
-        raise KeyError(f"Group column '{group_col}' not found in DataFrame.")
 
     def t_confidence_interval(
         data: np.ndarray,
