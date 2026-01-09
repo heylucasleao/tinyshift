@@ -9,6 +9,7 @@ import numpy as np
 import pickle
 from itertools import product
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.metrics import mutual_info_score
 from .encoder import TransactionEncoder
 from scipy.stats import hypergeom
 
@@ -27,10 +28,9 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
 
     The analyzer supports multiple association metrics including:
     - Lift
-    - Zhang's metric
-    - Conviction
     - Confidence
-    - Bayesian Confidence
+    - Kulczynski measure
+    - Zhang's metric
     - Yule's Q coefficient
     - Hypergeometric p-value
 
@@ -220,95 +220,27 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
 
         return supportAC / supportA
 
-    def bayesian_confidence(self, antecedent: str, consequent: str) -> float:
+    def kulczynski(self, antecedent: str, consequent: str) -> float:
         """
-        Calculate Bayesian confidence with beta prior for association rules.
+        Calculate Kulczynski measure for association rules.
 
-        This method computes a Bayesian estimate of confidence using a Beta(1,1) prior
-        (equivalent to a uniform prior), which provides a smoothed estimate that is
-        particularly useful when dealing with small sample sizes or sparse data.
-
-        The Bayesian confidence is calculated as:
-            (nXY + α) / (nX + α + β)
-        where α = 1 and β = 1 for a uniform prior, giving:
-            (nXY + 1) / (nX + 2)
-
-        This approach prevents extreme confidence values (0 or 1) when dealing with
-        limited data and provides more robust estimates, especially for rare items.
-
-        Parameters
-        ----------
-        antecedent : str
-            The antecedent item in the association rule
-        consequent : str
-            The consequent item in the association rule
-
-        Returns
-        -------
-        float
-            Bayesian confidence estimate between 0 and 1
-
-        Raises
-        ------
-        ValueError
-            If analyzer has not been fitted
-        KeyError
-            If either antecedent or consequent item is not found in encoded transactions
-        """
-        antecedent_series, consequent_series = self._get_series(antecedent, consequent)
-        nX = self._get_counts(antecedent_series)
-        nXY = self._get_counts(np.logical_and(antecedent_series, consequent_series))
-
-        alpha = nXY + 1
-        beta = nX - nXY + 1
-
-        return alpha / (alpha + beta)
-
-    def conviction(self, antecedent: str, consequent: str) -> float:
-        """
-        Calculate conviction metric for association rules.
-
-        Conviction measures the degree of implication of a rule.
-        It represents how often the rule would be incorrect if the items were independent.
-
-        - conviction = 1 : items are independent
-        - conviction > 1 : positive correlation (higher is better)
-        - conviction → ∞ : perfect implication
+        Kulczynski measure is the average of the confidence of the rule in both directions (A -> C and C -> A).
+        Values ranges from 0 to 1, where higher values indicate stronger associations.
 
         Parameters
         ----------
             antecedent : The antecedent item in the association rule
             consequent : The consequent item in the association rule
-
         Returns
         ----------
-            float : Conviction metric value between 1 and ∞
-
+            float : Kulczynski measure between 0 and 1
         Raises:
             ValueError: If analyzer has not been fitted
             KeyError: If either antecedent or consequent item is not found in encoded transactions
         """
-        antecedent_series, consequent_series = self._get_series(antecedent, consequent)
-
-        supportA = self._get_support(antecedent_series)
-        supportC = self._get_support(consequent_series)
-        supportAC = self._get_support(
-            np.logical_and(antecedent_series, consequent_series)
-        )
-
-        if supportA == 0:
-            return np.nan
-
-        if supportC == 1 or supportAC == supportA * supportC:
-            return 1.0
-
-        confidence = supportAC / supportA
-        denominator = 1 - confidence
-
-        if denominator == 0:
-            return np.inf
-
-        return (1 - supportC) / denominator
+        conf_a_b = self.confidence(antecedent, consequent)
+        conf_b_a = self.confidence(consequent, antecedent)
+        return (conf_a_b + conf_b_a) / 2
 
     def zhang_metric(self, antecedent: str, consequent: str) -> float:
         """
@@ -408,6 +340,26 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
 
         return (odds_ratio - 1) / (odds_ratio + 1)
 
+    def mutual_information(self, antecedent: str, consequent: str) -> float:
+        """
+        Calculate mutual information between two items.
+
+        Mutual information measures the amount of information obtained about one
+        item through the other item.
+
+        Parameters
+        ----------
+        antecedent : The antecedent item
+        consequent : The consequent item
+
+        Returns
+        -------
+        float
+            Mutual information score between the antecedent and consequent items
+        """
+        ser_a, ser_c = self._get_series(antecedent, consequent)
+        return mutual_info_score(ser_a, ser_c)
+
     def correlation_matrix(
         self,
         row_items: List[str],
@@ -442,12 +394,12 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
 
         metric_mapping = {
             "lift": self.lift,
-            "zhang": self.zhang_metric,
-            "conviction": self.conviction,
             "confidence": self.confidence,
-            "bayesian_confidence": self.bayesian_confidence,
+            "kulczynski": self.kulczynski,
+            "zhang": self.zhang_metric,
             "yules_q": self.yules_q,
             "hypergeom": self.hypergeom,
+            "mutual_information": self.mutual_information,
         }
 
         callable_function = metric_mapping.get(metric, None)

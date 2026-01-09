@@ -1,29 +1,29 @@
 # TransactionAnalyzer
 
-`TransactionAnalyzer` is a class for performing **association rule mining** and **transaction pattern analysis** — particularly suited for **market basket analysis**.
+`TransactionAnalyzer` provides association rule mining and transaction pattern analysis for market-basket-style data.
 
-It processes transactional data (lists of items purchased together), encodes it using one-hot encoding, and computes **item-to-item relationships** through various association metrics.
+It encodes transactions to a one-hot matrix (via `TransactionEncoder`) and computes item-to-item association measures.
 
 ## Features
 
 - One-hot encoding for transactions via `TransactionEncoder`
-- Multiple association metrics:
-  - Lift
-  - Confidence
-  - Bayesian Confidence
-  - Conviction
-  - Zhang’s Metric
-  - Yule’s Q Coefficient
-  - Hypergeometric *p*-value
-- Correlation matrix generation with any supported metric
-- Model persistence (save/load with pickle)
+- Association metrics implemented:
+  - `lift(antecedent, consequent)` — Lift
+  - `confidence(antecedent, consequent)` — Confidence
+  - `kulczynski(antecedent, consequent)` — Kulczynski measure
+  - `zhang_metric(antecedent, consequent)` — Zhang's metric
+  - `yules_q(antecedent, consequent)` — Yule's Q coefficient
+  - `hypergeom(antecedent, consequent)` — Hypergeometric p-value
+  - `mutual_information(antecedent, consequent)` — Mutual information
+- Correlation matrix generation via `correlation_matrix(row_items, column_items, metric="...")`
+- Model persistence: `save(filename)` / `load(filename)` (pickle)
 
 ## Usage
 
 1. Fit the analyzer on a dataset of transactions:
 
 ```python
-from transaction_analyzer import TransactionAnalyzer
+from tinyshift.association_mining import TransactionAnalyzer
 
 transactions = [
     ["milk", "bread", "butter"],
@@ -33,22 +33,6 @@ transactions = [
 ]
 
 analyzer = TransactionAnalyzer().fit(transactions)
-## Usage
-
-1. Fit the analyzer on a dataset of transactions:
-
-```python
-from transaction_analyzer import TransactionAnalyzer
-
-transactions = [
-    ["milk", "bread", "butter"],
-    ["beer", "diapers", "bread"],
-    ["milk", "beer", "diapers"],
-    ["bread", "butter"]
-]
-
-analyzer = TransactionAnalyzer().fit(transactions)
-
 ```
 
 2. Calculate associations between items:
@@ -56,9 +40,12 @@ analyzer = TransactionAnalyzer().fit(transactions)
 ```python
 print(analyzer.confidence("milk", "bread"))
 print(analyzer.zhang_metric("diapers", "beer"))
+print(analyzer.yules_q("diapers", "beer"))
+print(analyzer.mutual_information("milk", "bread"))
 ```
 
-3. Or create a correlation matrix:
+3. Create a correlation matrix (choose metric: `lift`, `confidence`, `kulczynski`, `zhang`, `yules_q`, `hypergeom`, `mutual_information`):
+
 ```python
 matrix = analyzer.correlation_matrix(
     ["milk", "bread"],
@@ -66,20 +53,20 @@ matrix = analyzer.correlation_matrix(
     metric="hypergeom"
 )
 print(matrix)
-
 ```
 
 ## Association Metrics
 
-Each metric measures different aspects of the relationship between items in transactions.
+Each metric measures different aspects of the relationship between items
+in transactions. Use the metric that best matches the question you're asking.
 
-| Metric                  | Range  | Interpretation                                | Question You Want to Answer                                    | Recommended Usage                                             |
-| ----------------------- | ------ | --------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
-| **Lift**                | 0 → ∞  | Correlation between antecedent and consequent | “How much more often do A and B occur together than expected?” | Good for overall correlation strength                         |
-| **Confidence**          | 0 → 1  | Probability of consequent given antecedent    | “If A occurs, how likely is B?”                                | Simple baseline, but may be misleading with rare items        |
-| **Bayesian Confidence** | 0 → 1  | Smoothed probability using Bayesian prior     | “If A occurs, how likely is B (with uncertainty handling)?”    | Preferable when data is sparse or sample sizes are small      |
-| **Conviction**          | 1 → ∞  | Reliability of a rule beyond independence     | “How strongly does A imply B compared to chance?”              | Useful for rule filtering; robust against skewed supports     |
-| **Zhang’s Metric**      | -1 → 1 | Deviation from statistical independence       | “How far is the A→B relation from being independent?”          | Balanced measure less biased by item frequency                |
-| **Yule’s Q**            | -1 → 1 | Odds ratio-based association                  | “Do A and B strongly reinforce or oppose each other?”          | Best when interpreting direction and strength of association  |
-| **Hypergeom p-value**   | 0 → 1  | Statistical significance of co-occurrence     | “Is the co-occurrence of A and B statistically significant?”   | Use when testing whether an association is unlikely by chance |
+| Metric                 | Range   | Short Interpretation                          | Recommended Use                                                    |
+| ---------------------- | ------- | --------------------------------------------- | ------------------------------------------------------------------ |
+| **Lift**               | 0 → ∞   | How much more often A and B occur together    | Overall correlation strength                                       |
+| **Confidence**         | 0 → 1   | `P(B\|A)` — probability of consequent given A  | Simple directional rule strength                                   |
+| **Kulczynski**         | 0 → 1   | Average of `P(B\|A)` and `P(A\|B)`               | Helpful when symmetry is desired                                   |
+| **Zhang's Metric**     | -1 → 1  | Deviation from independence                   | Balanced measure less biased by marginal frequencies               |
+| **Yule's Q**           | -1 → 1  | Odds-ratio-based direction and strength       | Interpreting direction (reinforcement vs opposition)               |
+| **Hypergeom p-value**  | 0 → 1   | Statistical significance of co-occurrence     | Hypothesis testing for unlikely co-occurrence                      |
+| **Mutual Information** | 0 → ∞   | Shared information between the two variables  | Measure of dependency that is model-agnostic                      |
 
