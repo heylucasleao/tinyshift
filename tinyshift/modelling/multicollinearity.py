@@ -84,7 +84,7 @@ def filter_features_by_vif(
         """Helper function to compute VIF for a single feature."""
         y = X[:, i]
         X = np.delete(X, i, axis=1)
-        model = LinearRegression().fit(X, y)
+        model = LinearRegression(penalty=None).fit(X, y)
         r_squared = model.score(X, y)
         return 1.0 / (1.0 - r_squared) if r_squared < 1 else np.inf
 
