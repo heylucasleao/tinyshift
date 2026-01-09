@@ -9,7 +9,6 @@ import numpy as np
 import pickle
 from itertools import product
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.metrics import mutual_info_score
 from .encoder import TransactionEncoder
 from scipy.stats import hypergeom
 
@@ -340,26 +339,6 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
 
         return (odds_ratio - 1) / (odds_ratio + 1)
 
-    def mutual_information(self, antecedent: str, consequent: str) -> float:
-        """
-        Calculate mutual information between two items.
-
-        Mutual information measures the amount of information obtained about one
-        item through the other item.
-
-        Parameters
-        ----------
-        antecedent : The antecedent item
-        consequent : The consequent item
-
-        Returns
-        -------
-        float
-            Mutual information score between the antecedent and consequent items
-        """
-        ser_a, ser_c = self._get_series(antecedent, consequent)
-        return mutual_info_score(ser_a, ser_c)
-
     def correlation_matrix(
         self,
         row_items: List[str],
@@ -399,7 +378,6 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
             "zhang": self.zhang_metric,
             "yules_q": self.yules_q,
             "hypergeom": self.hypergeom,
-            "mutual_information": self.mutual_information,
         }
 
         callable_function = metric_mapping.get(metric, None)

@@ -68,7 +68,6 @@ in transactions. Use the metric that best matches the question you're asking.
 | **Zhang’s Metric**      | -1 → 1 | Deviation from statistical independence       | “How far is the `A → B` relation from being independent?”          | Balanced measure less biased by item frequency                |
 | **Yule’s Q**            | -1 → 1 | Odds ratio-based association                  | “Do `A` and `B` strongly reinforce or oppose each other?”          | Best when interpreting direction and strength of association  |
 | **Hypergeom p-value**   | 0 → 1  | Statistical significance of co-occurrence     | “Is the co-occurrence of `A` and `B` statistically significant?”   | Use when testing whether an association is unlikely by chance |
-| **Mutual Information** | 0 → ∞  | Shared information between items              | “How much information does one item give about the other?”     | Captures non-linear associations; scale depends on distributions |
 
 
 
