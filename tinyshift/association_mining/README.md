@@ -60,13 +60,15 @@ print(matrix)
 Each metric measures different aspects of the relationship between items
 in transactions. Use the metric that best matches the question you're asking.
 
-| Metric                 | Range   | Short Interpretation                          | Recommended Use                                                    |
-| ---------------------- | ------- | --------------------------------------------- | ------------------------------------------------------------------ |
-| **Lift**               | 0 → ∞   | How much more often A and B occur together    | Overall correlation strength                                       |
-| **Confidence**         | 0 → 1   | `P(B\|A)` — probability of consequent given A  | Simple directional rule strength                                   |
-| **Kulczynski**         | 0 → 1   | Average of `P(B\|A)` and `P(A\|B)`               | Helpful when symmetry is desired                                   |
-| **Zhang's Metric**     | -1 → 1  | Deviation from independence                   | Balanced measure less biased by marginal frequencies               |
-| **Yule's Q**           | -1 → 1  | Odds-ratio-based direction and strength       | Interpreting direction (reinforcement vs opposition)               |
-| **Hypergeom p-value**  | 0 → 1   | Statistical significance of co-occurrence     | Hypothesis testing for unlikely co-occurrence                      |
-| **Mutual Information** | 0 → ∞   | Shared information between the two variables  | Measure of dependency that is model-agnostic                      |
+| Metric                  | Range  | Interpretation                                | Question You Want to Answer                                    | Recommended Usage                                             |
+| ----------------------- | ------ | --------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
+| **Lift**                | 0 → ∞  | Correlation between antecedent and consequent | “How much more often do `A` and `B` occur together than expected?” | Good for overall correlation strength                         |
+| **Confidence**          | 0 → 1  | `P(B\|A)` — probability of consequent given `A`    | “If `A` occurs, how likely is `B`?”                                | Simple baseline, but may be misleading with rare items        |
+| **Kulczynski**         | 0 → 1  | Average of `P(B\|A)` and `P(A\|B)`            | “Are `A` and `B` mutually predictive?”                             | Balances asymmetric confidence; useful with imbalanced supports |
+| **Zhang’s Metric**      | -1 → 1 | Deviation from statistical independence       | “How far is the `A → B` relation from being independent?”          | Balanced measure less biased by item frequency                |
+| **Yule’s Q**            | -1 → 1 | Odds ratio-based association                  | “Do `A` and `B` strongly reinforce or oppose each other?”          | Best when interpreting direction and strength of association  |
+| **Hypergeom p-value**   | 0 → 1  | Statistical significance of co-occurrence     | “Is the co-occurrence of `A` and `B` statistically significant?”   | Use when testing whether an association is unlikely by chance |
+| **Mutual Information** | 0 → ∞  | Shared information between items              | “How much information does one item give about the other?”     | Captures non-linear associations; scale depends on distributions |
+
+
 
