@@ -26,12 +26,13 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
     is a list of items.
 
     The analyzer supports multiple association metrics including:
-    - Lift
-    - Confidence
-    - Kulczynski measure
-    - Zhang's metric
-    - Yule's Q coefficient
-    - Hypergeometric p-value
+    - Lift (`lift`)
+    - Confidence (`confidence`)
+    - Kulczynski measure (`kulczynski`)
+    - Sorensen-Dice index (`sorensen_dice`)
+    - Zhang's metric (`zhang`)
+    - Yule's Q coefficient (`yules_q`)
+    - Hypergeometric p-value (`hypergeom`)
 
     Attributes:
         encoder_ (TransactionEncoder): Encoder for transaction data
@@ -241,6 +242,29 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
         conf_b_a = self.confidence(consequent, antecedent)
         return (conf_a_b + conf_b_a) / 2
 
+    def sorensen_dice(self, antecedent: str, consequent: str) -> float:
+        """
+        Calculate Sorensen-Dice index for association rules.
+        Sorensen-Dice index is the harmonic mean of the confidence of the rule in both directions (A -> C and C -> A).
+        Values ranges from 0 to 1, where higher values indicate stronger associations.
+
+        Parameters
+        ----------
+            antecedent : The antecedent item in the association rule
+            consequent : The consequent item in the association rule
+
+        Returns
+        ----------
+            float : Sorensen-Dice index between 0 and 1
+        """
+        conf_a_b = self.confidence(antecedent, consequent)
+        conf_b_a = self.confidence(consequent, antecedent)
+
+        if conf_a_b == 0 or conf_b_a == 0:
+            return 0.0
+
+        return 2 / ((1 / conf_a_b) + (1 / conf_b_a))
+
     def zhang_metric(self, antecedent: str, consequent: str) -> float:
         """
         Calculate Zhang's metric for association rule mining.
@@ -375,6 +399,7 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
             "lift": self.lift,
             "confidence": self.confidence,
             "kulczynski": self.kulczynski,
+            "sorensen_dice": self.sorensen_dice,
             "zhang": self.zhang_metric,
             "yules_q": self.yules_q,
             "hypergeom": self.hypergeom,
