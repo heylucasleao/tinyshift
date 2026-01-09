@@ -104,7 +104,7 @@ class FeatureResidualizer(BaseEstimator, TransformerMixin):
             indexes = np.argwhere((corr_feature >= corrcoef) & mask).flatten()
 
             if len(indexes) > 0:
-                model = LinearRegression()
+                model = LinearRegression(penalty=None)
                 model.fit(X[:, indexes], X[:, i])
 
                 self.models_[i] = {
