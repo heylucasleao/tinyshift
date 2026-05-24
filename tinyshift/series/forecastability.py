@@ -505,3 +505,51 @@ def permutation_auto_mutual_information(
     )  # Mutual Information
 
     return pami if not normalize else pami / H_min if H_min > 0 else 0.0
+
+
+def relative_absolute_error(
+    y_true: Union[np.ndarray, List[float]],
+    y_pred: Union[np.ndarray, List[float]],
+    y_baseline: Union[np.ndarray, List[float]],
+) -> float:
+    """
+    Calculate the Relative Absolute Error (RAE) between a model prediction and a baseline.
+
+    RAE is defined as MAE_model / MAE_baseline and provides a normalized error
+    measure that is useful when comparing forecasting models across series with
+    different scales.
+
+    Parameters
+    ----------
+    y_true : Union[np.ndarray, List[float]]
+        Ground-truth target values.
+    y_pred : Union[np.ndarray, List[float]]
+        Predictions from the forecasting model to be evaluated.
+    y_baseline : Union[np.ndarray, List[float]]
+        Predictions from a baseline method (e.g., naive or seasonal naive) used
+        to normalize the model error.
+
+    Returns
+    -------
+    float
+        The RAE value. Returns np.nan if the baseline MAE is zero and the model
+        MAE is greater than zero; returns 1.0 if both are zero.
+
+    Notes
+    -----
+    - Usage in forecastability: RAE is commonly used to assess how much better
+      a forecasting model performs compared to a simple baseline. RAE < 1
+      indicates the model improves over the baseline; RAE > 1 indicates worse
+      performance.
+    - To check volatility: pair RAE with volatility measures (e.g., ADI, CV,
+      sample entropy, or ForeCA omega) to understand whether high errors stem
+      from inherently volatile or unforecastable series.
+    """
+
+    mae_model = np.mean(np.abs(y_true - y_pred))
+    mae_baseline = np.mean(np.abs(y_true - y_baseline))
+
+    if mae_baseline == 0:
+        return np.nan if mae_model > 0 else 1.0
+
+    return mae_model / mae_baseline
