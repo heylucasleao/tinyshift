@@ -545,6 +545,18 @@ def relative_absolute_error(
       sample entropy, or ForeCA omega) to understand whether high errors stem
       from inherently volatile or unforecastable series.
     """
+    y_true = np.asarray(y_true, dtype=np.float64)
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+    y_baseline = np.asarray(y_baseline, dtype=np.float64)
+
+    if y_true.ndim != 1 or y_pred.ndim != 1 or y_baseline.ndim != 1:
+        raise ValueError("All inputs must be 1-dimensional arrays")
+
+    if not (len(y_true) == len(y_pred) == len(y_baseline)):
+        raise ValueError("y_true, y_pred and y_baseline must have the same length")
+
+    if len(y_true) == 0:
+        raise ValueError("Input arrays must not be empty")
 
     mae_model = np.mean(np.abs(y_true - y_pred))
     mae_baseline = np.mean(np.abs(y_true - y_baseline))
@@ -552,4 +564,4 @@ def relative_absolute_error(
     if mae_baseline == 0:
         return np.nan if mae_model > 0 else 1.0
 
-    return mae_model / mae_baseline
+    return float(mae_model / mae_baseline)
