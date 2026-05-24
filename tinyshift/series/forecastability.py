@@ -507,59 +507,56 @@ def permutation_auto_mutual_information(
     return pami if not normalize else pami / H_min if H_min > 0 else 0.0
 
 
-def relative_absolute_error(
+def forecast_value_added_rae(
     y_true: Union[np.ndarray, List[float]],
     y_pred: Union[np.ndarray, List[float]],
-    y_baseline: Union[np.ndarray, List[float]],
+    nlags: int = 1,
 ) -> float:
-    """
-    Calculate the Relative Absolute Error (RAE) between a model prediction and a baseline.
+    """Calculate Relative Absolute Error (RAE) to evaluate Forecast Value Added.
 
-    RAE is defined as MAE_model / MAE_baseline and provides a normalized error
-    measure that is useful when comparing forecasting models across series with
-    different scales.
+    The baseline is automatically generated as a naive forecast by shifting
+    y_true by the specified lag (lead time). Only time periods where the
+    baseline is known (after the lag) are evaluated.
 
     Parameters
     ----------
     y_true : Union[np.ndarray, List[float]]
-        Ground-truth target values.
+        Ground-truth target values ordered chronologically.
     y_pred : Union[np.ndarray, List[float]]
         Predictions from the forecasting model to be evaluated.
-    y_baseline : Union[np.ndarray, List[float]]
-        Predictions from a baseline method (e.g., naive or seasonal naive) used
-        to normalize the model error.
+    nlags : int, default=1
+        The operational lead time or seasonality period. For example, if a
+        decision requires 3 periods of lead time, use nlags=3.
 
     Returns
     -------
     float
-        The RAE value. Returns np.nan if the baseline MAE is zero and the model
-        MAE is greater than zero; returns 1.0 if both are zero.
-
-    Notes
-    -----
-    - Usage in forecastability: RAE is commonly used to assess how much better
-      a forecasting model performs compared to a simple baseline. RAE < 1
-      indicates the model improves over the baseline; RAE > 1 indicates worse
-      performance.
-    - To check volatility: pair RAE with volatility measures (e.g., ADI, CV,
-      sample entropy, or ForeCA omega) to understand whether high errors stem
-      from inherently volatile or unforecastable series.
+        The RAE value (MAE_model / MAE_baseline).
+        - RAE < 1.0: Model adds value (FVA is positive).
+        - RAE > 1.0: Model destroys value compared to doing nothing.
     """
     y_true = np.asarray(y_true, dtype=np.float64)
     y_pred = np.asarray(y_pred, dtype=np.float64)
-    y_baseline = np.asarray(y_baseline, dtype=np.float64)
 
-    if y_true.ndim != 1 or y_pred.ndim != 1 or y_baseline.ndim != 1:
+    if y_true.ndim != 1 or y_pred.ndim != 1:
         raise ValueError("All inputs must be 1-dimensional arrays")
 
-    if not (len(y_true) == len(y_pred) == len(y_baseline)):
-        raise ValueError("y_true, y_pred and y_baseline must have the same length")
+    if len(y_true) != len(y_pred):
+        raise ValueError("y_true and y_pred must have the same length")
 
-    if len(y_true) == 0:
-        raise ValueError("Input arrays must not be empty")
+    if nlags >= len(y_true):
+        raise ValueError(
+            "Number of lags cannot be greater than or equal to array length"
+        )
 
-    mae_model = np.mean(np.abs(y_true - y_pred))
-    mae_baseline = np.mean(np.abs(y_true - y_baseline))
+    if nlags < 1:
+        raise ValueError("Number of lags must be a positive integer >= 1")
+
+    y_true_eval = y_true[nlags:]
+    y_pred_eval = y_pred[nlags:]
+    y_baseline_eval = y_true[:-nlags]
+    mae_model = np.mean(np.abs(y_true_eval - y_pred_eval))
+    mae_baseline = np.mean(np.abs(y_true_eval - y_baseline_eval))
 
     if mae_baseline == 0:
         return np.nan if mae_model > 0 else 1.0
