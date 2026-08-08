@@ -74,6 +74,10 @@ The `series` module of tinyshift provides quantitative tools for time series ana
   Computes a lead-time-aware RAE for Forecast Value Added analysis.  
   **When to use:** To assess whether a forecasting model improves decisions relative to a baseline under operational lags.
 
+- **`variability`**  
+  Measures period-over-period forecast variability (instability) expressed as a percentage of the average projected volume across paired consecutive periods.  
+  **When to use:** To quantify operational instability of forecasts — how much forecasts change between updates (consecutive origins), useful when monitoring forecast revisions and their impact on planning.
+
 ### 4. Trend & Memory
 
 - **`hurst_exponent`**  
@@ -149,6 +153,7 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 | **Score**                              | 0 → ∞         | Composite accuracy and bias metric                         | "How do accuracy and bias trade off in one summary number?"        |
 | **RAE**                                | 0 → ∞         | Relative error versus a baseline model                    | "Does this model outperform a simple benchmark?"                    |
 | **FVA RAE**                            | 0 → ∞         | Lead-time-aware RAE for forecast value added analysis     | "Does this model add value for operational forecasting decisions?" |
+| **Variability**                        | 0 → ∞         | Period-over-period forecast instability (lower = more stable) | "How much do forecasts change between consecutive origins?"        |
 
 ### Trend & Memory
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
