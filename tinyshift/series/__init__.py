@@ -8,3 +8,4 @@ from .forecastability import *
 from .stats import *
 from .stability import *
 from .interpolation import *
+from .metric import *

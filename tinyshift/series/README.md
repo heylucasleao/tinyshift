@@ -44,7 +44,37 @@ The `series` module of tinyshift provides quantitative tools for time series ana
   Calculates the theoretical upper limit of predictability (Πmax) based on ordinal patterns, using normalized permutation entropy. Values close to 1 indicate highly regular ordinal patterns, values near 0 indicate random ordinal structure.  
   **When to use:** To estimate the theoretical predictability ceiling based on directional patterns only, serving as a benchmark for forecasting performance regardless of magnitude.
 
-### 3. Trend & Memory
+- **`permutation_auto_mutual_information` (PAMI)**  
+  Measures the information dependency between a time series and itself delayed by a lag, using ordinal patterns. It quantifies how much information the ordinal patterns at time t provide about the ordinal patterns at time t+tau.  
+  **When to use:** To detect non-linear predictive relationships and temporal dependencies in time series. Higher values indicate stronger temporal dependencies between ordinal patterns; values near zero suggest independence.
+
+- **`relative_absolute_error` (RAE)**  
+  Calculates the Relative Absolute Error between a model prediction and a baseline. Defined as MAE_model / MAE_baseline, providing a normalized error measure.  
+  **When to use:** To assess how much better a forecasting model performs compared to a simple baseline. RAE < 1 indicates model improvement over baseline; RAE > 1 indicates worse performance. Useful for cross-series comparison with different scales.
+
+### 3. Forecast Accuracy Metrics
+
+- **`wape`**  
+  Calculates the Weighted Absolute Percentage Error (WAPE) for multiple models, providing an overall accuracy measure that is robust to zero-demand periods.  
+  **When to use:** To compare the overall volume accuracy of forecasting models, especially in supply-chain and demand-planning contexts.
+
+- **`pbias`**  
+  Measures Percent Bias to identify whether a model systematically overestimates or underestimates the target.  
+  **When to use:** To detect directional forecast drift and assess whether forecasts are consistently too high or too low.
+
+- **`score`**  
+  Computes a composite score defined as WAPE + |PBias|, combining accuracy and bias into a single metric.  
+  **When to use:** To summarize forecast quality with one number when both overall error and systematic bias matter.
+
+- **`rae`**  
+  Calculates the Relative Absolute Error against a baseline forecast.  
+  **When to use:** To evaluate whether a model adds value over a simple benchmark such as a naive or seasonal baseline.
+
+- **`fva_rae`**  
+  Computes a lead-time-aware RAE for Forecast Value Added analysis.  
+  **When to use:** To assess whether a forecasting model improves decisions relative to a baseline under operational lags.
+
+### 4. Trend & Memory
 
 - **`hurst_exponent`**  
   Estimates the Hurst exponent and p-value for the random walk hypothesis. The Hurst exponent measures trend persistence or long-term memory in a time series.  
@@ -109,6 +139,16 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 | **Permutation Entropy**                | 0 → ∞         | Ordinal complexity/randomness (low = more regular, high = more complex) | "How random or complex is the order of this time series?"     |
 | **Regularity Index**                   | 0 → 1         | Temporal regularity (1 = highly regular, 0 = high variability) | "How consistent and regular are the values over time?"            |
 | **Theoretical Limit**                  | 0 → 1         | Theoretical predictability ceiling based on ordinal patterns | "What is the maximum predictability based on directional patterns?" |
+| **Permutation Auto Mutual Information (PAMI)** | 0 → 1     | Measures how much the series' recent behavior helps predict what comes next  | "How much does the series' recent pattern tell us about upcoming values?" |
+
+### Forecast Accuracy Metrics
+| Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
+|----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
+| **WAPE**                               | 0 → ∞         | Overall forecast accuracy as a percentage of total actual volume | "How far off are my forecasts in aggregate volume terms?"          |
+| **PBias**                              | -∞ → ∞       | Directional bias of forecasts                              | "Am I systematically over- or under-forecasting?"                  |
+| **Score**                              | 0 → ∞         | Composite accuracy and bias metric                         | "How do accuracy and bias trade off in one summary number?"        |
+| **RAE**                                | 0 → ∞         | Relative error versus a baseline model                    | "Does this model outperform a simple benchmark?"                    |
+| **FVA RAE**                            | 0 → ∞         | Lead-time-aware RAE for forecast value added analysis     | "Does this model add value for operational forecasting decisions?" |
 
 ### Trend & Memory
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
