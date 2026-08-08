@@ -169,6 +169,13 @@ def score(
     - Expressed as a percentage (%): 0.0% represents a perfect forecast.
     - Lower values are better.
     - Internally calls `wape` and `pbias` functions to build the composite score.
+    References
+    ----------
+    - Vandeput, N. (2025). Forecasting Variability: Causes, Solutions, and
+      Why It (doesn't) Matter. SupChains.
+      Available at: https://www.supchains.com/
+    - Vandeput, N. (2021). Data Science for Supply Chain Forecasting (2nd ed.).
+      CRC Press.
     """
 
     df_wape = wape(df=df, models=models, id_col=id_col, target_col=target_col)
@@ -226,6 +233,14 @@ def rae(
     - **RAE = 1.0**: Model performs identically to baseline (No added value).
     - **RAE > 1.0**: Model performs worse than baseline (Negative FVA / destroys value).
       Example: RAE = 1.25 means the model generated 25% more error than a simple baseline.
+
+    References
+    ----------
+    - Morlidge, S. (2014). The Little Book of Business Forecasting:
+        A Practical Guide to Measuring and Improving Forecast Performance.
+        Business Forecasting Press.
+    - Gilliland, M. (2010). The Business Forecasting Deal: Exposing the
+        Myths, Eliminating the Waste, and Practicing the Realities. John Wiley & Sons.
     """
     rows = []
 
@@ -283,6 +298,14 @@ def fva_rae(
         The RAE value (MAE_model / MAE_baseline).
         - RAE < 1.0: Model adds value (FVA is positive).
         - RAE > 1.0: Model destroys value compared to baseline.
+
+    References
+    ----------
+    - Morlidge, S. (2014). The Little Book of Business Forecasting:
+        A Practical Guide to Measuring and Improving Forecast Performance.
+        Business Forecasting Press.
+    - Gilliland, M. (2010). The Business Forecasting Deal: Exposing the
+        Myths, Eliminating the Waste, and Practicing the Realities. John Wiley & Sons.
     """
     y_true = np.asarray(y_true, dtype=np.float64)
     y_pred = np.asarray(y_pred, dtype=np.float64)
@@ -327,3 +350,113 @@ def fva_rae(
         return np.nan if mae_model > 0 else 1.0
 
     return float(mae_model / mae_baseline)
+
+
+def variability(
+    df: pd.DataFrame,
+    models: List[str],
+    ds_col: str = "ds",
+    id_col: str = "unique_id",
+    **kwargs,
+) -> pd.DataFrame:
+    """Calculate Forecasting Variability (Instability Error) across periods for multiple models.
+
+    Measures period-over-period forecast instability by evaluating all consecutive
+    time step pairs (ds_t-1 vs ds_t) across the entire history of each series.
+    It reuses the composite `score` function (WAPE + |PBias|) calculated with the
+    previous period (ds_t-1) as target, applying a scale factor to align the
+    denominator with the joint average volume across all paired periods:
+    (sum(|F_prev - F_curr|) + |sum(F_prev - F_curr)|) / (0.5 * (sum(F_prev) + sum(F_curr))).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Evaluation DataFrame containing series identifiers, date/period column, and model forecasts.
+    models : List[str]
+        List of column names corresponding to the forecast models to evaluate.
+    ds_col : str, default="ds"
+        Column name identifying time periods or forecast dates ordered chronologically.
+    id_col : str, default="unique_id"
+        Column name identifying unique series or group identifiers.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame formatted with `id_col`, `metric` label ('variability'), and
+        columns for each evaluated model containing their respective variability values.
+
+    Notes
+    -----
+    Interpretation & Aggregation:
+    - Measures forecast revision magnitude and operational instability across consecutive periods.
+    - Expressed as a percentage (%):
+      * 0.0%: Perfectly stable forecast (zero revisions across periods).
+      * Lower values indicate higher stability.
+      * Stability percentage can be derived as: Stability = 100% - Variability.
+    - Unbounded upper limit: Can exceed 100% when forecast revisions are aggressive.
+    - Aggregation Mechanics per Series (`id_col`):
+      * For a series with N time steps, creates N-1 consecutive pairs (F_{t-1}, F_t).
+      * Numerator: Sums absolute differences `sum(|F_{t-1} - F_t|)` and net directional drift
+        `|sum(F_{t-1} - F_t)|` across ALL N-1 paired periods of the series.
+      * Denominator: Calculates total volume of prior periods `sum(F_{t-1})` and current periods
+        `sum(F_t)`, taking their joint average `0.5 * (sum(F_{t-1}) + sum(F_t))`.
+      * Internally reuses `score()` treating `F_{t-1}` as target, then applies the volume
+        scaling factor `sum(F_prev) / (0.5 * (sum(F_prev) + sum(F_curr)))`.
+    - Example: A variability of 15.0% means period-over-period forecast adjustments
+      account for 15% of the average projected volume across all consecutive periods.
+
+    References
+    ----------
+    - Vandeput, N. (2025). Forecasting Variability: Causes, Solutions, and
+        Why It (doesn't) Matter. SupChains.
+        Available at: https://www.supchains.com/
+    - Vandeput, N. (2021). Data Science for Supply Chain Forecasting (2nd ed.).
+        CRC Press.
+    """
+    df_sorted = df.sort_values([id_col, ds_col]).copy()
+    model_scores = {}
+
+    for model in models:
+        f_prev = df_sorted.groupby(id_col)[model].shift(1)
+        f_curr = df_sorted[model]
+
+        df_temp = pd.DataFrame(
+            {
+                id_col: df_sorted[id_col],
+                "f_prev": f_prev,
+                "f_curr": f_curr,
+            }
+        ).dropna()
+
+        if df_temp.empty:
+            continue
+
+        df_score = score(
+            df=df_temp, models=["f_curr"], id_col=id_col, target_col="f_prev"
+        )
+
+        scores_dict = {}
+        for uid, group in df_temp.groupby(id_col, observed=True):
+            prev_vals = group["f_prev"].to_numpy(dtype=np.float64)
+            curr_vals = group["f_curr"].to_numpy(dtype=np.float64)
+
+            sum_prev = np.sum(prev_vals)
+            sum_curr = np.sum(curr_vals)
+            avg_volume = 0.5 * (sum_prev + sum_curr)
+
+            scale_factor = 1.0 if avg_volume == 0 else (sum_prev / avg_volume)
+
+            raw_score = df_score.loc[df_score[id_col] == uid, "f_curr"].values[0]
+            scores_dict[uid] = raw_score * scale_factor
+
+        model_scores[model] = scores_dict
+
+    unique_ids = df_sorted[id_col].unique()
+    rows = []
+    for uid in unique_ids:
+        row_dict = {id_col: uid, "metric": "variability"}
+        for model in models:
+            row_dict[model] = model_scores.get(model, {}).get(uid, np.nan)
+        rows.append(row_dict)
+
+    return pd.DataFrame(rows)
