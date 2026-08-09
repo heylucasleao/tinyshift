@@ -48,27 +48,23 @@ def wape(
     - Example: A WAPE of 15.0% means total forecast errors account for 15%
       of total actual volume across the period.
     """
-    rows = []
+    errors = (
+        df[models]
+        .sub(df[target_col], axis=0)
+        .abs()
+        .groupby(df[id_col], observed=True)
+        .sum()
+    )
 
-    for uid, group in df.groupby(id_col, observed=True):
-        y_true = group[target_col].to_numpy(dtype=np.float64)
-        row_dict = {id_col: uid, "metric": "wape"}
-        demand = np.sum(np.abs(y_true))
+    demand = df[target_col].abs().groupby(df[id_col], observed=True).sum().values
 
-        for model in models:
-            y_pred = group[model].to_numpy(dtype=np.float64)
-            abs_errors = np.sum(np.abs(y_pred - y_true))
+    res = errors.div(demand, axis=0).mul(100.0).reset_index()
+    res[models] = np.where(
+        demand[:, None] == 0, np.where(errors == 0, 0.0, np.nan), res[models]
+    )
 
-            if demand == 0:
-                score = np.nan if abs_errors != 0 else 0.0
-            else:
-                score = float((abs_errors / demand) * 100)
-
-            row_dict[model] = score
-
-        rows.append(row_dict)
-
-    return pd.DataFrame(rows)
+    res.insert(1, "metric", "wape")
+    return res
 
 
 def pbias(
@@ -110,27 +106,18 @@ def pbias(
     - Example: A PBias of +10.0% means the model predicted 10% more volume
       than actual total demand.
     """
-    rows = []
+    errors = (
+        df[models].sub(df[target_col], axis=0).groupby(df[id_col], observed=True).sum()
+    )
 
-    for uid, group in df.groupby(id_col, observed=True):
-        y_true = group[target_col].to_numpy(dtype=np.float64)
-        row_dict = {id_col: uid, "metric": "pbias"}
-        demand = np.sum(y_true)
+    demand = df[target_col].groupby(df[id_col], observed=True).sum().values
+    res = errors.div(demand, axis=0).mul(100.0).reset_index()
+    res[models] = np.where(
+        demand[:, None] == 0, np.where(errors == 0, 0.0, np.nan), res[models]
+    )
 
-        for model in models:
-            y_pred = group[model].to_numpy(dtype=np.float64)
-            bias = np.sum(y_pred - y_true)
-
-            if demand == 0:
-                score = np.nan if bias != 0 else 0.0
-            else:
-                score = float((bias / demand) * 100)
-
-            row_dict[model] = score
-
-        rows.append(row_dict)
-
-    return pd.DataFrame(rows)
+    res.insert(1, "metric", "pbias")
+    return res
 
 
 def score(
@@ -180,12 +167,9 @@ def score(
 
     df_wape = wape(df=df, models=models, id_col=id_col, target_col=target_col)
     df_pbias = pbias(df=df, models=models, id_col=id_col, target_col=target_col)
-    wape_values = df_wape[models].to_numpy()
-    pbias_values = df_pbias[models].to_numpy()
-    score_values = wape_values + np.abs(pbias_values)
     df_score = df_wape[[id_col]].copy()
     df_score["metric"] = "score"
-    df_score[models] = score_values
+    df_score[models] = df_wape[models] + df_pbias[models].abs()
 
     return df_score
 
@@ -352,14 +336,14 @@ def fva_rae(
     return float(mae_model / mae_baseline)
 
 
-def variability(
+def forecast_instability(
     df: pd.DataFrame,
     models: List[str],
     ds_col: str = "ds",
     id_col: str = "unique_id",
     **kwargs,
 ) -> pd.DataFrame:
-    """Calculate Forecasting Variability (Instability Error) across periods for multiple models.
+    """Calculate Forecasting Instability Error across periods for multiple models.
 
     Measures period-over-period forecast instability by evaluating all consecutive
     time step pairs (ds_t-1 vs ds_t) across the entire history of each series.
@@ -382,8 +366,8 @@ def variability(
     Returns
     -------
     pd.DataFrame
-        A DataFrame formatted with `id_col`, `metric` label ('variability'), and
-        columns for each evaluated model containing their respective variability values.
+        A DataFrame formatted with `id_col`, `metric` label ('forecast_instability'), and
+        columns for each evaluated model containing their respective instability values.
 
     Notes
     -----
@@ -392,7 +376,7 @@ def variability(
     - Expressed as a percentage (%):
       * 0.0%: Perfectly stable forecast (zero revisions across periods).
       * Lower values indicate higher stability.
-      * Stability percentage can be derived as: Stability = 100% - Variability.
+      * Stability percentage can be derived as: Stability = 100% - Forecast Instability.
     - Unbounded upper limit: Can exceed 100% when forecast revisions are aggressive.
     - Aggregation Mechanics per Series (`id_col`):
       * For a series with N time steps, creates N-1 consecutive pairs (F_{t-1}, F_t).
@@ -402,7 +386,7 @@ def variability(
         `sum(F_t)`, taking their joint average `0.5 * (sum(F_{t-1}) + sum(F_t))`.
       * Internally reuses `score()` treating `F_{t-1}` as target, then applies the volume
         scaling factor `sum(F_prev) / (0.5 * (sum(F_prev) + sum(F_curr)))`.
-    - Example: A variability of 15.0% means period-over-period forecast adjustments
+    - Example: An instability of 15.0% means period-over-period forecast adjustments
       account for 15% of the average projected volume across all consecutive periods.
 
     References
@@ -413,50 +397,104 @@ def variability(
     - Vandeput, N. (2021). Data Science for Supply Chain Forecasting (2nd ed.).
         CRC Press.
     """
-    df_sorted = df.sort_values([id_col, ds_col]).copy()
-    model_scores = {}
 
-    for model in models:
-        f_prev = df_sorted.groupby(id_col)[model].shift(1)
-        f_curr = df_sorted[model]
+    def _prepare_paired_data(
+        df_in: pd.DataFrame,
+        models_list: List[str],
+        id_column: str,
+        ds_column: str,
+    ) -> pd.DataFrame:
+        """Sort data, apply group shift, and return paired consecutive forecasts."""
+        df_sorted = df_in.sort_values([id_column, ds_column])
 
-        df_temp = pd.DataFrame(
-            {
-                id_col: df_sorted[id_col],
-                "f_prev": f_prev,
-                "f_curr": f_curr,
-            }
-        ).dropna()
-
-        if df_temp.empty:
-            continue
-
-        df_score = score(
-            df=df_temp, models=["f_curr"], id_col=id_col, target_col="f_prev"
+        df_curr = df_sorted[[id_column] + models_list].copy()
+        df_prev = (
+            df_sorted.groupby(id_column, observed=True)[models_list]
+            .shift(1)
+            .add_suffix("_prev")
         )
 
-        scores_dict = {}
-        for uid, group in df_temp.groupby(id_col, observed=True):
-            prev_vals = group["f_prev"].to_numpy(dtype=np.float64)
-            curr_vals = group["f_curr"].to_numpy(dtype=np.float64)
+        paired_df = pd.concat([df_curr, df_prev], axis=1).dropna()
 
-            sum_prev = np.sum(prev_vals)
-            sum_curr = np.sum(curr_vals)
+        return paired_df
+
+    def _compute_metrics_and_consolidate(
+        paired_df: pd.DataFrame,
+        models_list: List[str],
+        id_column: str,
+    ) -> pd.DataFrame:
+        """Compute base score, scale by joint average volume, and consolidate model results."""
+        scores_dict = {}
+
+        for model in models_list:
+            target_col_name = f"{model}_prev"
+            df_eval = pd.DataFrame(
+                {
+                    id_column: paired_df[id_column],
+                    "target": paired_df[target_col_name],
+                    model: paired_df[model],
+                }
+            )
+
+            df_raw_score = score(
+                df=df_eval,
+                models=[model],
+                id_col=id_column,
+                target_col="target",
+            )
+
+            sum_prev = df_eval.groupby(id_column, observed=True)["target"].sum()
+            sum_curr = df_eval.groupby(id_column, observed=True)[model].sum()
             avg_volume = 0.5 * (sum_prev + sum_curr)
 
-            scale_factor = 1.0 if avg_volume == 0 else (sum_prev / avg_volume)
+            scale_factor = np.where(avg_volume == 0, 1.0, sum_prev / avg_volume)
+            scaled_score = df_raw_score[model] * scale_factor
+            scores_dict[model] = pd.Series(
+                scaled_score.values, index=df_raw_score[id_column]
+            )
 
-            raw_score = df_score.loc[df_score[id_col] == uid, "f_curr"].values[0]
-            scores_dict[uid] = raw_score * scale_factor
+        results_df = pd.DataFrame(scores_dict).reset_index()
+        results_df.insert(1, "metric", "forecast_instability")
 
-        model_scores[model] = scores_dict
+        return results_df
 
-    unique_ids = df_sorted[id_col].unique()
-    rows = []
-    for uid in unique_ids:
-        row_dict = {id_col: uid, "metric": "variability"}
-        for model in models:
-            row_dict[model] = model_scores.get(model, {}).get(uid, np.nan)
-        rows.append(row_dict)
+    def _ensure_all_unique_ids(
+        results_df: pd.DataFrame,
+        original_df: pd.DataFrame,
+        models_list: List[str],
+        id_column: str,
+    ) -> pd.DataFrame:
+        """Ensure all original unique IDs are present in the final results DataFrame."""
+        all_ids_df = pd.DataFrame({id_column: original_df[id_column].unique()})
 
-    return pd.DataFrame(rows)
+        if results_df.empty:
+            res = all_ids_df.assign(metric="forecast_instability")
+            for model in models_list:
+                res[model] = np.nan
+            return res
+
+        res = all_ids_df.merge(results_df, on=id_column, how="left")
+        res["metric"] = "forecast_instability"
+        return res
+
+    paired = _prepare_paired_data(
+        df_in=df, models_list=models, id_column=id_col, ds_column=ds_col
+    )
+
+    if paired.empty:
+        return _ensure_all_unique_ids(
+            results_df=pd.DataFrame(),
+            original_df=df,
+            models_list=models,
+            id_column=id_col,
+        )
+
+    res = _compute_metrics_and_consolidate(
+        paired_df=paired, models_list=models, id_column=id_col
+    )
+
+    res = _ensure_all_unique_ids(
+        results_df=res, original_df=df, models_list=models, id_column=id_col
+    )
+
+    return res

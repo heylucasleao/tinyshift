@@ -251,7 +251,7 @@ TinyShift includes forecast stability metrics and interpolation methods:
 
 ```python
 from tinyshift.series import (
-    variability,          # Period-over-period forecast variability
+    forecast_instability,          # Period-over-period forecast instability
     macv, mach,           # Mean Absolute Change metrics
     mascv, masch,         # Mean Absolute Scaled Change metrics
     rmsscv, rmssch,       # Root Mean Squared Scaled Change metrics
@@ -265,7 +265,7 @@ horizontal_stability = mach(y_hat)
 # Calculate period-over-period forecast variability (instability)
 # `df` should contain `unique_id`, `ds` (ordered dates) and model forecast columns.
 # Example: `variability(df, models=["model_a", "model_b"], ds_col="ds")`
-variability_scores = variability(df, models=["model_a"], ds_col="ds")
+instability_scores = forecast_instability(df, models=["model_a"], ds_col="ds")
 
 # Scaled stability metrics
 scaled_v_stability = mascv(y_train, y_hat, y_hat_t_minus_1, seasonality=12)
