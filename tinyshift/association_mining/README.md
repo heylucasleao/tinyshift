@@ -11,10 +11,10 @@ It encodes transactions to a one-hot matrix (via `TransactionEncoder`) and compu
   - `lift(antecedent, consequent)` — Lift
   - `confidence(antecedent, consequent)` — Confidence
   - `kulczynski(antecedent, consequent)` — Kulczynski measure
+  - `sorensen_dice(antecedent, consequent)` — Sorensen-Dice index
   - `zhang_metric(antecedent, consequent)` — Zhang's metric
   - `yules_q(antecedent, consequent)` — Yule's Q coefficient
   - `hypergeom(antecedent, consequent)` — Hypergeometric p-value
-  - `mutual_information(antecedent, consequent)` — Mutual information
 - Correlation matrix generation via `correlation_matrix(row_items, column_items, metric="...")`
 - Model persistence: `save(filename)` / `load(filename)` (pickle)
 
@@ -41,10 +41,9 @@ analyzer = TransactionAnalyzer().fit(transactions)
 print(analyzer.confidence("milk", "bread"))
 print(analyzer.zhang_metric("diapers", "beer"))
 print(analyzer.yules_q("diapers", "beer"))
-print(analyzer.mutual_information("milk", "bread"))
 ```
 
-3. Create a correlation matrix (choose metric: `lift`, `confidence`, `kulczynski`, `zhang`, `yules_q`, `hypergeom`, `mutual_information`):
+3. Create a correlation matrix (choose metric: `lift`, `confidence`, `kulczynski`, `sorensen_dice`, `zhang`, `yules_q`, `hypergeom`):
 
 ```python
 matrix = analyzer.correlation_matrix(

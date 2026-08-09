@@ -282,7 +282,7 @@ smooth_forecast = hpi(y_hat, w_s=0.4)
 fully_stable_forecast = hfi(y_hat, w_s=0.5)
 ```
 
-### 7. Advanced Modeling Tools
+### 8. Advanced Modeling Tools
 
 ```python
 from tinyshift.modelling import filter_features_by_vif
