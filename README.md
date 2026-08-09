@@ -217,7 +217,35 @@ from tinyshift.plot import pami
 pami(time_series, nlags=20, m=3, delay=1, normalize=False)
 ```
 
-### 6. Forecast Stability and Interpolation
+### 6. Forecast Accuracy Metrics
+
+TinyShift also includes forecast evaluation utilities in the series metrics module, implemented in [tinyshift/series/metric.py](tinyshift/series/metric.py). These functions help compare forecasting models using aggregate error, bias, and baseline-relative performance:
+
+```python
+import pandas as pd
+from tinyshift.series import wape, pbias, score, rmae, fva_rae
+
+# Example evaluation dataframe
+# df must contain actual values in the 'y' column and model predictions as columns
+
+wape_df = wape(df, models=["model_a", "model_b"], id_col="unique_id", target_col="y")
+pbias_df = pbias(df, models=["model_a", "model_b"], id_col="unique_id", target_col="y")
+score_df = score(df, models=["model_a", "model_b"], id_col="unique_id", target_col="y")
+rmae_df = rmae(df, models=["model_a", "model_b"], baseline_col="naive", id_col="unique_id", target_col="y")
+
+# Single-series Forecast Value Added (FVA) analysis
+fva = fva_rmae(y_true, y_pred, nlags=1, baseline_type="naive")
+print(f"FVA RMAE: {fva}")
+```
+
+These utilities cover:
+- `wape`: weighted absolute percentage error for overall accuracy
+- `pbias`: percent bias to detect over- or under-forecasting
+- `score`: composite score combining WAPE and absolute bias
+- `rmae`: relative mean absolute error versus a baseline model
+- `fva_rmae`: lead-time-aware RMAE for Forecast Value Added analysis
+
+### 7. Forecast Stability and Interpolation
 
 TinyShift includes forecast stability metrics and interpolation methods:
 

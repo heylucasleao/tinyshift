@@ -48,10 +48,6 @@ The `series` module of tinyshift provides quantitative tools for time series ana
   Measures the information dependency between a time series and itself delayed by a lag, using ordinal patterns. It quantifies how much information the ordinal patterns at time t provide about the ordinal patterns at time t+tau.  
   **When to use:** To detect non-linear predictive relationships and temporal dependencies in time series. Higher values indicate stronger temporal dependencies between ordinal patterns; values near zero suggest independence.
 
-- **`relative_absolute_error` (RAE)**  
-  Calculates the Relative Absolute Error between a model prediction and a baseline. Defined as MAE_model / MAE_baseline, providing a normalized error measure.  
-  **When to use:** To assess how much better a forecasting model performs compared to a simple baseline. RAE < 1 indicates model improvement over baseline; RAE > 1 indicates worse performance. Useful for cross-series comparison with different scales.
-
 ### 3. Forecast Accuracy Metrics
 
 - **`wape`**  
@@ -66,12 +62,12 @@ The `series` module of tinyshift provides quantitative tools for time series ana
   Computes a composite score defined as WAPE + |PBias|, combining accuracy and bias into a single metric.  
   **When to use:** To summarize forecast quality with one number when both overall error and systematic bias matter.
 
-- **`rae`**  
-  Calculates the Relative Absolute Error against a baseline forecast.  
+- **`rmae`**  
+  Calculates the Relative Mean Absolute Error against a baseline forecast.  
   **When to use:** To evaluate whether a model adds value over a simple benchmark such as a naive or seasonal baseline.
 
-- **`fva_rae`**  
-  Computes a lead-time-aware RAE for Forecast Value Added analysis.  
+- **`fva_rmae`**  
+  Computes a lead-time-aware RMAE for Forecast Value Added analysis.  
   **When to use:** To assess whether a forecasting model improves decisions relative to a baseline under operational lags.
 
 - **`forecast_instability`**  
@@ -151,8 +147,8 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 | **WAPE**                               | 0 → ∞         | Overall forecast accuracy as a percentage of total actual volume | "How far off are my forecasts in aggregate volume terms?"          |
 | **PBias**                              | -∞ → ∞       | Directional bias of forecasts                              | "Am I systematically over- or under-forecasting?"                  |
 | **Score**                              | 0 → ∞         | Composite accuracy and bias metric                         | "How do accuracy and bias trade off in one summary number?"        |
-| **RAE**                                | 0 → ∞         | Relative error versus a baseline model                    | "Does this model outperform a simple benchmark?"                    |
-| **FVA RAE**                            | 0 → ∞         | Lead-time-aware RAE for forecast value added analysis     | "Does this model add value for operational forecasting decisions?" |
+| **RMAE**                                | 0 → ∞         | Relative error versus a baseline model                    | "Does this model outperform a simple benchmark?"                    |
+| **FVA RMAE**                            | 0 → ∞         | Lead-time-aware RMAE for forecast value added analysis     | "Does this model add value for operational forecasting decisions?" |
 | **Forecast Instability**                        | 0 → ∞         | Period-over-period forecast instability (lower = more stable) | "How much do forecasts change between consecutive origins?"        |
 
 ### Trend & Memory

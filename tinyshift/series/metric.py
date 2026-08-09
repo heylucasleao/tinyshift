@@ -48,6 +48,14 @@ def wape(
     - Example: A WAPE of 15.0% means total forecast errors account for 15%
       of total actual volume across the period.
     """
+    if not models:
+        raise ValueError("The 'models' list cannot be empty.")
+    if not all(model in df.columns for model in models):
+        missing_models = [model for model in models if model not in df.columns]
+        raise ValueError(
+            f"The following model columns are missing from the DataFrame: {missing_models}"
+        )
+
     errors = (
         df[models]
         .sub(df[target_col], axis=0)
@@ -106,6 +114,14 @@ def pbias(
     - Example: A PBias of +10.0% means the model predicted 10% more volume
       than actual total demand.
     """
+    if not models:
+        raise ValueError("The 'models' list cannot be empty.")
+    if not all(model in df.columns for model in models):
+        missing_models = [model for model in models if model not in df.columns]
+        raise ValueError(
+            f"The following model columns are missing from the DataFrame: {missing_models}"
+        )
+
     errors = (
         df[models].sub(df[target_col], axis=0).groupby(df[id_col], observed=True).sum()
     )
@@ -174,18 +190,18 @@ def score(
     return df_score
 
 
-def rae(
+def rmae(
     df: pd.DataFrame,
     models: List[str],
     baseline_col: str,
     id_col: str = "unique_id",
     target_col: str = "y",
 ) -> pd.DataFrame:
-    """Calculate Relative Absolute Error (RAE) for multiple models against a baseline.
+    """Calculate Relative Mean Absolute Error (RMAE) for multiple models against a baseline.
 
-    RAE measures model efficiency by comparing the Mean Absolute Error (MAE)
+    RMAE measures model efficiency by comparing the Mean Absolute Error (MAE)
     of candidate forecasting models against the MAE of a benchmark baseline
-    forecast: sum(|y_true - y_pred|) / sum(|y_true - y_baseline|).
+    forecast: MAE(model) / MAE(baseline).
 
     Parameters
     ----------
@@ -205,18 +221,18 @@ def rae(
     Returns
     -------
     pd.DataFrame
-        A DataFrame formatted with `id_col`, `metric` label ('rae'), and
-        columns for each evaluated model containing their respective RAE values.
+        A DataFrame formatted with `id_col`, `metric` label ('rmae'), and
+        columns for each evaluated model containing their respective RMAE values.
 
     Notes
     -----
     Interpretation & Forecast Value Added (FVA):
     - Evaluates whether a complex model adds value over a simple baseline.
-    - **RAE < 1.0**: Model outperforms baseline (Positive FVA). Lower is better.
-      Example: RAE = 0.80 means the model reduced absolute errors by 20% compared to baseline.
-    - **RAE = 1.0**: Model performs identically to baseline (No added value).
-    - **RAE > 1.0**: Model performs worse than baseline (Negative FVA / destroys value).
-      Example: RAE = 1.25 means the model generated 25% more error than a simple baseline.
+    - **RMAE < 1.0**: Model outperforms baseline (Positive FVA). Lower is better.
+      Example: RMAE = 0.80 means the model reduced absolute errors by 20% compared to baseline.
+    - **RMAE = 1.0**: Model performs identically to baseline (No added value).
+    - **RMAE > 1.0**: Model performs worse than baseline (Negative FVA / destroys value).
+      Example: RMAE = 1.25 means the model generated 25% more error than a simple baseline.
 
     References
     ----------
@@ -226,39 +242,53 @@ def rae(
     - Gilliland, M. (2010). The Business Forecasting Deal: Exposing the
         Myths, Eliminating the Waste, and Practicing the Realities. John Wiley & Sons.
     """
-    rows = []
+    if not models:
+        raise ValueError("The 'models' list cannot be empty.")
+    if baseline_col in models:
+        raise ValueError(
+            f"Baseline column '{baseline_col}' cannot be included in the list of models."
+        )
+    if not all(model in df.columns for model in models):
+        missing_models = [model for model in models if model not in df.columns]
+        raise ValueError(
+            f"The following model columns are missing from the DataFrame: {missing_models}"
+        )
 
-    for uid, group in df.groupby(id_col, observed=True):
-        y_true = group[target_col].to_numpy(dtype=np.float64)
-        y_baseline = group[baseline_col].to_numpy(dtype=np.float64)
+    mae_models = (
+        df[models]
+        .sub(df[target_col], axis=0)
+        .abs()
+        .groupby(df[id_col], observed=True)
+        .mean()
+    )
 
-        mae_baseline = np.sum(np.abs(y_true - y_baseline))
-        row_dict = {id_col: uid, "metric": "rae"}
+    mae_baseline = (
+        df[baseline_col]
+        .sub(df[target_col], axis=0)
+        .abs()
+        .groupby(df[id_col], observed=True)
+        .mean()
+        .values
+    )
 
-        for model in models:
-            y_pred = group[model].to_numpy(dtype=np.float64)
-            mae_model = np.sum(np.abs(y_true - y_pred))
+    res = mae_models.div(mae_baseline, axis=0).reset_index()
 
-            if mae_baseline == 0:
-                score = np.nan if mae_model != 0 else 1.0
-            else:
-                score = float(mae_model / mae_baseline)
+    res[models] = np.where(
+        mae_baseline[:, None] == 0, np.where(mae_models == 0, 1.0, np.nan), res[models]
+    )
 
-            row_dict[model] = score
-
-        rows.append(row_dict)
-
-    return pd.DataFrame(rows)
+    res.insert(1, "metric", "rmae")
+    return res
 
 
-def fva_rae(
+def fva_rmae(
     y_true: Union[np.ndarray, List[float]],
     y_pred: Union[np.ndarray, List[float]],
     nlags: int = 1,
     baseline_type: Literal["naive", "moving_average"] = "naive",
     window_size: int = 5,
 ) -> float:
-    """Calculate Relative Absolute Error (RAE) to evaluate Forecast Value Added.
+    """Calculate Relative Mean Absolute Error (RMAE) to evaluate Forecast Value Added.
 
     Parameters
     ----------
@@ -279,9 +309,9 @@ def fva_rae(
     Returns
     -------
     float
-        The RAE value (MAE_model / MAE_baseline).
-        - RAE < 1.0: Model adds value (FVA is positive).
-        - RAE > 1.0: Model destroys value compared to baseline.
+        The RMAE value (MAE_model / MAE_baseline).
+        - RMAE < 1.0: Model adds value (FVA is positive).
+        - RMAE > 1.0: Model destroys value compared to baseline.
 
     References
     ----------
