@@ -336,14 +336,14 @@ def fva_rae(
     return float(mae_model / mae_baseline)
 
 
-def variability(
+def forecast_instability(
     df: pd.DataFrame,
     models: List[str],
     ds_col: str = "ds",
     id_col: str = "unique_id",
     **kwargs,
 ) -> pd.DataFrame:
-    """Calculate Forecasting Variability (Instability Error) across periods for multiple models.
+    """Calculate Forecasting Instability Error across periods for multiple models.
 
     Measures period-over-period forecast instability by evaluating all consecutive
     time step pairs (ds_t-1 vs ds_t) across the entire history of each series.
@@ -366,8 +366,8 @@ def variability(
     Returns
     -------
     pd.DataFrame
-        A DataFrame formatted with `id_col`, `metric` label ('variability'), and
-        columns for each evaluated model containing their respective variability values.
+        A DataFrame formatted with `id_col`, `metric` label ('forecast_instability'), and
+        columns for each evaluated model containing their respective instability values.
 
     Notes
     -----
@@ -376,7 +376,7 @@ def variability(
     - Expressed as a percentage (%):
       * 0.0%: Perfectly stable forecast (zero revisions across periods).
       * Lower values indicate higher stability.
-      * Stability percentage can be derived as: Stability = 100% - Variability.
+      * Stability percentage can be derived as: Stability = 100% - Forecast Instability.
     - Unbounded upper limit: Can exceed 100% when forecast revisions are aggressive.
     - Aggregation Mechanics per Series (`id_col`):
       * For a series with N time steps, creates N-1 consecutive pairs (F_{t-1}, F_t).
@@ -386,7 +386,7 @@ def variability(
         `sum(F_t)`, taking their joint average `0.5 * (sum(F_{t-1}) + sum(F_t))`.
       * Internally reuses `score()` treating `F_{t-1}` as target, then applies the volume
         scaling factor `sum(F_prev) / (0.5 * (sum(F_prev) + sum(F_curr)))`.
-    - Example: A variability of 15.0% means period-over-period forecast adjustments
+    - Example: An instability of 15.0% means period-over-period forecast adjustments
       account for 15% of the average projected volume across all consecutive periods.
 
     References
@@ -454,7 +454,7 @@ def variability(
             )
 
         results_df = pd.DataFrame(scores_dict).reset_index()
-        results_df.insert(1, "metric", "variability")
+        results_df.insert(1, "metric", "forecast_instability")
 
         return results_df
 
@@ -465,31 +465,29 @@ def variability(
         id_column: str,
     ) -> pd.DataFrame:
         """Ensure all original unique IDs are present in the final results DataFrame."""
-        unique_ids_origin = original_df[id_column].unique()
+        all_ids_df = pd.DataFrame({id_column: original_df[id_column].unique()})
 
         if results_df.empty:
-            empty_df = pd.DataFrame({id_column: unique_ids_origin})
-            empty_df["metric"] = "variability"
+            res = all_ids_df.assign(metric="forecast_instability")
             for model in models_list:
-                empty_df[model] = np.nan
-            return empty_df
+                res[model] = np.nan
+            return res
 
-        if len(results_df) < len(unique_ids_origin):
-            all_ids_df = pd.DataFrame({id_column: unique_ids_origin})
-            results_df = all_ids_df.merge(results_df, on=id_column, how="left")
-            results_df["metric"] = "variability"
-
-        return results_df
+        res = all_ids_df.merge(results_df, on=id_column, how="left")
+        res["metric"] = "forecast_instability"
+        return res
 
     paired = _prepare_paired_data(
         df_in=df, models_list=models, id_column=id_col, ds_column=ds_col
     )
 
     if paired.empty:
-        res = pd.DataFrame({id_col: df[id_col].unique(), "metric": "variability"})
-        for model in models:
-            res[model] = np.nan
-        return res
+        return _ensure_all_unique_ids(
+            results_df=pd.DataFrame(),
+            original_df=df,
+            models_list=models,
+            id_column=id_col,
+        )
 
     res = _compute_metrics_and_consolidate(
         paired_df=paired, models_list=models, id_column=id_col
