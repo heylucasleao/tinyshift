@@ -223,7 +223,7 @@ TinyShift also includes forecast evaluation utilities in the series metrics modu
 
 ```python
 import pandas as pd
-from tinyshift.series import wape, pbias, score, rae, fva_rae
+from tinyshift.series import wape, pbias, score, rmae, fva_rae
 
 # Example evaluation dataframe
 # df must contain actual values in the 'y' column and model predictions as columns
@@ -231,19 +231,19 @@ from tinyshift.series import wape, pbias, score, rae, fva_rae
 wape_df = wape(df, models=["model_a", "model_b"], id_col="unique_id", target_col="y")
 pbias_df = pbias(df, models=["model_a", "model_b"], id_col="unique_id", target_col="y")
 score_df = score(df, models=["model_a", "model_b"], id_col="unique_id", target_col="y")
-rae_df = rae(df, models=["model_a", "model_b"], baseline_col="naive", id_col="unique_id", target_col="y")
+rmae_df = rmae(df, models=["model_a", "model_b"], baseline_col="naive", id_col="unique_id", target_col="y")
 
 # Single-series Forecast Value Added (FVA) analysis
-fva = fva_rae(y_true, y_pred, nlags=1, baseline_type="naive")
-print(f"FVA RAE: {fva}")
+fva = fva_rmae(y_true, y_pred, nlags=1, baseline_type="naive")
+print(f"FVA RMAE: {fva}")
 ```
 
 These utilities cover:
 - `wape`: weighted absolute percentage error for overall accuracy
 - `pbias`: percent bias to detect over- or under-forecasting
 - `score`: composite score combining WAPE and absolute bias
-- `rae`: relative absolute error versus a baseline model
-- `fva_rae`: lead-time-aware RAE for Forecast Value Added analysis
+- `rmae`: relative mean absolute error versus a baseline model
+- `fva_rmae`: lead-time-aware RMAE for Forecast Value Added analysis
 
 ### 7. Forecast Stability and Interpolation
 
