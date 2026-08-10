@@ -8,7 +8,7 @@ import numpy as np
 from scipy.signal import periodogram
 from collections import Counter
 import math
-from .stats import trend_significance
+from .diagnostic import trend_significance
 from scipy import signal
 
 
