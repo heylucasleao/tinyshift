@@ -6,184 +6,188 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 
 ### 1. Outlier Detection & Volatility
 
-- **`hampel_filter`**  
-  Robustly detects outliers using the median and median absolute deviation (MAD) in a moving window.  
-  **When to use:** To identify outliers in time series, sensors, or any data sensitive to extreme noise.
+- **`hampel_filter`**
+  Detects outliers using a robust Hampel filter over a rolling window.
+  **When to use:** To identify localized anomalies in time series data.
 
-- **`bollinger_bands`**  
-  Calculates Bollinger Bands, indicating periods of high or low volatility.  
-  **When to use:** To detect volatility regime changes, breakouts, and overbought/oversold zones.
+- **`bollinger_bands`**
+  Computes Bollinger Bands and flags values outside the expected volatility envelope.
+  **When to use:** To detect volatility breakouts and extreme deviations.
 
 ### 2. Forecastability, Entropy, Intermittency & Complexity
 
-- **`foreca`**  
-  Measures the forecastability (omega index) of a series, based on spectral entropy.  
-  **When to use:** To assess the predictability potential of a series. Values close to 1 indicate strong structure (low entropy), values near 0 indicate noise (high entropy).
+- **`foreca`**
+  Measures the forecastability (ForeCA omega index) of a series from its spectral density.
+  **When to use:** To assess whether a series is structured or noise-like.
 
-- **`adi_cv`**  
-  Calculates Average Days of Inventory (ADI) and Coefficient of Variation (CV), useful for classifying series by intermittency and variability.  
-  **When to use:**  
-    - **High ADI:** intermittent series (e.g., sporadic sales)
-    - **High CV:** erratic/lumpy series (high variability)
-    - **Low ADI & CV:** smooth and predictable series
+- **`adi_cv`**
+  Computes Average Demand Interval (ADI) and Coefficient of Variation (CV).
+  **When to use:** To classify series as intermittent, erratic, or smooth.
 
-- **`sample_entropy` (SampEn)**  
-  Computes Sample Entropy, a robust measure of complexity and irregularity in time series. Low values indicate more regularity (repetitive patterns), high values indicate greater complexity (less repetition, more "randomness").  
-  **When to use:** To quantify the complexity/irregularity of a series, especially in physiological, financial, or industrial contexts. Useful for comparing variability patterns between series or periods.
+- **`sample_entropy`**
+  Calculates Sample Entropy for complexity and irregularity.
+  **When to use:** To quantify unpredictability or regularity in time series.
 
-- **`permutation_entropy`**  
-  Measures permutation entropy, quantifying complexity based on the order of values.  
-  **When to use:** To assess the randomness and ordinal complexity of a series, especially useful for pattern analysis and regime change detection.
+- **`regularity_index`**
+  Computes a regularity score from Sample Entropy.
+  **When to use:** To quantify the temporal consistency of a series.
 
-- **`regularity_index`**  
-  Measures temporal regularity based on Sample Entropy. Values close to 1 indicate high regularity/stability, values near 0 indicate high variability/complexity.  
-  **When to use:** To quantify the consistency and regularity of values over time, useful in biomedical, industrial, and financial applications where magnitude stability matters.
+- **`permutation_entropy`**
+  Computes ordinal complexity using Permutation Entropy.
+  **When to use:** To assess how random the ordering of values is.
 
+- **`theoretical_limit`**
+  Computes the theoretical predictability ceiling (Πmax) based on normalized permutation entropy.
+  **When to use:** To benchmark the maximum ordinal predictability of a series.
 
-- **`theoretical_limit`**  
-  Calculates the theoretical upper limit of predictability (Πmax) based on ordinal patterns, using normalized permutation entropy. Values close to 1 indicate highly regular ordinal patterns, values near 0 indicate random ordinal structure.  
-  **When to use:** To estimate the theoretical predictability ceiling based on directional patterns only, serving as a benchmark for forecasting performance regardless of magnitude.
-
-- **`permutation_auto_mutual_information` (PAMI)**  
-  Measures the information dependency between a time series and itself delayed by a lag, using ordinal patterns. It quantifies how much information the ordinal patterns at time t provide about the ordinal patterns at time t+tau.  
-  **When to use:** To detect non-linear predictive relationships and temporal dependencies in time series. Higher values indicate stronger temporal dependencies between ordinal patterns; values near zero suggest independence.
+- **`permutation_auto_mutual_information`**
+  Computes PAMI between a series and its lagged ordinal patterns.
+  **When to use:** To detect non-linear temporal dependencies in ordinal structure.
 
 ### 3. Forecast Accuracy Metrics
 
-- **`wape`**  
-  Calculates the Weighted Absolute Percentage Error (WAPE) for multiple models, providing an overall accuracy measure that is robust to zero-demand periods.  
-  **When to use:** To compare the overall volume accuracy of forecasting models, especially in supply-chain and demand-planning contexts.
+- **`wape`**
+  Calculates Weighted Absolute Percentage Error for one or more models.
+  **When to use:** To compare volume accuracy across forecasts, even with zero demand.
 
-- **`pbias`**  
-  Measures Percent Bias to identify whether a model systematically overestimates or underestimates the target.  
-  **When to use:** To detect directional forecast drift and assess whether forecasts are consistently too high or too low.
+- **`pbias`**
+  Calculates Percent Bias for directional forecast drift.
+  **When to use:** To detect systematic over- or under-forecasting.
 
-- **`score`**  
-  Computes a composite score defined as WAPE + |PBias|, combining accuracy and bias into a single metric.  
-  **When to use:** To summarize forecast quality with one number when both overall error and systematic bias matter.
+- **`score`**
+  Computes `WAPE + |PBias|` as a combined performance metric.
+  **When to use:** To summarize accuracy and bias in one value.
 
-- **`rmae`**  
-  Calculates the Relative Mean Absolute Error against a baseline forecast.  
-  **When to use:** To evaluate whether a model adds value over a simple benchmark such as a naive or seasonal baseline.
+- **`rmae`**
+  Computes Relative Mean Absolute Error against a baseline forecast.
+  **When to use:** To evaluate whether a model adds value over a benchmark.
 
-- **`fva_rmae`**  
-  Computes a lead-time-aware RMAE for Forecast Value Added analysis.  
-  **When to use:** To assess whether a forecasting model improves decisions relative to a baseline under operational lags.
+- **`fva_rmae`**
+  Computes Forecast Value Added RMAE using naive or moving average baselines.
+  **When to use:** To measure whether a model outperforms operational baselines.
 
-- **`forecast_instability`**  
-  Measures period-over-period forecast instability expressed as a percentage of the average projected volume across paired consecutive periods.  
-  **When to use:** To quantify operational instability of forecasts — how much forecasts change between updates (consecutive origins), useful when monitoring forecast revisions and their impact on planning.
+- **`forecast_instability`**
+  Measures instability across consecutive forecast origins.
+  **When to use:** To quantify forecast nervousness and revision magnitude.
 
-### 4. Trend & Memory
+### 4. Diagnostics & Decomposition
 
-- **`hurst_exponent`**  
-  Estimates the Hurst exponent and p-value for the random walk hypothesis. The Hurst exponent measures trend persistence or long-term memory in a time series.  
-  **When to use:**  
-    - H < 0.5: anti-persistent series (tends to mean-revert)
-    - H ≈ 0.5: random walk
-    - H > 0.5: persistent series (long-term trend)  
-  The p-value indicates whether the random walk hypothesis can be rejected.
+- **`detect_seasonal_periods`**
+  Identifies candidate seasonal periods via FFT and spectral peak detection.
+  **When to use:** To discover seasonality for decomposition or modeling.
 
-- **`relative_strength_index` (RSI)**  
-  Momentum oscillator, useful for identifying overbought/oversold zones and trend strength.
+- **`hurst_exponent`**
+  Estimates the Hurst exponent and a p-value for the random walk hypothesis.
+  **When to use:** To assess long-term memory and trend persistence.
 
-### 4. Forecast Stability Metrics
+- **`trend_significance`**
+  Tests linear trend significance using R² and slope p-value.
+  **When to use:** To determine whether a series has a meaningful linear trend.
 
-- **`macv`**  
-  Calculates Mean Absolute Change Vertical (MAC(V)): measures forecast stability between consecutive forecast origins.  
-  **When to use:** To quantify how much forecasts change between consecutive updates for the same time periods.
+- **`seasonal_significance`**
+  Computes seasonal strength and performs an F-test on a seasonal component.
+  **When to use:** To evaluate whether extracted seasonality is statistically significant.
 
-- **`mach`**  
-  Calculates Mean Absolute Change Horizontal (MAC(H)): measures the smoothness of forecasts within a single prediction horizon.  
-  **When to use:** To assess the horizontal stability and smoothness of forecast curves.
+- **`extract_mstl_components`**
+  Converts `statsmodels` MSTL results into a tidy DataFrame of decomposed components.
+  **When to use:** To work with MSTL decomposition output in tabular form.
 
-- **`mascv`**  
-  Calculates Mean Absolute Scaled Change Vertical (MASC(V)): scaled version of MAC(V) normalized by seasonal variation.  
-  **When to use:** To compare forecast stability across different series or scales, accounting for natural seasonal variation.
+### 5. Forecast Stability Metrics
 
-- **`masch`**  
-  Calculates Mean Absolute Scaled Change Horizontal (MASC(H)): scaled version of MAC(H) normalized by seasonal variation.  
-  **When to use:** To assess horizontal forecast stability in a scale-independent manner.
+- **`macv`**
+  Mean Absolute Change Vertical (MAC(V)) for stability across forecast origins.
+  **When to use:** To measure revision magnitude between consecutive forecast updates.
 
-- **`rmsscv`**  
-  Calculates Root Mean Squared Scaled Change Vertical (RMSSC(V)): RMS version of scaled vertical stability.  
-  **When to use:** When you want to penalize larger forecast revisions more heavily than smaller ones.
+- **`mach`**
+  Mean Absolute Change Horizontal (MAC(H)) for within-horizon smoothness.
+  **When to use:** To assess the smoothness of a forecast window.
 
-- **`rmssch`**  
-  Calculates Root Mean Squared Scaled Change Horizontal (RMSSC(H)): RMS version of scaled horizontal stability.  
-  **When to use:** For horizontal stability assessment with heavier penalization of large variations.
+- **`mascv`**
+  Mean Absolute Scaled Change Vertical (MASC(V)).
+  **When to use:** To compare vertical stability normalized by seasonality.
 
-### 5. Forecast Stabilization
+- **`masch`**
+  Mean Absolute Scaled Change Horizontal (MASC(H)).
+  **When to use:** To compare horizontal stability normalized by seasonality.
 
-- **`vi` (Vertical Interpolation)**  
-  Calculates stable forecasts for specific target time points by linearly combining the latest original forecast with anchor values from the previous origin.  
-  **When to use:** To stabilize forecasts vertically across different forecast origins for the same target time. Supports both Partial VI (PVI) using original forecasts as anchors, and Full VI (FVI) using stabilized forecasts as anchors.
+- **`rmsscv`**
+  Root Mean Squared Scaled Change Vertical (RMSSC(V)).
+  **When to use:** To penalize larger vertical revisions more heavily.
 
-- **`hpi` (Horizontal Partial Interpolation)**  
-  Stabilizes forecasts by combining the original forecast of the current horizon with the original forecast of the previous horizon.  
-  **When to use:** To reduce variability between consecutive forecast horizons and create smoother forecast trajectories while preserving original forecast dynamics.
+- **`rmssch`**
+  Root Mean Squared Scaled Change Horizontal (RMSSC(H)).
+  **When to use:** To penalize larger horizontal revisions more heavily.
 
-- **`hfi` (Horizontal Full Interpolation)**  
-  Blends the stable forecast from the previous horizon with the original forecast of the current horizon to create smooth forecast curves.  
-  **When to use:** To achieve maximum smoothness in forecast trajectories by using previously stabilized values, creating more conservative and stable forecasts across horizons.
+### 6. Forecast Stabilization
 
+- **`vi`**
+  Vertical Interpolation for stabilized forecasts using previous-origin anchors.
+  **When to use:** To stabilize individual forecast points vertically.
 
-### 6. Decomposed Forecasting
+- **`hpi`**
+  Horizontal Partial Interpolation for smoother horizon transitions.
+  **When to use:** To reduce jumpiness between adjacent horizons.
 
-- **`DMSTLWrapper`**
-  A decomposed multi-seasonal forecasting wrapper that applies MSTL to split a series into trend, seasonal, and residual components. It fits statistical models to the trend and seasonal components and an MLForecast pipeline to the residuals, supporting multiple seasonalities, log-transformations, and horizontal stabilization (HPI/HFI).
-  **When to use:** For multi-seasonal or heterogeneous series where you want to model trend, seasonality, and complex residual dynamics separately, especially in long-horizon forecasting and operational planning.
+- **`hfi`**
+  Horizontal Full Interpolation for maximum horizon smoothness.
+  **When to use:** To generate smoother forecast curves using prior stabilized values.
+
+## Notes
+
+- The `series` module exports functions from `outlier`, `forecastability`, `stability`, `interpolation`, `metric`, and `diagnostic`.
+- For decomposed forecasting wrappers such as `DMSTLWrapper`, see `tinyshift.modelling`.
 
 ## Summary: Function Quick Reference
 
 ### Forecastability & Complexity
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
 |----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **Forecastability (ForeCA)**           | 0 → 1         | Forecastability (1 = highly predictable, 0 = noise)       | "How predictable is this time series?"                             |
-| **ADI / CV**                           | ADI: 1 → ∞    | ADI: Intermittency; CV: Variability                        | "Is this series intermittent or erratic?"                          |
-| **Sample Entropy (SampEn)**            | 0 → ∞         | Complexity/regularity (low = more regular, high = more complex) | "How complex or irregular is this time series?"                |
-| **Permutation Entropy**                | 0 → ∞         | Ordinal complexity/randomness (low = more regular, high = more complex) | "How random or complex is the order of this time series?"     |
-| **Regularity Index**                   | 0 → 1         | Temporal regularity (1 = highly regular, 0 = high variability) | "How consistent and regular are the values over time?"            |
-| **Theoretical Limit**                  | 0 → 1         | Theoretical predictability ceiling based on ordinal patterns | "What is the maximum predictability based on directional patterns?" |
-| **Permutation Auto Mutual Information (PAMI)** | 0 → 1     | Measures how much the series' recent behavior helps predict what comes next  | "How much does the series' recent pattern tell us about upcoming values?" |
+| **foreca**                             | 0 → 1         | Forecastability (1 = highly predictable, 0 = noise)       | "How predictable is this time series?"                             |
+| **ADI / CV**                           | ADI: 1 → ∞    | Intermittency and variability                              | "Is this series intermittent or erratic?"                          |
+| **Sample Entropy**                     | 0 → ∞         | Complexity/irregularity                                     | "How complex or irregular is this time series?"                    |
+| **Permutation Entropy**                | 0 → 1         | Ordinal complexity/randomness                               | "How random is the order of this time series?"                     |
+| **Regularity Index**                   | 0 → 1         | Temporal regularity                                         | "How consistent are the values over time?"                        |
+| **Theoretical Limit**                  | 0 → 1         | Predictability ceiling from ordinal structure               | "What is the maximum ordinal predictability?"                     |
+| **PAMI**                               | 0 → ∞         | Lagged ordinal dependency                                   | "How much does recent behavior inform the future?"               |
 
 ### Forecast Accuracy Metrics
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
 |----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **WAPE**                               | 0 → ∞         | Overall forecast accuracy as a percentage of total actual volume | "How far off are my forecasts in aggregate volume terms?"          |
-| **PBias**                              | -∞ → ∞       | Directional bias of forecasts                              | "Am I systematically over- or under-forecasting?"                  |
-| **Score**                              | 0 → ∞         | Composite accuracy and bias metric                         | "How do accuracy and bias trade off in one summary number?"        |
-| **RMAE**                                | 0 → ∞         | Relative error versus a baseline model                    | "Does this model outperform a simple benchmark?"                    |
-| **FVA RMAE**                            | 0 → ∞         | Lead-time-aware RMAE for forecast value added analysis     | "Does this model add value for operational forecasting decisions?" |
-| **Forecast Instability**                        | 0 → ∞         | Period-over-period forecast instability (lower = more stable) | "How much do forecasts change between consecutive origins?"        |
+| **WAPE**                               | 0 → ∞         | Volume-weighted accuracy                                     | "How far off are my forecasts in aggregate volume terms?"          |
+| **PBias**                              | -∞ → ∞       | Directional bias                                             | "Am I systematically over- or under-forecasting?"                  |
+| **Score**                              | 0 → ∞         | Accuracy + bias composite                                    | "How do accuracy and bias trade off in one metric?"               |
+| **RMAE**                               | 0 → ∞         | Value against a baseline                                      | "Does this model outperform a benchmark?"                         |
+| **FVA RMAE**                           | 0 → ∞         | Forecast Value Added                                          | "Does this model add operational value?"                          |
+| **Forecast Instability**               | 0 → ∞         | Revision instability                                           | "How much do forecasts change between origins?"                   |
 
-### Trend & Memory
+### Diagnostics & Decomposition
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
 |----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **Hurst Exponent**                     | 0 → 1         | Trend persistence/long-term memory                         | "Does the series have persistent trend or mean-revert?"            |
-| **Relative Strength Index (RSI)**      | 0 → 100       | Relative strength/momentum index                           | "Is the series overbought or oversold?"                            |
+| **detect_seasonal_periods**            | N/A           | Candidate season length detection                            | "What are the dominant season lengths?"                            |
+| **Hurst Exponent**                     | 0 → 1         | Trend persistence / long memory                              | "Does the series have long-term memory?"                          |
+| **Trend Significance**                 | 0 → 1         | Linear trend strength and significance                        | "Is there a meaningful linear trend?"                             |
+| **Seasonal Significance**              | 0 → 1         | Seasonal strength and significance                            | "Is seasonality statistically significant?"                      |
+| **extract_mstl_components**            | N/A           | MSTL decomposition extraction                                 | "How do I convert MSTL output into a DataFrame?"                 |
 
 ### Forecast Stability Metrics
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
 |----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **MAC(V)**                             | 0 → ∞         | Vertical forecast stability (lower = more stable)          | "How much do my forecasts change between updates?"                  |
-| **MAC(H)**                             | 0 → ∞         | Horizontal forecast stability (lower = smoother)           | "How smooth are my forecast curves?"                                |
-| **MASC(V)**                            | 0 → ∞         | Scaled vertical stability (lower = more stable)            | "How stable are forecasts relative to natural variation?"           |
-| **MASC(H)**                            | 0 → ∞         | Scaled horizontal stability (lower = smoother)             | "How smooth are forecasts relative to seasonal patterns?"           |
-| **RMSSC(V)**                           | 0 → ∞         | RMS scaled vertical stability (penalizes large changes)    | "How stable are forecasts with emphasis on large revisions?"        |
-| **RMSSC(H)**                           | 0 → ∞         | RMS scaled horizontal stability (penalizes large changes)  | "How smooth are forecasts with emphasis on large variations?"       |
-
+| **MAC(V)**                             | 0 → ∞         | Vertical stability across origins                             | "How much do forecasts change between updates?"                   |
+| **MAC(H)**                             | 0 → ∞         | Horizontal smoothness in one window                           | "How smooth is the forecast curve?"                               |
+| **MASC(V)**                            | 0 → ∞         | Scaled vertical stability                                      | "How stable are forecasts relative to seasonality?"               |
+| **MASC(H)**                            | 0 → ∞         | Scaled horizontal stability                                    | "How smooth are forecasts relative to seasonality?"              |
+| **RMSSC(V)**                           | 0 → ∞         | RMS scaled vertical stability                                  | "How stable are large vertical revisions?"                       |
+| **RMSSC(H)**                           | 0 → ∞         | RMS scaled horizontal stability                                | "How stable are large horizontal revisions?"                     |
 
 ### Forecast Stabilization
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
 |----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **Vertical Interpolation (VI)**        | Depends on data | Stabilized forecast for target time points                 | "How can I stabilize forecasts across different origins?"          |
-| **Horizontal Partial Interpolation (HPI)** | Depends on data | Smoothed forecasts using original previous horizons        | "How can I smooth forecasts while preserving dynamics?"            |
-| **Horizontal Full Interpolation (HFI)** | Depends on data | Fully stabilized forecasts using stable previous horizons | "How can I create maximally smooth and stable forecast curves?"    |
-
+| **VI**                                 | Depends on data | Vertical forecast stabilization                               | "How can I stabilize individual forecast points?"                 |
+| **HPI**                                | Depends on data | Partial horizontal smoothing                                   | "How can I smooth jumps between adjacent horizons?"              |
+| **HFI**                                | Depends on data | Full horizontal smoothing                                      | "How can I create a maximally smooth forecast trajectory?"       |
 
 ### Outlier Detection & Stats
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
 |----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **Hampel Filter**                      | 0 or 1        | Outlier presence (per point)                               | "Is this point an outlier relative to its local window?"           |
-| **Bollinger Bands**                    | 0 or 1        | Signals breakouts and volatility regimes                   | "Is the value outside the expected volatility range?"              |
+| **Hampel Filter**                      | 0 or 1        | Local outlier detection                                       | "Is this point an outlier relative to its local window?"          |
+| **Bollinger Bands**                    | 0 or 1        | Volatility breakout detection                                 | "Is the value outside the expected volatility range?"            |

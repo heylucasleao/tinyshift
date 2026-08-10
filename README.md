@@ -224,7 +224,7 @@ TinyShift also includes forecast evaluation utilities in the series metrics modu
 
 ```python
 import pandas as pd
-from tinyshift.series import wape, pbias, score, rmae, fva_rae
+from tinyshift.series import wape, pbias, score, rmae, fva_rmae
 
 # Example evaluation dataframe
 # df must contain actual values in the 'y' column and model predictions as columns
@@ -283,7 +283,19 @@ smooth_forecast = hpi(y_hat, w_s=0.4)
 fully_stable_forecast = hfi(y_hat, w_s=0.5)
 ```
 
-### 8. Advanced Modeling Tools
+### 8. Modelling Utilities and Time-Series Feature Tools
+
+The `tinyshift.modelling` package contains preprocessing and forecasting wrappers for machine learning workflows:
+
+- `filter_features_by_vif` — remove highly correlated features using VIF filtering
+- `FeatureResidualizer` — residualize correlated predictors while preserving information
+- `RobustGaussianScaler` — robust scaling with winsorization and power transforms
+- `DMSTLWrapper` — decomposed MSTL forecasting wrapper for panel/multi-seasonal data
+- `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
+
+Use `tinyshift.modelling` when you need preprocessors and decomposition-aware forecasting tools that complement the core `tinyshift.series` diagnostics and stability metrics.
+
+### 9. Advanced Modeling Tools
 
 ```python
 from tinyshift.modelling import filter_features_by_vif
@@ -298,7 +310,7 @@ X_train = X_train.astype({x: float for x in preprocess_columns})
 X_train.loc[:, preprocess_columns] = residualizer.transform(X_train[preprocess_columns])
 
 # Detect multicollinearity
-mask = filter_features_by_vif(X_train, trehshold=5, verbose=True)
+mask = filter_features_by_vif(X_train, threshold=5, verbose=True)
 X_train.columns = X_train.columns[mask]
 X_test.columns = X_test.columns[mask]
 
@@ -320,7 +332,7 @@ confidence_interval = bootstrap_bca_interval(
 TinyShift also includes a decomposed multi-seasonal forecasting wrapper for panel or long-horizon forecasting tasks:
 
 ```python
-from tinyshift.series import DMSTLWrapper
+from tinyshift.modelling import DMSTLWrapper
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
 
@@ -363,9 +375,11 @@ tinyshift/
 │   └── ts_diagnostics.ipynb   # Time series diagnostics
 ├── modelling/                  # ML modeling utilities
 │   ├── README.md              # Module documentation
+│   ├── dmstl.py               # DMSTL decomposed forecasting wrapper
 │   ├── multicollinearity.py   # VIF-based multicollinearity detection
-│   ├── residualizer.py        # Residualizer Feature
-│   └── scaler.py              # Custom scaling transformations
+│   ├── residualizer.py        # Residualizer feature
+│   ├── scaler.py              # Custom scaling transformations
+│   └── ts_features.py         # Time-series feature engineering
 ├── outlier/                    # Outlier detection algorithms
 │   └── README.md              # Module documentation
 │   ├── base.py                 # Base outlier detection classes
@@ -378,8 +392,8 @@ tinyshift/
 │   ├── correlation.py          # Correlation analysis plots
 │   └── diagnostic.py           # Time series diagnostics plots
 ├── series/                     # Time series analysis tools
-│   └── README.md              # Module documentation
-│   ├── dmstl.py               # Decomposed multi-seasonal forecasting wrapper
+│   ├── README.md              # Module documentation
+│   ├── diagnostic.py          # Time series diagnostics and decomposition
 │   ├── forecastability.py     # Forecast quality and complexity metrics
 │   ├── interpolation.py       # Forecast stabilization methods
 │   ├── metric.py              # Forecast accuracy and stability metrics
