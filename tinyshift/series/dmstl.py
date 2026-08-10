@@ -1,7 +1,11 @@
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
 import copy
 import pandas as pd
 import numpy as np
-from typing import Literal
+from typing import Literal, Union, List, Tuple
 from sklearn.base import BaseEstimator, RegressorMixin
 from statsmodels.tsa.seasonal import MSTL, DecomposeResult
 from statsforecast import StatsForecast
@@ -17,19 +21,18 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     Decomposes multi-seasonal time series into trend, seasonal, and residual
     components using MSTL. Fits statistical base models on trend and seasonal
     components via StatsForecast, while modelling complex non-linear residual
-    dynamics using MLForecast. Optionally applies log-additive transformations
-    (Box-Cox/Log-1p) and horizontal stabilization (HPI/HFI).
+    dynamics using MLForecast (which can hold single or multiple estimators).
+    Optionally applies log-additive transformations (Box-Cox/Log-1p) and
+    horizontal stabilization (HPI/HFI).
 
     Parameters
     ----------
     mf_resid : MLForecast
-        Base MLForecast pipeline configured with machine learning estimators
-        to fit the residual component.
+        Base MLForecast pipeline configured with one or multiple machine
+        learning estimators (e.g., `models=[LGBMRegressor(), XGBRegressor()]`)
+        to fit the residual component. Must have `freq` defined.
     season_length : int or list of int
         Seasonal period(s) passed directly to MSTL decomposition.
-    freq : str or int, optional
-        Frequency of the time series (e.g., 'D', 'H', 1). If None, attempts
-        to infer from `mf_resid.freq`.
     trend_model : StatsForecast model, optional
         Statistical model instance for the trend component. Defaults to
         AutoETS(model="MMN") if None.
@@ -50,7 +53,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     season_length_ : list of int
         Formatted list of seasonal lengths.
     freq_ : str or int
-        Effective time series frequency.
+        Effective time series frequency retrieved from `mf_resid.freq`.
     trend_model_ : StatsForecast model
         Configured trend model.
     seasonal_model_ : list of StatsForecast models
@@ -84,20 +87,40 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     def __init__(
         self,
         mf_resid: MLForecast,
-        season_length: int | list[int],
-        freq: str | int | None = None,
+        season_length: Union[int, List[int]],
         trend_model=None,
         seasonal_model=None,
         log_transform: bool = False,
-    ):
+    ) -> None:
         self.mf_resid = mf_resid
         self.season_length = season_length
-        self.freq = freq
         self.trend_model = trend_model
         self.seasonal_model = seasonal_model
         self.log_transform = log_transform
 
-    def _get_model_cols(self, df: pd.DataFrame) -> list[str]:
+    def _extract_freq(self) -> Union[str, int]:
+        """
+        Extract and validate the frequency from the MLForecast instance.
+
+        Returns
+        -------
+        freq : str or int
+            Frequency set in the MLForecast instance.
+
+        Raises
+        ------
+        ValueError
+            If `mf_resid.freq` is missing or None.
+        """
+        freq = getattr(self.mf_resid, "freq", None)
+        if freq is None:
+            raise ValueError(
+                "The provided MLForecast instance does not have 'freq' defined. "
+                "Ensure 'freq' is set when instantiating MLForecast."
+            )
+        return freq
+
+    def _get_model_cols(self, df: pd.DataFrame) -> List[str]:
         """
         Extract model prediction column names from a forecasted DataFrame.
 
@@ -144,7 +167,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
     def _process_components(
         self, components_df: pd.DataFrame
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Impute missing values and aggregate trend, seasonal, and residual signals.
 
@@ -169,7 +192,12 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         return trend_part, seasonal_part, residual_part
 
     def _fit_statsforecast(
-        self, models, values: np.ndarray, dates: pd.Series, uid, freq
+        self,
+        models,
+        values: np.ndarray,
+        dates: pd.Series,
+        uid: Union[str, int],
+        freq: Union[str, int],
     ) -> StatsForecast:
         """
         Fit a StatsForecast pipeline on a single component series.
@@ -202,7 +230,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self, group: pd.DataFrame, residual_part: np.ndarray, prediction_intervals=None
     ) -> MLForecast:
         """
-        Fit an MLForecast pipeline on the extracted residual component.
+        Fit a isolated copy of the base MLForecast pipeline on the extracted residual component.
 
         Parameters
         ----------
@@ -215,8 +243,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
         Returns
         -------
-        mf_resid : MLForecast
-            Fitted deep copy of the MLForecast instance.
+        fitted_mf : MLForecast
+            Fitted deep copy of the base MLForecast instance.
         """
         df_residual = group[[self.id_col_, self.time_col_] + self.exog_cols_].copy()
         df_residual[self.target_col_] = residual_part
@@ -238,7 +266,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         time_col: str = "ds",
         target_col: str = "y",
         prediction_intervals=None,
-    ):
+    ) -> "DMSTLWrapper":
         """
         Fit MSTL decomposition and sub-models for each unique group in the data.
 
@@ -263,22 +291,14 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Raises
         ------
         ValueError
-            If frequency is not specified in init or inferred from `mf_resid`.
+            If `mf_resid.freq` is missing or invalid.
         """
         self.season_length_ = (
             [self.season_length]
             if isinstance(self.season_length, int)
             else self.season_length
         )
-        self.freq_ = (
-            self.freq if self.freq is not None else getattr(self.mf_resid, "freq", None)
-        )
-
-        if self.freq_ is None:
-            raise ValueError(
-                "Parameter 'freq' must be explicitly provided in DMSTLWrapper "
-                "or pre-defined in the 'mf_resid' instance."
-            )
+        self.freq_ = self._extract_freq()
 
         self.trend_model_ = (
             self.trend_model if self.trend_model is not None else AutoETS(model="MMN")
@@ -325,14 +345,14 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             sf_seasonal = self._fit_statsforecast(
                 self.seasonal_model_, seasonal_part, dates, uid, self.freq_
             )
-            mf_resid = self._fit_mlforecast(
+            fitted_mf = self._fit_mlforecast(
                 group_sorted, residual_part, prediction_intervals
             )
 
             self.fitted_models_[uid] = {
                 "trend": sf_trend,
                 "seasonal": sf_seasonal,
-                "residual": mf_resid,
+                "residual": fitted_mf,
             }
 
         return self
@@ -376,7 +396,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self,
         h: int,
         X_df: pd.DataFrame | None = None,
-        level: list[int | float] | None = None,
+        level: List[Union[int, float]] | None = None,
         stabilization_method: Literal["hpi", "hfi"] | None = None,
         w_s: float = 0.0,
     ) -> pd.DataFrame:
@@ -399,7 +419,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Returns
         -------
         preds_df : pd.DataFrame
-            DataFrame with predictions, unique IDs, timestamps, and optional prediction interval columns.
+            DataFrame with predictions from all MLForecast estimators, unique IDs, timestamps,
+            and optional prediction interval columns.
 
         Raises
         ------
