@@ -7,11 +7,11 @@ import pandas as pd
 import numpy as np
 from typing import Literal, Union, List, Tuple
 from sklearn.base import BaseEstimator, RegressorMixin
-from statsmodels.tsa.seasonal import MSTL, DecomposeResult
+from statsmodels.tsa.seasonal import MSTL
 from statsforecast import StatsForecast
 from statsforecast.models import AutoETS, SeasonalNaive
 from mlforecast import MLForecast
-from tinyshift.series import hpi, hfi
+from tinyshift.series import hpi, hfi, extract_mstl_components
 
 
 class DMSTLWrapper(BaseEstimator, RegressorMixin):
@@ -135,35 +135,6 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             Columns representing model outputs (excluding id and time columns).
         """
         return [c for c in df.columns if c not in [self.id_col_, self.time_col_]]
-
-    def _extract_components_df(self, result: DecomposeResult) -> pd.DataFrame:
-        """
-        Extract decomposed components from a statsmodels MSTL DecomposeResult.
-
-        Parameters
-        ----------
-        result : DecomposeResult
-            Fitted MSTL decomposition result object.
-
-        Returns
-        -------
-        components_df : pd.DataFrame
-            Structured DataFrame containing original data, trend, seasonal,
-            and residual components.
-        """
-        df = pd.DataFrame()
-        df["data"] = result.observed
-        df["trend"] = result.trend
-
-        seasonal = np.asarray(result.seasonal)
-        if seasonal.ndim == 1:
-            df["seasonal"] = seasonal
-        else:
-            for i in range(seasonal.shape[1]):
-                df[f"seasonal_{i}"] = seasonal[:, i]
-
-        df["resid"] = result.resid
-        return df
 
     def _process_components(
         self, components_df: pd.DataFrame
@@ -334,7 +305,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
             mstl = MSTL(y_series, periods=self.season_length_)
             res = mstl.fit()
-            components_df = self._extract_components_df(res)
+            components_df = extract_mstl_components(res, self.season_length_)
             trend_part, seasonal_part, residual_part = self._process_components(
                 components_df
             )

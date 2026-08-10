@@ -8,6 +8,7 @@ import numpy as np
 import scipy
 import math
 import pandas as pd
+from statsmodels.tsa.seasonal import DecomposeResult
 
 
 def hurst_exponent(
@@ -262,6 +263,130 @@ def trend_significance(
     r_squared = r_value**2
 
     return r_squared, p_value
+
+
+def seasonal_significance(
+    y_detrended: Union[np.ndarray, List[float], pd.Series],
+    seasonal_component: Union[np.ndarray, List[float], pd.Series],
+    residuals: Union[np.ndarray, List[float], pd.Series],
+    period: int,
+) -> Tuple[float, float, float]:
+    """
+    Calculates seasonal strength (Hyndman's metric) and performs an F-test
+    for seasonal significance using harmonic regression terms.
+
+    Parameters
+    ----------
+    y_detrended : Union[np.ndarray, List[float], pd.Series]
+        The time series data after trend removal.
+    seasonal_component : Union[np.ndarray, List[float], pd.Series]
+        The extracted seasonal component for the given period.
+    residuals : Union[np.ndarray, List[float], pd.Series]
+        The residual component from the decomposition.
+    period : int
+        The length of the seasonal cycle (e.g., 7 for weekly, 12 for monthly).
+
+    Returns
+    -------
+    Tuple[float, float, float]
+        (strength, f_stat, p_value)
+        strength : float
+            Seasonal strength index ranging from 0 to 1.
+        f_stat : float
+            F-statistic testing the joint significance of harmonic terms.
+        p_value : float
+            p-value corresponding to the F-test.
+    """
+    y_detrended = np.asarray(y_detrended, dtype=np.float64)
+    seasonal_component = np.asarray(seasonal_component, dtype=np.float64)
+    residuals = np.asarray(residuals, dtype=np.float64)
+
+    var_resid = np.var(residuals, ddof=1)
+    var_seas_resid = np.var(seasonal_component + residuals, ddof=1)
+    strength = (
+        max(0.0, 1.0 - (var_resid / var_seas_resid)) if var_seas_resid > 0 else 0.0
+    )
+
+    n = len(y_detrended)
+    t = np.arange(n)
+    sin_t = np.sin(2 * np.pi * t / period)
+    cos_t = np.cos(2 * np.pi * t / period)
+    X_design = np.column_stack([np.ones(n), sin_t, cos_t])
+
+    beta, _, _, _ = np.linalg.lstsq(X_design, y_detrended, rcond=None)
+    y_pred = X_design @ beta
+    ss_tot = np.sum((y_detrended - np.mean(y_detrended)) ** 2)
+    ss_res = np.sum((y_detrended - y_pred) ** 2)
+    ss_reg = ss_tot - ss_res
+
+    df_reg = 2
+    df_res = n - 3
+
+    if df_res > 0 and ss_res > 0:
+        f_stat = (ss_reg / df_reg) / (ss_res / df_res)
+        p_val = scipy.stats.f.sf(f_stat, df_reg, df_res)
+    else:
+        f_stat, p_val = 0.0, 1.0
+
+    return float(strength), float(f_stat), float(p_val)
+
+
+def extract_mstl_components(
+    result: DecomposeResult, period_list: List[int]
+) -> pd.DataFrame:
+    """
+    Transforms a statsmodels MSTL decomposition result into a structured DataFrame.
+
+    Extracts observed data, trend, seasonal component(s), and residual signals
+    from a fitted `DecomposeResult` instance and maps them into explicit,
+    identifiable column names.
+
+    Parameters
+    ----------
+    result : DecomposeResult
+        Fitted decomposition output object obtained from calling `.fit()`
+        on a `statsmodels.tsa.seasonal.MSTL` instance.
+    periods : int or list of int
+        Seasonal period(s) used during the MSTL fit procedure. Used to dynamically
+        suffix seasonal column names (e.g., `seasonal_7`, `seasonal_365`). Must match
+        the order and number of periods passed to the original MSTL estimator.
+
+    Returns
+    -------
+    components_df : pd.DataFrame
+        Structured DataFrame containing the unnested decomposition components:
+        - ``data`` : Original observed time series values.
+        - ``trend`` : Extracted smoothed trend component.
+        - ``seasonal_<period>`` : Individual seasonal component for each specified period.
+          If a single period is provided, the column is named ``seasonal_<period>``.
+        - ``resid`` : Remaining unexplained residual noise component.
+
+    Raises
+    ------
+    ValueError
+        If the number of provided periods does not match the number of seasonal
+        channels present in the `DecomposeResult` instance.
+    TypeError
+        If `result` is not an instance of `DecomposeResult`.
+    """
+
+    if not isinstance(result, DecomposeResult):
+        raise TypeError(
+            f"Expected 'result' to be a statsmodels DecomposeResult, got {type(result).__name__}."
+        )
+    df = pd.DataFrame()
+    df["data"] = result.observed
+    df["trend"] = result.trend
+
+    seasonal = np.asarray(result.seasonal)
+    if seasonal.ndim == 1:
+        df[f"seasonal_{period_list[0]}"] = seasonal
+    else:
+        for i, p in enumerate(period_list):
+            df[f"seasonal_{p}"] = seasonal[:, i]
+
+    df["resid"] = result.resid
+    return df
 
 
 def fourier_seasonality(
