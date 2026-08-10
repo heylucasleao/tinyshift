@@ -332,7 +332,7 @@ def seasonal_significance(
 
 
 def extract_mstl_components(
-    result: DecomposeResult, period_list: List[int]
+    result: DecomposeResult, periods: Union[int, List[int]]
 ) -> pd.DataFrame:
     """
     Transforms a statsmodels MSTL decomposition result into a structured DataFrame.
@@ -369,16 +369,26 @@ def extract_mstl_components(
     TypeError
         If `result` is not an instance of `DecomposeResult`.
     """
-
     if not isinstance(result, DecomposeResult):
         raise TypeError(
             f"Expected 'result' to be a statsmodels DecomposeResult, got {type(result).__name__}."
         )
+
+    period_list = [periods] if isinstance(periods, int) else list(periods)
+
     df = pd.DataFrame()
     df["data"] = result.observed
     df["trend"] = result.trend
 
     seasonal = np.asarray(result.seasonal)
+
+    n_seasonal_channels = 1 if seasonal.ndim == 1 else seasonal.shape[1]
+    if len(period_list) != n_seasonal_channels:
+        raise ValueError(
+            f"Number of provided periods ({len(period_list)}) does not match "
+            f"the number of seasonal components in result ({n_seasonal_channels})."
+        )
+
     if seasonal.ndim == 1:
         df[f"seasonal_{period_list[0]}"] = seasonal
     else:
