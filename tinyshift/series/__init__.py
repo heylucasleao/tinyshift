@@ -9,3 +9,4 @@ from .stats import *
 from .stability import *
 from .interpolation import *
 from .metric import *
+from .dmstl import *
