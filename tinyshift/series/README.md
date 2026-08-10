@@ -128,6 +128,12 @@ The `series` module of tinyshift provides quantitative tools for time series ana
   **When to use:** To achieve maximum smoothness in forecast trajectories by using previously stabilized values, creating more conservative and stable forecasts across horizons.
 
 
+### 6. Decomposed Forecasting
+
+- **`DMSTLWrapper`**
+  A decomposed multi-seasonal forecasting wrapper that applies MSTL to split a series into trend, seasonal, and residual components. It fits statistical models to the trend and seasonal components and an MLForecast pipeline to the residuals, supporting multiple seasonalities, log-transformations, and horizontal stabilization (HPI/HFI).
+  **When to use:** For multi-seasonal or heterogeneous series where you want to model trend, seasonality, and complex residual dynamics separately, especially in long-horizon forecasting and operational planning.
+
 ## Summary: Function Quick Reference
 
 ### Forecastability & Complexity

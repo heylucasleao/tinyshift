@@ -13,6 +13,7 @@ For enterprise-grade solutions, consider [Nannyml](https://github.com/NannyML/na
 - **Outlier Detection**: **HBOS**, **PCA-based** and **SPAD** outlier detection algorithms  
 - **Classification Model Evaluation**: Calibration curves, confusion matrices, score distributions, and production confidence analysis
 - **Time Series Analysis**: Seasonality decomposition, trend analysis, forecasting diagnostics, and forecast stabilization
+- **Decomposed Forecasting**: DMSTL-based multi-seasonal forecasting for panel and long-horizon series
 - **Forecast Stability**: Metrics and interpolation methods for stable forecasting
 
 ## Technologies Used
@@ -314,6 +315,32 @@ confidence_interval = bootstrap_bca_interval(
 )
 ```
 
+### 9. Decomposed Forecasting with DMSTL
+
+TinyShift also includes a decomposed multi-seasonal forecasting wrapper for panel or long-horizon forecasting tasks:
+
+```python
+from tinyshift.series import DMSTLWrapper
+from mlforecast import MLForecast
+from sklearn.ensemble import RandomForestRegressor
+
+mf_resid = MLForecast(
+    models=[RandomForestRegressor(random_state=42)],
+    freq="D",
+)
+
+model = DMSTLWrapper(
+    mf_resid=mf_resid,
+    season_length=[7, 365],
+    log_transform=True,
+)
+
+model.fit(df, id_col="unique_id", time_col="ds", target_col="y")
+
+preds = model.predict(h=14, stabilization_method="hfi", w_s=0.2)
+print(preds.head())
+```
+
 ## 📁 Project Structure
 
 ```
@@ -352,6 +379,7 @@ tinyshift/
 │   └── diagnostic.py           # Time series diagnostics plots
 ├── series/                     # Time series analysis tools
 │   └── README.md              # Module documentation
+│   ├── dmstl.py               # Decomposed multi-seasonal forecasting wrapper
 │   ├── forecastability.py     # Forecast quality and complexity metrics
 │   ├── interpolation.py       # Forecast stabilization methods
 │   ├── outlier.py             # Time series outlier detection
