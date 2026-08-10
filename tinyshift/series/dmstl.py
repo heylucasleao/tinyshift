@@ -301,7 +301,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self.freq_ = self._extract_freq()
 
         self.trend_model_ = (
-            self.trend_model if self.trend_model is not None else AutoETS(model="MMN")
+            self.trend_model if self.trend_model is not None else AutoETS(model="ZZN")
         )
 
         if self.seasonal_model is not None:

@@ -233,7 +233,27 @@ def stationarity_analysis(
 
     Notes
     -----
-    Confidence bands are shown on ACF and PACF plots at ±1.96/√N level.
+    Statistical Diagnostics Overview:
+
+    1. Augmented Dickey-Fuller (ADF) Test:
+       - Evaluates the presence of a unit root (non-stationarity).
+       - Null Hypothesis (H0): The series has a unit root (is non-stationary).
+       - Alternative Hypothesis (H1): The series is stationary.
+       - A low p-value (p < 0.05) rejects H0, indicating the
+         series is stationary. A strong negative ADF statistic confirms rejection.
+
+    2. Autocorrelation Function (ACF):
+       - Measures linear correlation between the series and lagged values of itself.
+       - Slow linear decay indicates non-stationarity or trend.
+         In stationary series, significant spikes identify MA(q) process orders.
+         Periodic spikes indicate seasonal components.
+
+    3. Partial Autocorrelation Function (PACF):
+       - Measures direct correlation between the series and lags, controlling for
+         intermediate lags.
+       - Direct cutoff after lag `p` identifies AR(p) process orders.
+
+    Confidence bands are displayed on ACF and PACF plots at the ±1.96/√N level (95% CI).
     """
     nlags = min(nlags, (len(df) // 2) - 1)
 
@@ -410,7 +430,30 @@ def residual_analysis(
 
     Notes
     -----
-    Confidence bands are shown on ACF and PACF plots at ±1.96/√N level.
+    Statistical Diagnostics Overview:
+
+    1. Ljung-Box Test (Autocorrelation):
+       - Evaluates whether residuals are independently distributed (white noise).
+       - Null Hypothesis (H0): Residuals are i.i.d. (no autocorrelation up to lag `nlags`).
+       - Alternative Hypothesis (H1): Residuals exhibit autocorrelation.
+       - A high p-value (p > 0.05) fails to reject H0, confirming that
+         residuals behave as white noise and no dynamic pattern was left unmodeled.
+
+    2. Engle's LM-ARCH Test (Heteroscedasticity):
+       - Assesses Autoregressive Conditional Heteroscedasticity (volatility clustering).
+       - Null Hypothesis (H0): Residuals are homoscedastic (constant variance over time).
+       - Alternative Hypothesis (H1): ARCH effects are present (time-varying variance).
+       - A high p-value (p > 0.05) fails to reject H0, confirming
+         homoscedasticity across time lags.
+
+    3. Histogram & Density:
+       - Visualizes the empirical distribution of residuals.
+       - A symmetric, bell-shaped curve centered at zero.
+
+    4. Quantile-Quantile (QQ) Plot:
+       - Compares residual quantiles against standard normal distribution quantiles.
+       - Points closely aligning along the red 45-degree theoretical
+         line. Deviations at the tails indicate heavy tails or skewness.
     """
     nlags = min(nlags, len(df) // 5)
 
