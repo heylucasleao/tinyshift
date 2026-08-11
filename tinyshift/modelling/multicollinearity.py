@@ -8,6 +8,7 @@ import numpy as np
 from sklearn.utils.validation import check_array
 from joblib import Parallel, delayed
 from sklearn.linear_model import LinearRegression
+import pandas as pd
 
 
 def filter_features_by_vif(
