@@ -81,6 +81,22 @@ class TestTimeSeriesFeatures:
         assert np.isnan(result[0])
         assert np.isfinite(result[1:]).all()
 
+    def test_standardize_returns_can_skip_standardization(self):
+        x = np.array([1.0, 2.0, 4.0, 8.0])
+
+        result = standardize_returns(x, standardize=False)
+
+        assert result.shape == (4,)
+        assert np.isnan(result[0])
+        np.testing.assert_allclose(
+            result[1:],
+            np.log(np.array([2.0, 4.0, 8.0]) / np.array([1.0, 2.0, 4.0])),
+        )
+
+    def test_relative_strength_index_rejects_multidimensional_input(self):
+        with pytest.raises(ValueError, match="1-dimensional"):
+            relative_strength_index(np.array([[1.0, 2.0], [3.0, 4.0]]))
+
     def test_fourier_seasonality_adds_sine_and_cosine_features(self):
         df = pd.DataFrame({"ds": pd.date_range("2024-01-01", periods=7, freq="D")})
 
@@ -92,6 +108,12 @@ class TestTimeSeriesFeatures:
 
     def test_estimate_history_length_uses_rule_of_thumb(self):
         assert estimate_history_length(seasonal_period=7, horizon=14) == 17
+
+    def test_fourier_seasonality_raises_for_unknown_seasonality(self):
+        df = pd.DataFrame({"ds": pd.date_range("2024-01-01", periods=3, freq="D")})
+
+        with pytest.raises(ValueError, match="Unknown seasonality"):
+            fourier_seasonality(df, time_col="ds", seasonality=["weekly", "unknown"])
 
 
 class TestDMSTLWrapper:

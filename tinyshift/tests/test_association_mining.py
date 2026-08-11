@@ -68,3 +68,23 @@ class TestTransactionAnalyzer:
         assert matrix.shape == (1, 2)
         assert matrix.loc["apple", "beer"] >= 0
         assert matrix.loc["apple", "milk"] >= 0
+
+    def test_unknown_metric_raises(self):
+        analyzer = TransactionAnalyzer()
+        analyzer.fit([["apple", "beer"]])
+
+        with pytest.raises(ValueError):
+            analyzer.correlation_matrix(["apple"], ["beer"], metric="unknown")
+
+    def test_transform_before_fit_raises(self):
+        analyzer = TransactionAnalyzer()
+
+        with pytest.raises(ValueError, match="fitted"):
+            analyzer.transform([["apple"]])
+
+    def test_missing_item_raises_key_error(self):
+        analyzer = TransactionAnalyzer()
+        analyzer.fit([["apple", "beer"]])
+
+        with pytest.raises(KeyError):
+            analyzer.lift("apple", "milk")

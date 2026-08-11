@@ -72,6 +72,26 @@ class TestDiagnostic:
         assert list(df.columns) == ["data", "trend", "seasonal_4", "resid"]
         assert df.shape[0] == 6
 
+    def test_extract_mstl_components_raises_for_wrong_period_count(self):
+        result = DecomposeResult(
+            observed=np.arange(6, dtype=float),
+            trend=np.arange(6, dtype=float) + 0.1,
+            seasonal=np.array(
+                [[0.0, 1.0], [1.0, 0.0], [0.0, 1.0], [1.0, 0.0], [0.0, 1.0], [1.0, 0.0]]
+            ),
+            resid=np.zeros(6, dtype=float),
+            weights=None,
+        )
+        with pytest.raises(ValueError):
+            extract_mstl_components(result, periods=[4])
+
+    def test_detect_seasonal_periods_raises_for_invalid_input(self):
+        with pytest.raises(ValueError):
+            detect_seasonal_periods(np.array([1.0, 2.0, 3.0]))
+
+        with pytest.raises(ValueError):
+            detect_seasonal_periods(np.array([1.0, 2.0, 3.0, 4.0]), top_k=0)
+
 
 class TestForecastability:
     def test_foreca(self):
@@ -115,6 +135,10 @@ class TestInterpolation:
     def test_vi(self):
         fc = vi(np.array([1.0, 2.0]), np.array([3.0, 4.0]), 0.5)
         np.testing.assert_allclose(fc, np.array([2.0, 3.0]))
+
+    def test_vi_with_scalar_input(self):
+        fc = vi(np.array([1.0, 2.0]), np.array([3.0, 4.0]), 0.0)
+        np.testing.assert_allclose(fc, np.array([1.0, 2.0]))
 
     def test_hpi(self):
         fc = hpi(np.array([1.0, 2.0, 3.0]), 0.5)

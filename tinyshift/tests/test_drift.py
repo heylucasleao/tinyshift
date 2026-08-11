@@ -36,6 +36,13 @@ class TestCatDrift:
         assert "drift" in predictions.columns
         assert predictions["drift"].dtype == bool
 
+    def test_invalid_method_and_function_raise(self):
+        with pytest.raises(ValueError):
+            CatDrift(freq="D", method="invalid")
+
+        with pytest.raises(ValueError):
+            CatDrift(freq="D", func="invalid")
+
 
 class TestConDrift:
     def test_fit_and_predict(self):
