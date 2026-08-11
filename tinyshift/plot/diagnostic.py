@@ -717,7 +717,7 @@ def forest_plot(
     fig_type: Optional[str] = None,
     height: int = 500,
     width: int = 700,
-) -> go.Figure:
+):
     """
     Creates a forest-style plot of group means with their confidence intervals.
 
