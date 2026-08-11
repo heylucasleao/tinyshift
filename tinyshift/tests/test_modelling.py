@@ -1,5 +1,9 @@
-from types import SimpleNamespace
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
 
+
+from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
