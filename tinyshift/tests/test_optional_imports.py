@@ -1,17 +1,29 @@
-import unittest
 from unittest.mock import patch
 
+import pandas as pd
+import pytest
+
+from tinyshift.modelling.dmstl import DMSTLWrapper
 from tinyshift.plot.calibration import efficiency_curve
+from tinyshift.plot.correlation import corr_heatmap
+from tinyshift.plot.diagnostic import seasonal_decompose, stationarity_analysis
+from tinyshift.plot.power import power_curve
 
 
-class OptionalImportTests(unittest.TestCase):
-    def test_plot_functions_use_the_plot_extra_in_error_message(self):
-        with patch(
-            "tinyshift.utils.imports.importlib.util.find_spec", return_value=None
-        ):
-            with self.assertRaisesRegex(ImportError, r"tinyshift\[plot\]"):
-                efficiency_curve(clf=None, X=[[0]], y=[0])
+def test_optional_dependency_guards_raise_the_expected_error():
+    with patch("tinyshift.utils.imports.importlib.util.find_spec", return_value=None):
+        for func, args in [
+            (efficiency_curve, (None, [[0]], [0])),
+            (corr_heatmap, ([[0, 1], [1, 0]],)),
+            (seasonal_decompose, (pd.Series([1, 2, 3, 4]), [2])),
+            (stationarity_analysis, (pd.Series([1, 2, 3, 4]),)),
+            (power_curve, (0.5,)),
+        ]:
+            with pytest.raises(ImportError, match=r"tinyshift\[plot\]"):
+                func(*args)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_series_optional_dependency_guard_uses_the_series_extra():
+    with patch("tinyshift.utils.imports.importlib.util.find_spec", return_value=None):
+        with pytest.raises(ImportError, match=r"tinyshift\[series\]"):
+            DMSTLWrapper.fit(None, None)

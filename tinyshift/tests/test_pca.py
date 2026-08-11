@@ -3,37 +3,34 @@
 # Licensed under the MIT License
 
 
-import unittest
 import numpy as np
 from tinyshift.outlier.pca import PCAReconstructionError
+import pytest
 
 
-class TestPCAReconstructionError(unittest.TestCase):
-    def setUp(self):
+class TestPCAReconstructionError:
+    def setup_method(self):
         self.model = PCAReconstructionError()
 
     def test_fit_sets_attributes(self):
         X = np.array([[1, 2], [3, 4], [5, 6]])
         self.model.fit(X)
-        self.assertTrue(hasattr(self.model, "PCA"))
-        self.assertTrue(hasattr(self.model, "decision_scores_"))
+        assert hasattr(self.model, "PCA")
+        assert hasattr(self.model, "decision_scores_")
 
     def test_score_output(self):
         X = np.array([[1, 2], [3, 4], [5, 6]])
         self.model.fit(X)
         scores = self.model.decision_function(X)
-        self.assertEqual(scores, self.model.decision_function)
+        assert scores.shape[0] == X.shape[0]
 
     def test_decision_function_output(self):
         X = np.array([[1, 2], [3, 4], [5, 6]])
         self.model.fit(X)
-        self.assertTrue(self.model.predict(X).shape[0] == X.shape[0])
+        assert self.model.predict(X).shape[0] == X.shape[0]
 
     def test_fit_not_fitted(self):
         X = np.array([[1, 2], [3, 4], [5, 6]])
-        with self.assertRaises(ValueError):
+
+        with pytest.raises(ValueError):
             self.model.predict(X)
-
-
-if __name__ == "__main__":
-    unittest.main()
