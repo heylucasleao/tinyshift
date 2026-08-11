@@ -1,20 +1,15 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-
+from typing import Union
 import numpy as np
-import plotly.graph_objects as go
-from sklearn.calibration import calibration_curve
-from scipy.stats import beta
-from sklearn import metrics
-from sklearn.metrics import brier_score_loss
-import plotly.figure_factory as ff
-import plotly.express as px
-import plotly.subplots as sp
 from sklearn.base import ClassifierMixin
 
+from tinyshift.utils.imports import requires_extra
 
+
+@requires_extra("plots")
 def efficiency_curve(
     clf: ClassifierMixin,
     X: np.ndarray,
@@ -81,6 +76,7 @@ def efficiency_curve(
     .. Shafer, G., & Vovk, V. (2008). A tutorial on conformal prediction.
     Journal of Machine Learning Research, 9(3).
     """
+    import plotly.graph_objects as go
 
     def get_error_metrics(clf, X: np.ndarray, y: np.ndarray) -> tuple:
         error_rate = np.asarray(
@@ -149,6 +145,7 @@ def efficiency_curve(
     return fig.show(fig_type)
 
 
+@requires_extra("plots")
 def reliability_curve(
     clf: ClassifierMixin,
     X: np.ndarray,
@@ -158,7 +155,7 @@ def reliability_curve(
     fig_type=None,
     width=600,
     height=800,
-) -> go.Figure:
+):
     """
     Generates a reliability curve (calibration curve) for a binary classifier with calibration metrics summary.
 
@@ -212,6 +209,10 @@ def reliability_curve(
         If classifier doesn't implement predict_proba method, if not binary
         classification, or if n_bins < 2.
     """
+    import plotly.graph_objects as go
+    import plotly.subplots as sp
+    from sklearn.calibration import calibration_curve
+    from sklearn.metrics import brier_score_loss
 
     if not hasattr(clf, "predict_proba"):
         raise ValueError("The classifier must implement the 'predict_proba' method.")
@@ -299,6 +300,7 @@ def reliability_curve(
     return fig.show(fig_type)
 
 
+@requires_extra("plots")
 def beta_confidence_analysis(alpha, beta_param, fig_type=None):
     """
     Plot the Beta Probability Density Function (PDF) with filled area under the curve.
@@ -334,6 +336,8 @@ def beta_confidence_analysis(alpha, beta_param, fig_type=None):
     ValueError
         If alpha or beta_param are not positive values.
     """
+    import plotly.graph_objects as go
+    from scipy.stats import beta
 
     if alpha <= 0 or beta_param <= 0:
         raise ValueError("Alpha and Beta parameters must be positive.")
@@ -380,6 +384,7 @@ def beta_confidence_analysis(alpha, beta_param, fig_type=None):
     return fig.show(renderer=fig_type)
 
 
+@requires_extra("plots")
 def confusion_matrix(
     clf: ClassifierMixin,
     X: np.ndarray,
@@ -423,6 +428,8 @@ def confusion_matrix(
     - TN: True Negative, FP: False Positive, FN: False Negative, TP: True Positive
     - Color intensity represents the magnitude of values in each cell
     """
+    import plotly.figure_factory as ff
+    from sklearn import metrics
 
     y_pred = clf.predict(X)
     tn, fp, fn, tp = metrics.confusion_matrix(y, y_pred).ravel()
@@ -454,6 +461,7 @@ def confusion_matrix(
     return fig.show(fig_type)
 
 
+@requires_extra("plots")
 def score_distribution(
     clf: ClassifierMixin,
     X: np.ndarray,
@@ -492,6 +500,8 @@ def score_distribution(
     - Can help identify potential calibration issues
     - Well-calibrated models typically show varied probability distributions
     """
+    import plotly.express as px
+
     y_prob = clf.predict_proba(X)[:, 1]
     fig = px.histogram(y_prob, nbins=nbins)
     fig.update_layout(

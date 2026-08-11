@@ -1,29 +1,15 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-
-from statsmodels.stats.diagnostic import acorr_ljungbox
-from statsmodels.tsa.stattools import adfuller, acf, pacf
-from tinyshift.series import trend_significance
-import plotly.subplots as sp
-import plotly.express as px
-import plotly.graph_objs as go
-import numpy as np
 from typing import Union, List, Optional
+import numpy as np
 import pandas as pd
-from statsmodels.tsa.seasonal import MSTL, DecomposeResult
-import scipy.stats
-from statsmodels.stats.diagnostic import het_arch
-import plotly.graph_objects as go
-from scipy.signal import argrelextrema
-from tinyshift.series import (
-    permutation_auto_mutual_information,
-    seasonal_significance,
-    extract_mstl_components,
-)
+
+from tinyshift.utils.imports import requires_extra
 
 
+@requires_extra("plots")
 def seasonal_decompose(
     X: Union[np.ndarray, List[float], pd.Series],
     periods: Union[int, List[int]],
@@ -85,6 +71,16 @@ def seasonal_decompose(
        - A p-value < 0.05 indicates strong evidence of deterministic periodicity
          at the specified period.
     """
+    from statsmodels.stats.diagnostic import acorr_ljungbox
+    from statsmodels.tsa.seasonal import MSTL
+    import plotly.subplots as sp
+    import plotly.express as px
+    import plotly.graph_objs as go
+    from tinyshift.series import (
+        trend_significance,
+        seasonal_significance,
+        extract_mstl_components,
+    )
 
     period_list = [periods] if isinstance(periods, int) else list(periods)
     index = X.index if hasattr(X, "index") else list(range(len(X)))
@@ -173,6 +169,7 @@ def seasonal_decompose(
     return fig.show(fig_type)
 
 
+@requires_extra("plots")
 def stationarity_analysis(
     df: Union[pd.DataFrame, pd.Series],
     height: int = 1200,
@@ -236,6 +233,11 @@ def stationarity_analysis(
 
     Confidence bands are displayed on ACF and PACF plots at the ±1.96/√N level (95% CI).
     """
+    from statsmodels.tsa.stattools import adfuller, acf, pacf
+    import plotly.subplots as sp
+    import plotly.express as px
+    import plotly.graph_objs as go
+
     nlags = min(nlags, (len(df) // 2) - 1)
 
     if isinstance(df, pd.Series):
@@ -371,6 +373,7 @@ def stationarity_analysis(
     return fig.show(fig_type)
 
 
+@requires_extra("plots")
 def residual_analysis(
     df: Union[pd.DataFrame, pd.Series],
     height: int = 1200,
@@ -436,6 +439,12 @@ def residual_analysis(
        - Points closely aligning along the red 45-degree theoretical
          line. Deviations at the tails indicate heavy tails or skewness.
     """
+    from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
+    import scipy.stats
+    import plotly.subplots as sp
+    import plotly.express as px
+    import plotly.graph_objects as go
+
     nlags = min(nlags, len(df) // 5)
 
     if isinstance(df, pd.Series):
@@ -582,6 +591,7 @@ def residual_analysis(
     return fig.show(fig_type)
 
 
+@requires_extra("plots")
 def pami(
     X: Union[np.ndarray, List[float], pd.Series],
     nlags: int = 30,
@@ -639,6 +649,10 @@ def pami(
     underlying dynamical system and can be used for lag selection in forecasting
     or embedding dimension analysis.
     """
+    from scipy.signal import argrelextrema
+    import plotly.graph_objects as go
+    from tinyshift.series import permutation_auto_mutual_information
+
     nlags = min(nlags, (len(X) // 2) - 1)
     lags = np.arange(1, nlags + 1)
     pami_values = np.array(
@@ -694,6 +708,7 @@ def pami(
     return fig.show(fig_type)
 
 
+@requires_extra("plots")
 def forest_plot(
     df: pd.DataFrame,
     feature: str,
@@ -734,6 +749,8 @@ def forest_plot(
     KeyError
         If `feature` or `group_col` are not columns in `df`.
     """
+    import scipy.stats
+    import plotly.express as px
 
     def t_confidence_interval(
         data: np.ndarray,

@@ -6,7 +6,7 @@
 import numpy as np
 from typing import Union, Tuple, List
 import pandas as pd
-from ..stats import StatisticalInterval
+from tinyshift.stats import StatisticalInterval
 from abc import ABC, abstractmethod
 from typing import Dict
 

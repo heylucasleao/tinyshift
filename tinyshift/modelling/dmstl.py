@@ -3,15 +3,11 @@
 # Licensed under the MIT License
 
 import copy
-import pandas as pd
+from typing import Literal, Union, List, Tuple, Optional, Any
 import numpy as np
-from typing import Literal, Union, List, Tuple
+import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
-from statsmodels.tsa.seasonal import MSTL
-from statsforecast import StatsForecast
-from statsforecast.models import AutoETS, SeasonalNaive
-from mlforecast import MLForecast
-from tinyshift.series import hpi, hfi, extract_mstl_components
+from tinyshift.utils.imports import requires_extra
 
 
 class DMSTLWrapper(BaseEstimator, RegressorMixin):
@@ -84,9 +80,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
       predictions are overly noisy or sensitive to residual ML fluctuations.
     """
 
+    @requires_extra("series")
     def __init__(
         self,
-        mf_resid: MLForecast,
+        mf_resid: Any,
         season_length: Union[int, List[int]],
         trend_model=None,
         seasonal_model=None,
@@ -169,7 +166,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         dates: pd.Series,
         uid: Union[str, int],
         freq: Union[str, int],
-    ) -> StatsForecast:
+    ) -> Any:
         """
         Fit a StatsForecast pipeline on a single component series.
 
@@ -191,6 +188,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         sf : StatsForecast
             Fitted StatsForecast instance.
         """
+        from statsforecast import StatsForecast
+
         sf_df = pd.DataFrame(
             {self.id_col_: uid, self.time_col_: dates, self.target_col_: values}
         )
@@ -199,7 +198,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
     def _fit_mlforecast(
         self, group: pd.DataFrame, residual_part: np.ndarray, prediction_intervals=None
-    ) -> MLForecast:
+    ) -> Any:
         """
         Fit a isolated copy of the base MLForecast pipeline on the extracted residual component.
 
@@ -230,6 +229,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         )
         return mf_resid
 
+    @requires_extra("series")
     def fit(
         self,
         df: pd.DataFrame,
@@ -264,6 +264,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ValueError
             If `mf_resid.freq` is missing or invalid.
         """
+        from statsmodels.tsa.seasonal import MSTL
+        from statsforecast.models import AutoETS, SeasonalNaive
+        from tinyshift.series import extract_mstl_components
+
         self.season_length_ = (
             [self.season_length]
             if isinstance(self.season_length, int)
@@ -354,6 +358,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ValueError
             If method is not 'hpi' or 'hfi'.
         """
+        from tinyshift.series import hpi, hfi
+
         if method == "hpi":
             return hpi(y_hat, w_s=w_s)
         elif method == "hfi":
@@ -363,12 +369,13 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 f"Invalid method '{method}'. Choose either 'hpi' or 'hfi'."
             )
 
+    @requires_extra("series")
     def predict(
         self,
         h: int,
-        X_df: pd.DataFrame | None = None,
-        level: List[Union[int, float]] | None = None,
-        stabilization_method: Literal["hpi", "hfi"] | None = None,
+        X_df: Optional[pd.DataFrame] = None,
+        level: Optional[List[Union[int, float]]] = None,
+        stabilization_method: Optional[Literal["hpi", "hfi"]] = None,
         w_s: float = 0.0,
     ) -> pd.DataFrame:
         """
