@@ -9,7 +9,7 @@ from sklearn.base import ClassifierMixin
 from tinyshift.utils.imports import requires_extra
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def efficiency_curve(
     clf: ClassifierMixin,
     X: np.ndarray,
@@ -142,10 +142,13 @@ def efficiency_curve(
     )
     fig.update_traces(hovertemplate="%{y:.2f}")
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def reliability_curve(
     clf: ClassifierMixin,
     X: np.ndarray,
@@ -297,10 +300,13 @@ def reliability_curve(
         showlegend=True,
     )
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def beta_confidence_analysis(alpha, beta_param, fig_type=None):
     """
     Plot the Beta Probability Density Function (PDF) with filled area under the curve.
@@ -381,10 +387,13 @@ def beta_confidence_analysis(alpha, beta_param, fig_type=None):
 
     fig = go.Figure(data=[trace_pdf, trace_fill], layout=layout)
 
+    if fig_type is None:
+        return fig
+
     return fig.show(renderer=fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def confusion_matrix(
     clf: ClassifierMixin,
     X: np.ndarray,
@@ -458,10 +467,14 @@ def confusion_matrix(
     )
 
     fig.update_layout(width=400, height=400, title="Confusion Matrix")
+
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def score_distribution(
     clf: ClassifierMixin,
     X: np.ndarray,
@@ -514,4 +527,8 @@ def score_distribution(
     fig.update_layout(hovermode="x")
     fig.update_traces(hovertemplate="%{y}")
     fig.update_layout(showlegend=False)
+
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)

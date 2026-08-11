@@ -101,7 +101,14 @@ def standardize_returns(
 
     ratios = X[1:] / X[:-1]
     returns = np.log(ratios) if log else ratios - 1
-    returns = (returns - np.mean(returns)) / np.std(returns) if standardize else returns
+
+    if standardize:
+        std = np.std(returns)
+        if np.isclose(std, 0.0):
+            returns = np.zeros_like(returns)
+        else:
+            returns = (returns - np.mean(returns)) / std
+
     return np.concatenate([[np.nan], returns])
 
 

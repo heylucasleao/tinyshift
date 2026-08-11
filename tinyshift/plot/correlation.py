@@ -9,7 +9,7 @@ from sklearn.utils.validation import check_array
 from tinyshift.utils.imports import requires_extra
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def corr_heatmap(
     X: np.ndarray,
     width: int = 1600,
@@ -87,5 +87,8 @@ def corr_heatmap(
         yaxis_title="Features",
         title_x=0.5,
     )
+
+    if fig_type is None:
+        return fig
 
     return fig.show(fig_type)
