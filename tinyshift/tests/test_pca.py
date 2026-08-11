@@ -34,3 +34,9 @@ class TestPCAReconstructionError:
 
         with pytest.raises(ValueError):
             self.model.predict(X)
+
+    def test_decision_function_requires_fit(self):
+        X = np.array([[1, 2], [3, 4], [5, 6]])
+
+        with pytest.raises(ValueError, match="fitted"):
+            self.model.decision_function(X)

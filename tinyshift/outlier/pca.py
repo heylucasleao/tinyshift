@@ -105,6 +105,9 @@ class PCAReconstructionError(BaseEstimator):
         scores : ndarray of shape (n_samples,)
             Reconstruction error scores for each sample.
         """
+        if self.PCA is None:
+            raise ValueError("Model must be fitted before prediction.")
+
         X = check_array(X)
         X_reconstructed = self.PCA.inverse_transform(self.PCA.transform(X))
         return self._calculate_reconstruction_error(X, X_reconstructed)

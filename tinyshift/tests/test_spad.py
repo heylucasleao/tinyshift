@@ -63,3 +63,18 @@ class TestSPAD:
         spad_plus.fit(X)
         scores = spad_plus.decision_function(X)
         assert scores.shape[0] == X.shape[0]
+
+    def test_fit_rejects_invalid_bins_strategy(self):
+        spad = SPAD()
+        X = np.array([[1, 0.1], [2, 0.2], [3, 0.3], [4, 0.4]])
+
+        with pytest.raises(ValueError, match="Invalid binning strategy"):
+            spad.fit(X, nbins="invalid-strategy")
+
+    def test_decision_function_rejects_mismatched_dataframe_columns(self):
+        spad = SPAD()
+        X = pd.DataFrame({"a": [1, 2, 3], "b": [0.1, 0.2, 0.3]})
+        spad.fit(X)
+
+        with pytest.raises(ValueError, match="columns"):
+            spad.decision_function(pd.DataFrame({"x": [1, 2, 3], "y": [0.1, 0.2, 0.3]}))

@@ -69,6 +69,26 @@ def test_remove_leading_zeros_and_is_obsolete():
     assert is_obsolete(df, days_obsoletes=1) is np.bool_(False)
 
 
+def test_validation_paths_for_stats_utils():
+    with pytest.raises(ValueError, match="window_size"):
+        rolling_window([1, 2, 3], window_size=1)
+
+    with pytest.raises(ValueError, match="1-dimensional"):
+        rolling_window([[1], [2], [3]], window_size=2)
+
+    with pytest.raises(ValueError, match="window_size"):
+        expanding_window([1, 2], window_size=0)
+
+    with pytest.raises(ValueError, match="larger"):
+        expanding_window([1, 2], window_size=3)
+
+    with pytest.raises(ValueError, match="1-dimensional"):
+        jacknife([[1], [2], [3]])
+
+    with pytest.raises(ValueError, match="one-dimensional"):
+        generate_lag(np.array([[1, 2], [3, 4]]))
+
+
 def test_assess_comparability_returns_expected_rows():
     df = pd.DataFrame(
         {
