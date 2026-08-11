@@ -28,20 +28,68 @@ For enterprise-grade solutions, consider [Nannyml](https://github.com/NannyML/na
 
 ## 📦 Installation
 
-Install TinyShift using pip:
+Install the core package with pip:
 
 ```bash
 pip install tinyshift
 ```
 
-### Development Installation
+Or with uv:
 
-Clone and install from source:
+```bash
+uv add tinyshift
+```
+
+### Optional module extras
+
+TinyShift now separates optional capabilities into extras so you can install only what you need. Some functions also use lazy importing so optional dependencies are loaded only when they are actually used, helping keep the import surface lightweight and avoiding unnecessary dependency overhead.
+
+- `series`: forecasting and series-specific dependencies
+
+```bash
+pip install "tinyshift[series]"
+# or
+uv add "tinyshift[series]"
+```
+
+- `plot`: interactive plotting and export support
+
+```bash
+pip install "tinyshift[plot]"
+# or
+uv add "tinyshift[plot]"
+```
+
+- `notebook`: notebook support
+
+```bash
+pip install "tinyshift[notebook]"
+# or
+uv add "tinyshift[notebook]"
+```
+
+- `all`: install all optional extras
+
+```bash
+pip install "tinyshift[all]"
+# or
+uv add "tinyshift[all]"
+```
+
+### Development installation
+
+Clone the repository and install from source:
 
 ```bash
 git clone https://github.com/HeyLucasLeao/tinyshift.git
 cd tinyshift
-pip install -e .
+pip install -e ".[dev]"
+```
+
+With uv:
+
+```bash
+uv sync --extra dev
 ```
 
 ## 📖 Quick Start
