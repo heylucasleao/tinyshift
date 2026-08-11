@@ -1,13 +1,14 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
+from typing import Optional
 import numpy as np
-import plotly.graph_objects as go
-from statsmodels.stats.power import TTestIndPower
-from typing import Optional, Union
+
+from tinyshift.utils.imports import requires_extra
 
 
+@requires_extra("plot")
 def power_curve(
     effect_size: float,
     alpha: float = 0.05,
@@ -59,8 +60,9 @@ def power_curve(
     -----
     The plot includes confidence intervals and highlights the optimal sample size
     required to achieve the target power level for the specified effect size.
-
     """
+    import plotly.graph_objects as go
+    from statsmodels.stats.power import TTestIndPower
 
     if effect_size <= 0:
         raise ValueError("Effect size must be greater than zero.")
@@ -181,16 +183,20 @@ def power_curve(
         borderwidth=1,
     )
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
+@requires_extra("plot")
 def power_vs_allocation(
     effect_size: float,
     sample_size: int,
     alpha: float = 0.05,
     height: int = 500,
     width: int = 600,
-    fig_type: str = None,
+    fig_type: Optional[str] = None,
 ):
     """
     Creates an interactive plot showing Statistical Power as a function of treatment allocation.
@@ -236,6 +242,8 @@ def power_vs_allocation(
     The plot shows that statistical power is maximized at 50% treatment allocation
     (equal group sizes) and decreases as allocation becomes more imbalanced.
     """
+    import plotly.graph_objects as go
+    from statsmodels.stats.power import TTestIndPower
 
     if sample_size <= 0:
         raise ValueError("Total sample size must be positive.")
@@ -253,7 +261,6 @@ def power_vs_allocation(
     powers = []
 
     for p_treat in treatment_proportions:
-
         if p_treat == 0.5:
             current_ratio = 1.0
         else:
@@ -324,5 +331,8 @@ def power_vs_allocation(
         height=height,
         width=width,
     )
+
+    if fig_type is None:
+        return fig
 
     return fig.show(fig_type)

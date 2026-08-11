@@ -1,22 +1,21 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-
-import plotly.graph_objects as go
-import plotly.express as px
 from typing import Optional
 import numpy as np
 from sklearn.utils.validation import check_array
-import pandas as pd
+
+from tinyshift.utils.imports import requires_extra
 
 
+@requires_extra("plot")
 def corr_heatmap(
     X: np.ndarray,
     width: int = 1600,
     height: int = 1600,
     fig_type: Optional[str] = None,
-) -> go.Figure:
+):
     """
     Generate an interactive correlation heatmap for a DataFrame using Plotly Express.
 
@@ -60,6 +59,8 @@ def corr_heatmap(
     - Diagonal elements will always be 1 (perfect self-correlation)
     - Only numeric columns are included in the calculation (equivalent to numeric_only=True)
     """
+    import plotly.express as px
+
     feature_names_in_ = getattr(X, "columns", None)
     X = check_array(X, ensure_2d=True, dtype=np.float64, copy=True)
 
@@ -86,5 +87,8 @@ def corr_heatmap(
         yaxis_title="Features",
         title_x=0.5,
     )
+
+    if fig_type is None:
+        return fig
 
     return fig.show(fig_type)

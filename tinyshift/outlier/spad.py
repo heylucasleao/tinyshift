@@ -10,7 +10,7 @@ from collections import Counter
 from sklearn.decomposition import PCA
 from .base import BaseHistogramModel
 from typing import Union
-from ..stats import StatisticalInterval
+from tinyshift.stats import StatisticalInterval
 
 
 class SPAD(BaseHistogramModel):

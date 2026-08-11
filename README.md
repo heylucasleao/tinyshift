@@ -28,20 +28,68 @@ For enterprise-grade solutions, consider [Nannyml](https://github.com/NannyML/na
 
 ## 📦 Installation
 
-Install TinyShift using pip:
+Install the core package with pip:
 
 ```bash
 pip install tinyshift
 ```
 
-### Development Installation
+Or with uv:
 
-Clone and install from source:
+```bash
+uv add tinyshift
+```
+
+### Optional module extras
+
+TinyShift now separates optional capabilities into extras so you can install only what you need. Some functions also use lazy importing so optional dependencies are loaded only when they are actually used, helping keep the import surface lightweight and avoiding unnecessary dependency overhead.
+
+- `series`: forecasting and series-specific dependencies
+
+```bash
+pip install "tinyshift[series]"
+# or
+uv add "tinyshift[series]"
+```
+
+- `plot`: interactive plotting and export support
+
+```bash
+pip install "tinyshift[plot]"
+# or
+uv add "tinyshift[plot]"
+```
+
+- `notebook`: notebook support
+
+```bash
+pip install "tinyshift[notebook]"
+# or
+uv add "tinyshift[notebook]"
+```
+
+- `all`: install all optional extras
+
+```bash
+pip install "tinyshift[all]"
+# or
+uv add "tinyshift[all]"
+```
+
+### Development installation
+
+Clone the repository and install from source:
 
 ```bash
 git clone https://github.com/HeyLucasLeao/tinyshift.git
 cd tinyshift
-pip install -e .
+pip install -e ".[dev]"
+```
+
+With uv:
+
+```bash
+uv sync --extra dev
 ```
 
 ## 📖 Quick Start
@@ -358,52 +406,59 @@ print(preds.head())
 ```
 tinyshift/
 ├── association_mining/          # Market basket analysis tools
-│   └── README.md              # Module documentation
-│   ├── analyzer.py             # Transaction pattern analysis
-│   └── encoder.py              # Data encoder
-├── drift/                      # Data drift detection 
-│   └── README.md              # Module documentation
-│   ├── base.py                 # Base drift detection classes  
-│   ├── categorical.py          # CatDrift for categorical features
-│   └── continuous.py           # ConDrift for numerical features
-├── examples/                   # Jupyter notebook examples
-│   ├── decomp_mstl_ml.ipynb   # MSTL decomposition and ML examples
-│   ├── drift.ipynb            # Drift detection examples
-│   ├── outlier.ipynb          # Outlier detection demos
-│   ├── series.ipynb           # Time series analysis
-│   ├── transaction_analyzer.ipynb # Transaction analysis examples
-│   └── ts_diagnostics.ipynb   # Time series diagnostics
-├── modelling/                  # ML modeling utilities
-│   ├── README.md              # Module documentation
-│   ├── dmstl.py               # DMSTL decomposed forecasting wrapper
-│   ├── multicollinearity.py   # VIF-based multicollinearity detection
-│   ├── residualizer.py        # Residualizer feature
-│   ├── scaler.py              # Custom scaling transformations
-│   └── ts_features.py         # Time-series feature engineering
-├── outlier/                    # Outlier detection algorithms
-│   └── README.md              # Module documentation
-│   ├── base.py                 # Base outlier detection classes
-│   ├── hbos.py                 # Histogram-Based Outlier Score
-│   ├── pca.py                  # PCA-based outlier detection  
-│   └── spad.py                 # Simple Probabilistic Anomaly Detector
-├── plot/                       # Visualization capabilities  
-│   ├── README.md              # Module documentation
-│   ├── calibration.py          # Binary Classification model evaluation plots
-│   ├── correlation.py          # Correlation analysis plots
-│   └── diagnostic.py           # Time series diagnostics plots
-├── series/                     # Time series analysis tools
-│   ├── README.md              # Module documentation
-│   ├── diagnostic.py          # Time series diagnostics and decomposition
-│   ├── forecastability.py     # Forecast quality and complexity metrics
-│   ├── interpolation.py       # Forecast stabilization methods
-│   ├── metric.py              # Forecast accuracy and stability metrics
-│   ├── outlier.py             # Time series outlier detection
-│   ├── stability.py           # Forecast stability metrics
-│   └── stats.py               # Statistical analysis functions
-└── stats/                      # Statistical utilities
-    ├── bootstrap_bca.py        # Bootstrap confidence intervals
-    ├── statistical_interval.py # Statistical interval estimation
-    └── utils.py               # General statistical utilities
+│   ├── README.md                # Module documentation
+│   ├── __init__.py              # Package exports
+│   ├── analyzer.py              # Transaction pattern analysis
+│   └── encoder.py               # Data encoder
+├── drift/                       # Data drift detection
+│   ├── README.md                # Module documentation
+│   ├── __init__.py              # Package exports
+│   ├── base.py                  # Base drift detection classes
+│   ├── categorical.py           # CatDrift for categorical features
+│   └── continuous.py            # ConDrift for numerical features
+├── examples/                    # Jupyter notebook examples
+│   ├── decomp_mstl_ml.ipynb     # MSTL decomposition and ML examples
+│   ├── drift.ipynb              # Drift detection examples
+│   ├── outlier.ipynb            # Outlier detection demos
+│   ├── series.ipynb             # Time series analysis
+│   ├── transaction_analyzer.ipynb  # Transaction analysis examples
+│   └── ts_diagnostics.ipynb     # Time series diagnostics
+├── modelling/                   # ML modeling utilities
+│   ├── README.md                # Module documentation
+│   ├── __init__.py              # Package exports
+│   ├── dmstl.py                 # DMSTL decomposed forecasting wrapper
+│   ├── multicollinearity.py     # VIF-based multicollinearity detection
+│   ├── residualizer.py          # Residualizer feature
+│   ├── scaler.py                # Custom scaling transformations
+│   └── ts_features.py           # Time-series feature engineering
+├── outlier/                     # Outlier detection algorithms
+│   ├── README.md                # Module documentation
+│   ├── __init__.py              # Package exports
+│   ├── base.py                  # Base outlier detection classes
+│   ├── hbos.py                  # Histogram-Based Outlier Score
+│   ├── pca.py                   # PCA-based outlier detection
+│   └── spad.py                  # Simple Probabilistic Anomaly Detector
+├── plot/                        # Visualization capabilities
+│   ├── README.md                # Module documentation
+│   ├── __init__.py              # Package exports
+│   ├── calibration.py           # Binary classification model evaluation
+│   ├── correlation.py           # Correlation analysis plots
+│   ├── diagnostic.py            # Time series diagnostics plots
+│   └── power.py                 # Power analysis and related plots
+├── series/                      # Time series analysis tools
+│   ├── README.md                # Module documentation
+│   ├── __init__.py              # Package exports
+│   ├── diagnostic.py            # Time series diagnostics and decomposition
+│   ├── forecastability.py       # Forecast quality and complexity metrics
+│   ├── interpolation.py         # Forecast stabilization methods
+│   ├── metric.py                # Forecast accuracy and stability metrics
+│   ├── outlier.py               # Time series outlier detection
+│   └── stability.py             # Forecast stability metrics
+└── stats/                       # Statistical utilities
+    ├── __init__.py              # Package exports
+    ├── bootstrap_bca.py         # Bootstrap confidence intervals
+    ├── statistical_interval.py  # Statistical interval estimation
+    └── utils.py                 # General statistical utilities
 ```
 
 ### Development Setup

@@ -1,17 +1,16 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
-import unittest
 import numpy as np
 import pandas as pd
 from tinyshift.outlier.hbos import HBOS
+import pytest
 
 
-class TestHBOS(unittest.TestCase):
-
-    def setUp(self):
+class TestHBOS:
+    def setup_method(self):
         self.hbos = HBOS()
         self.hbos.feature_dtypes = np.array([pd.CategoricalDtype(), np.float64])
         self.hbos.feature_distributions = [
@@ -39,34 +38,44 @@ class TestHBOS(unittest.TestCase):
         hbos = HBOS()
         X = np.array([[1, 0.1], [2, 0.2], [3, 0.3], [4, 0.4]])
         hbos.fit(X)
-        self.assertIsNotNone(hbos.feature_dtypes)
-        self.assertIsNotNone(hbos.feature_distributions)
-        self.assertEqual(len(hbos.feature_dtypes), X.shape[1])
-        self.assertEqual(len(hbos.feature_distributions), X.shape[1])
-        self.assertTrue(hasattr(hbos, "decision_scores_"))
-        self.assertEqual(hbos.n_features, X.shape[1])
+        assert hbos.feature_dtypes is not None
+        assert hbos.feature_distributions is not None
+        assert len(hbos.feature_dtypes) == X.shape[1]
+        assert len(hbos.feature_distributions) == X.shape[1]
+        assert hasattr(hbos, "decision_scores_")
+        assert hbos.n_features == X.shape[1]
 
     def test_dynamic_bins(self):
-        hbos = HBOS()
+        hbos = HBOS(dynamic_bins=True)
         X = np.array([[1, 0.1], [2, 0.2], [3, 0.3], [4, 0.4], [5, 0.5]])
-        hbos.fit(X, dynamic_bins=True)
-        self.assertIsNotNone(hbos.feature_distributions)
-        self.assertEqual(len(self.hbos.feature_distributions), X.shape[1])
+        hbos.fit(X)
+        assert hbos.feature_distributions is not None
+        assert len(hbos.feature_distributions) == X.shape[1]
         for distribution in hbos.feature_distributions:
             if isinstance(distribution, list):
-                self.assertTrue(
-                    all(isinstance(bin_edges, np.ndarray) for bin_edges in distribution)
+                assert all(
+                    isinstance(bin_edges, np.ndarray) for bin_edges in distribution
                 )
 
     def test_decision_function(self):
         X = np.array([[1, 0.1], [2, 0.2], [3, 0.3], [4, 0.3]])
         scores = self.hbos.decision_function(X)
-        expected_scores = (
-            -np.log(np.array([0.2, 0.3, 0.5, 1e-9]) + 1e-9)
-            + -np.log(np.array([6.25, 6.25, 12.5, 12.5]) + 1e-9)
-        ) * -1
+        expected_scores = -np.log(np.array([0.2, 0.3, 0.5, 1e-9]) + 1e-9) + -np.log(
+            np.array([6.25, 6.25, 12.5, 12.5]) + 1e-9
+        )
         np.testing.assert_array_almost_equal(scores, expected_scores, decimal=3)
 
+    def test_fit_rejects_invalid_bins_strategy(self):
+        hbos = HBOS()
+        X = np.array([[1, 0.1], [2, 0.2], [3, 0.3], [4, 0.4]])
 
-if __name__ == "__main__":
-    unittest.main()
+        with pytest.raises(ValueError, match="Invalid binning strategy"):
+            hbos.fit(X, nbins="invalid-strategy")
+
+    def test_decision_function_rejects_mismatched_dataframe_columns(self):
+        hbos = HBOS()
+        X = pd.DataFrame({"a": [1, 2, 3], "b": [0.1, 0.2, 0.3]})
+        hbos.fit(X)
+
+        with pytest.raises(ValueError, match="columns"):
+            hbos.decision_function(pd.DataFrame({"x": [1, 2, 3], "y": [0.1, 0.2, 0.3]}))
