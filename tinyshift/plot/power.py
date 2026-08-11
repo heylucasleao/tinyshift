@@ -8,7 +8,7 @@ import numpy as np
 from tinyshift.utils.imports import requires_extra
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def power_curve(
     effect_size: float,
     alpha: float = 0.05,
@@ -186,7 +186,7 @@ def power_curve(
     return fig.show(fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def power_vs_allocation(
     effect_size: float,
     sample_size: int,

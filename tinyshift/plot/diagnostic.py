@@ -9,7 +9,7 @@ import pandas as pd
 from tinyshift.utils.imports import requires_extra
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def seasonal_decompose(
     X: Union[np.ndarray, List[float], pd.Series],
     periods: Union[int, List[int]],
@@ -169,7 +169,7 @@ def seasonal_decompose(
     return fig.show(fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def stationarity_analysis(
     df: Union[pd.DataFrame, pd.Series],
     height: int = 1200,
@@ -373,7 +373,7 @@ def stationarity_analysis(
     return fig.show(fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def residual_analysis(
     df: Union[pd.DataFrame, pd.Series],
     height: int = 1200,
@@ -591,7 +591,7 @@ def residual_analysis(
     return fig.show(fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def pami(
     X: Union[np.ndarray, List[float], pd.Series],
     nlags: int = 30,
@@ -708,7 +708,7 @@ def pami(
     return fig.show(fig_type)
 
 
-@requires_extra("plots")
+@requires_extra("plot")
 def forest_plot(
     df: pd.DataFrame,
     feature: str,
