@@ -88,4 +88,7 @@ def corr_heatmap(
         title_x=0.5,
     )
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)

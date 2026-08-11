@@ -166,6 +166,9 @@ def seasonal_decompose(
         hovermode="x",
     )
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
@@ -369,6 +372,9 @@ def stationarity_analysis(
 
     fig.update_xaxes(visible=False, row=N + 1, col=1)
     fig.update_yaxes(visible=False, row=N + 1, col=1)
+
+    if fig_type is None:
+        return fig
 
     return fig.show(fig_type)
 
@@ -588,6 +594,9 @@ def residual_analysis(
         showlegend=False,
     )
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
@@ -705,6 +714,10 @@ def pami(
         height=height,
         width=width,
     )
+
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
@@ -815,5 +828,8 @@ def forest_plot(
         height=height,
         width=width,
     )
+
+    if fig_type is None:
+        return fig
 
     return fig.show(fig_type)

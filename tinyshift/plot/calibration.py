@@ -142,6 +142,9 @@ def efficiency_curve(
     )
     fig.update_traces(hovertemplate="%{y:.2f}")
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
@@ -297,6 +300,9 @@ def reliability_curve(
         showlegend=True,
     )
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
@@ -381,6 +387,9 @@ def beta_confidence_analysis(alpha, beta_param, fig_type=None):
 
     fig = go.Figure(data=[trace_pdf, trace_fill], layout=layout)
 
+    if fig_type is None:
+        return fig
+
     return fig.show(renderer=fig_type)
 
 
@@ -458,6 +467,10 @@ def confusion_matrix(
     )
 
     fig.update_layout(width=400, height=400, title="Confusion Matrix")
+
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
@@ -514,4 +527,8 @@ def score_distribution(
     fig.update_layout(hovermode="x")
     fig.update_traces(hovertemplate="%{y}")
     fig.update_layout(showlegend=False)
+
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)

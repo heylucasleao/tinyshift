@@ -183,6 +183,9 @@ def power_curve(
         borderwidth=1,
     )
 
+    if fig_type is None:
+        return fig
+
     return fig.show(fig_type)
 
 
@@ -328,5 +331,8 @@ def power_vs_allocation(
         height=height,
         width=width,
     )
+
+    if fig_type is None:
+        return fig
 
     return fig.show(fig_type)
