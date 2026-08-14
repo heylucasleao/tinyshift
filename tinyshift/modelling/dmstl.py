@@ -3,11 +3,12 @@
 # Licensed under the MIT License
 
 import copy
-from typing import Literal, Union, List, Tuple, Optional, Any
+from typing import Callable, Literal, Union, List, Tuple, Optional, Any, Dict
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 from tinyshift.utils.imports import requires_extra
+from functools import partial
 
 
 class DMSTLWrapper(BaseEstimator, RegressorMixin):
@@ -27,14 +28,18 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Base MLForecast pipeline configured with one or multiple machine
         learning estimators (e.g., `models=[LGBMRegressor(), XGBRegressor()]`)
         to fit the residual component. Must have `freq` defined.
-    season_length : int or list of int
-        Seasonal period(s) passed directly to MSTL decomposition.
-    trend_model : StatsForecast model, optional
-        Statistical model instance for the trend component. Defaults to
-        AutoETS(model="MMN") if None.
-    seasonal_model : StatsForecast model or list of models, optional
-        Statistical model(s) for the seasonal component(s). Defaults to
-        SeasonalNaive for each period in `season_length`.
+    season_length : int, list of int, or dict
+        Seasonal period(s) passed directly to MSTL decomposition. A dictionary
+        maps each unique identifier to an integer or list of integers.
+    trend_model_callable : callable or dict of callable, optional
+        Function without arguments that returns a configured StatsForecast
+        trend model. A dictionary may map each unique identifier to its own
+        callable. If None, an internal AutoETS(model="ZZN") model is used.
+    seasonal_model_callable : callable or dict of callable, optional
+        Function that receives a seasonal period and returns one configured
+        StatsForecast model for that period. A dictionary may map each
+        unique identifier to its own factory. If None, an internal factory
+        creates one SeasonalNaive model for each period.
     log_transform : bool, default=False
         If True, applies np.log1p before decomposition and np.expm1 during
         prediction. Use this when the underlying series exhibits multiplicative
@@ -50,10 +55,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Formatted list of seasonal lengths.
     freq_ : str or int
         Effective time series frequency retrieved from `mf_resid.freq`.
-    trend_model_ : StatsForecast model
-        Configured trend model.
-    seasonal_model_ : list of StatsForecast models
-        Configured seasonal models.
+    seasonal_models_ : dict
+        Configured seasonal models by unique identifier and period.
+    trend_models_ : dict
+        Configured trend models by unique identifier.
     id_col_ : str
         Name of the unique identifier column set during fit.
     time_col_ : str
@@ -84,16 +89,34 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     def __init__(
         self,
         mf_resid: Any,
-        season_length: Union[int, List[int]],
-        trend_model=None,
-        seasonal_model=None,
+        season_length: Union[
+            int, List[int], Dict[Union[str, int], Union[int, List[int]]]
+        ],
+        trend_model_callable: Optional[
+            Union[
+                Callable[[], Any],
+                Dict[Union[str, int], Callable[[], Any]],
+            ]
+        ] = None,
+        seasonal_model_callable: Optional[
+            Union[
+                Callable[[int], Any],
+                Dict[Union[str, int], Callable[[int], Any]],
+            ]
+        ] = None,
         log_transform: bool = False,
     ) -> None:
         self.mf_resid = mf_resid
         self.season_length = season_length
-        self.trend_model = trend_model
-        self.seasonal_model = seasonal_model
+        self.trend_model_callable = trend_model_callable
+        self.seasonal_model_callable = seasonal_model_callable
         self.log_transform = log_transform
+
+    def _get_sku_config(self, config, uid: Union[str, int]):
+        """Resolve a global or per-series configuration value."""
+        if isinstance(config, dict):
+            return config.get(uid)
+        return config
 
     def _extract_freq(self) -> Union[str, int]:
         """
@@ -134,8 +157,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         return [c for c in df.columns if c not in [self.id_col_, self.time_col_]]
 
     def _process_components(
-        self, components_df: pd.DataFrame
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        self, components_df: pd.DataFrame, split_seasonal: bool = False
+    ) -> Tuple[np.ndarray, Union[np.ndarray, List[np.ndarray]], np.ndarray]:
         """
         Impute missing values and aggregate trend, seasonal, and residual signals.
 
@@ -148,16 +171,139 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         -------
         trend_part : ndarray of shape (n_samples,)
             Backfilled and forward-filled trend values.
-        seasonal_part : ndarray of shape (n_samples,)
-            Summed seasonal component across all seasonal channels.
+        seasonal_part : ndarray or list of ndarray
+            Summed seasonal component across all seasonal channels, or each
+            seasonal channel separately when ``split_seasonal=True``.
         residual_part : ndarray of shape (n_samples,)
             Zero-filled residual sequence.
         """
         trend_part = components_df["trend"].bfill().ffill().values
         seasonal_cols = [c for c in components_df.columns if c.startswith("seasonal")]
-        seasonal_part = components_df[seasonal_cols].sum(axis=1).values
+        if split_seasonal:
+            seasonal_part = [
+                components_df[column].fillna(0.0).values for column in seasonal_cols
+            ]
+        else:
+            seasonal_part = components_df[seasonal_cols].sum(axis=1).values
         residual_part = components_df["resid"].fillna(0.0).values
         return trend_part, seasonal_part, residual_part
+
+    def _get_trend_config(
+        self,
+        uid: Union[str, int],
+        default_trend_callable: Callable[[], Any],
+    ) -> Any:
+        """
+        Resolve the trend model configured for a SKU.
+
+        Parameters
+        ----------
+        uid : str or int
+            Unique identifier of the series.
+        default_trend_callable : callable
+            Factory without arguments that creates the fallback trend model.
+
+        Returns
+        -------
+        trend_model : StatsForecast model
+            A new model instance created by the configured or fallback factory.
+
+        Raises
+        ------
+        TypeError
+            If `trend_model_callable` resolves to a non-callable value.
+        """
+        trend_model_callable = self._get_sku_config(self.trend_model_callable, uid)
+        if trend_model_callable is not None:
+            if not callable(trend_model_callable):
+                raise TypeError(
+                    f"trend_model_callable for unique_id {uid!r} must be "
+                    "a callable that accepts no arguments."
+                )
+            return trend_model_callable()
+
+        return default_trend_callable()
+
+    def _get_seasonal_config(
+        self, uid: Union[str, int], seasonal_naive_model
+    ) -> Tuple[List[int], List[Any]]:
+        """
+        Resolve the seasonal periods and models configured for a SKU.
+
+        Parameters
+        ----------
+        uid : str or int
+            Unique identifier of the series.
+        seasonal_naive_model : callable
+            SeasonalNaive constructor used by the default factory.
+
+        Returns
+        -------
+        season_lengths : list of int
+            Seasonal periods normalized as a list.
+        seasonal_models : list
+            Seasonal models normalized as a list, with one model per period.
+
+        Raises
+        ------
+        ValueError
+            If the SKU has no configured periods or if a period is not a
+            positive integer greater than one.
+        """
+        season_length = self._get_sku_config(self.season_length, uid)
+        if season_length is None:
+            raise ValueError(
+                f"No season_length configured for unique_id {uid!r}. "
+                "Provide a period for every series."
+            )
+
+        season_lengths = (
+            [season_length] if isinstance(season_length, int) else season_length
+        )
+        if (
+            not isinstance(season_lengths, list)
+            or not season_lengths
+            or len(set(season_lengths)) != len(season_lengths)
+            or any(
+                not isinstance(period, int) or isinstance(period, bool) or period <= 1
+                for period in season_lengths
+            )
+        ):
+            raise ValueError(
+                f"season_length for unique_id {uid!r} must contain positive "
+                "integer periods greater than one without duplicates."
+            )
+
+        seasonal_model_callable = self._get_sku_config(
+            self.seasonal_model_callable, uid
+        )
+        if seasonal_model_callable is None:
+
+            def seasonal_model_callable(period):
+                try:
+                    return seasonal_naive_model(
+                        season_length=period,
+                        alias=f"SeasonalNaive-{period}",
+                    )
+                except TypeError as error:
+                    if "alias" not in str(error):
+                        raise
+                    return seasonal_naive_model(season_length=period)
+
+            seasonal_models = [
+                seasonal_model_callable(period) for period in season_lengths
+            ]
+        else:
+            if not callable(seasonal_model_callable):
+                raise TypeError(
+                    f"seasonal_model_callable for unique_id {uid!r} must be "
+                    "a callable that accepts one seasonal period."
+                )
+            seasonal_models = [
+                seasonal_model_callable(period) for period in season_lengths
+            ]
+
+        return season_lengths, seasonal_models
 
     def _fit_statsforecast(
         self,
@@ -193,7 +339,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         sf_df = pd.DataFrame(
             {self.id_col_: uid, self.time_col_: dates, self.target_col_: values}
         )
-        models_list = models if isinstance(models, list) else [models]
+        models_list = copy.deepcopy(models if isinstance(models, list) else [models])
         return StatsForecast(models=models_list, freq=freq).fit(sf_df)
 
     def _fit_mlforecast(
@@ -269,26 +415,15 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         from tinyshift.series import extract_mstl_components
 
         self.season_length_ = (
-            [self.season_length]
-            if isinstance(self.season_length, int)
-            else self.season_length
+            self.season_length
+            if isinstance(self.season_length, dict)
+            else (
+                [self.season_length]
+                if isinstance(self.season_length, int)
+                else self.season_length
+            )
         )
         self.freq_ = self._extract_freq()
-
-        self.trend_model_ = (
-            self.trend_model if self.trend_model is not None else AutoETS(model="ZZN")
-        )
-
-        if self.seasonal_model is not None:
-            self.seasonal_model_ = (
-                self.seasonal_model
-                if isinstance(self.seasonal_model, list)
-                else [self.seasonal_model]
-            )
-        else:
-            self.seasonal_model_ = [
-                SeasonalNaive(season_length=sl) for sl in self.season_length_
-            ]
 
         self.id_col_ = id_col
         self.time_col_ = time_col
@@ -297,8 +432,15 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             c for c in df.columns if c not in [id_col, time_col, target_col]
         ]
         self.fitted_models_ = {}
+        self.seasonal_models_ = {}
+        self.trend_models_ = {}
 
         for uid, group in df.groupby(id_col):
+            trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
+
+            season_lengths, seasonal_models = self._get_seasonal_config(
+                uid, SeasonalNaive
+            )
             group_sorted = group.sort_values(time_col).copy()
             y_series = group_sorted[target_col].values
 
@@ -307,19 +449,28 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
             dates = group_sorted[time_col]
 
-            mstl = MSTL(y_series, periods=self.season_length_)
+            mstl = MSTL(y_series, periods=season_lengths)
             res = mstl.fit()
-            components_df = extract_mstl_components(res, self.season_length_)
-            trend_part, seasonal_part, residual_part = self._process_components(
-                components_df
+            components_df = extract_mstl_components(res, season_lengths)
+            trend_part, seasonal_parts, residual_part = self._process_components(
+                components_df, split_seasonal=True
             )
 
             sf_trend = self._fit_statsforecast(
-                self.trend_model_, trend_part, dates, uid, self.freq_
+                trend_model, trend_part, dates, uid, self.freq_
             )
-            sf_seasonal = self._fit_statsforecast(
-                self.seasonal_model_, seasonal_part, dates, uid, self.freq_
-            )
+            sf_seasonal = [
+                self._fit_statsforecast(
+                    seasonal_model,
+                    seasonal_part,
+                    dates,
+                    uid,
+                    self.freq_,
+                )
+                for seasonal_model, seasonal_part in zip(
+                    seasonal_models, seasonal_parts
+                )
+            ]
             fitted_mf = self._fit_mlforecast(
                 group_sorted, residual_part, prediction_intervals
             )
@@ -329,6 +480,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 "seasonal": sf_seasonal,
                 "residual": fitted_mf,
             }
+            self.seasonal_models_[uid] = seasonal_models
+            self.trend_models_[uid] = trend_model
 
         return self
 
@@ -423,13 +576,13 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             mf_resid = models["residual"]
 
             df_trend = sf_trend.predict(h=h)
-            df_seasonal = sf_seasonal.predict(h=h)
-
             trend_cols = self._get_model_cols(df_trend)
-            seasonal_cols = self._get_model_cols(df_seasonal)
-
             trend_preds = df_trend[trend_cols].sum(axis=1).values
-            seasonal_preds = df_seasonal[seasonal_cols].sum(axis=1).values
+            seasonal_preds = np.zeros(h)
+            for seasonal_model in sf_seasonal:
+                df_seasonal = seasonal_model.predict(h=h)
+                seasonal_cols = self._get_model_cols(df_seasonal)
+                seasonal_preds += df_seasonal[seasonal_cols].sum(axis=1).values
 
             X_uid = X_df[X_df[self.id_col_] == uid].copy() if X_df is not None else None
             df_resid = mf_resid.predict(h=h, X_df=X_uid, level=level).copy()

@@ -3,7 +3,7 @@
 # Licensed under the MIT License
 
 
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Dict, Any, Optional
 import numpy as np
 import scipy
 import math
@@ -14,10 +14,12 @@ from scipy.signal import find_peaks
 
 
 def detect_seasonal_periods(
-    series: Union[np.ndarray, List[float], pd.Series],
+    series: Union[np.ndarray, List[float], pd.Series, pd.DataFrame],
     top_k: int = 3,
     noise_threshold_factor: float = 2.0,
-) -> List[int]:
+    unique_id_col: str = "unique_id",
+    target_col: Optional[str] = None,
+) -> Union[List[int], Dict[Any, List[int]]]:
     """
     Identifies candidate seasonal periods in a time series using Fast Fourier Transform (FFT).
 
@@ -27,25 +29,75 @@ def detect_seasonal_periods(
 
     Parameters
     ----------
-    series : Union[np.ndarray, List[float], pd.Series]
-        Input 1D time series data. Must contain at least 4 observations.
+    series : Union[np.ndarray, List[float], pd.Series, pd.DataFrame]
+        Input 1D time series data or a panel DataFrame. A DataFrame must
+        contain `unique_id_col` and a target column, and returns periods per ID.
     top_k : int, default=3
         Maximum number of candidate periods to return, ordered by spectral power.
     noise_threshold_factor : float, default=2.0
         Multiplier applied to the average spectral amplitude to filter out
         background noise peaks.
+    unique_id_col : str, default="unique_id"
+        DataFrame column containing the series identifiers.
+    target_col : str, optional
+        DataFrame column containing the values. If omitted, ``y`` is selected
+        when available; otherwise the DataFrame must contain exactly one
+        numeric column besides `unique_id_col`.
 
     Returns
     -------
-    List[int]
-        List of candidate seasonal periods sorted by dominant magnitude.
-        Returns an empty list if no significant periodic peaks are identified.
+    List[int] or dict
+        For 1D input, a list of candidate seasonal periods sorted by dominant
+        magnitude. For DataFrame input, a dictionary mapping each unique ID to
+        its list of candidate periods. Empty lists indicate no significant
+        periodic peaks.
 
     Raises
     ------
     ValueError
-        If the input length is less than 4 or if `top_k` is non-positive.
+        If the input is invalid, the input length is less than 4, if `top_k` is
+        non-positive, or if the DataFrame target column is ambiguous.
     """
+    if top_k <= 0:
+        raise ValueError(f"'top_k' must be a positive integer, got {top_k}.")
+
+    if isinstance(series, pd.DataFrame):
+        if unique_id_col not in series.columns:
+            raise ValueError(
+                f"DataFrame must contain the unique ID column {unique_id_col!r}."
+            )
+
+        if target_col is None:
+            if "y" in series.columns:
+                target_col = "y"
+            else:
+                numeric_columns = [
+                    column
+                    for column in series.columns
+                    if column != unique_id_col
+                    and pd.api.types.is_numeric_dtype(series[column])
+                ]
+                if len(numeric_columns) != 1:
+                    raise ValueError(
+                        "Could not infer the target column. Provide `target_col` "
+                        "or include a single numeric column besides the ID."
+                    )
+
+                target_col = numeric_columns[0]
+        elif target_col not in series.columns:
+            raise ValueError(
+                f"DataFrame does not contain target column {target_col!r}."
+            )
+
+        return {
+            unique_id: detect_seasonal_periods(
+                group[target_col],
+                top_k=top_k,
+                noise_threshold_factor=noise_threshold_factor,
+            )
+            for unique_id, group in series.groupby(unique_id_col, sort=False)
+        }
+
     if isinstance(series, pd.Series):
         s = series.dropna().to_numpy(dtype=np.float64)
     else:
@@ -55,9 +107,6 @@ def detect_seasonal_periods(
     n = len(s)
     if n < 4:
         raise ValueError(f"Input series must have at least 4 observations, got {n}.")
-    if top_k <= 0:
-        raise ValueError(f"'top_k' must be a positive integer, got {top_k}.")
-
     x = np.arange(n)
     poly_fit = np.polyfit(x, s, 1)
     signal = s - np.polyval(poly_fit, x)
