@@ -159,6 +159,68 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         residual_part = components_df["resid"].fillna(0.0).values
         return trend_part, seasonal_part, residual_part
 
+    def _get_seasonal_config(
+        self, uid: Union[str, int], seasonal_naive_model
+    ) -> Tuple[List[int], List[Any]]:
+        """
+        Resolve the seasonal periods and models configured for a SKU.
+
+        Parameters
+        ----------
+        uid : str or int
+            Unique identifier of the series.
+        seasonal_naive_model : callable
+            SeasonalNaive constructor used when no custom seasonal model is
+            configured.
+
+        Returns
+        -------
+        season_lengths : list of int
+            Seasonal periods normalized as a list.
+        seasonal_models : list
+            Seasonal models normalized as a list.
+
+        Raises
+        ------
+        ValueError
+            If the SKU has no configured periods or if a period is not a
+            positive integer greater than one.
+        """
+        season_length = self._get_sku_config(self.season_length, uid)
+        if season_length is None:
+            raise ValueError(
+                f"No season_length configured for unique_id {uid!r}. "
+                "Provide a period for every series."
+            )
+
+        season_lengths = (
+            [season_length] if isinstance(season_length, int) else season_length
+        )
+        if (
+            not isinstance(season_lengths, list)
+            or not season_lengths
+            or any(
+                not isinstance(period, int) or isinstance(period, bool) or period <= 1
+                for period in season_lengths
+            )
+        ):
+            raise ValueError(
+                f"season_length for unique_id {uid!r} must contain positive "
+                "integer periods greater than one."
+            )
+
+        seasonal_model = self._get_sku_config(self.seasonal_model, uid)
+        if seasonal_model is None:
+            seasonal_models = [
+                seasonal_naive_model(season_length=period) for period in season_lengths
+            ]
+        else:
+            seasonal_models = (
+                seasonal_model if isinstance(seasonal_model, list) else [seasonal_model]
+            )
+
+        return season_lengths, seasonal_models
+
     def _fit_statsforecast(
         self,
         models,
