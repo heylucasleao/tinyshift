@@ -80,7 +80,22 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         self.log_transform = log_transform
 
     def _get_sku_config(self, config, uid: Union[str, int]):
-        """Resolve a global or per-series configuration value."""
+        """
+        Resolve a global or per-series configuration value.
+
+        Parameters
+        ----------
+        config : object or dict
+            Global configuration value or mapping keyed by unique identifier.
+        uid : str or int
+            Unique identifier of the series.
+
+        Returns
+        -------
+        object
+            The per-series value when ``config`` is a dictionary, otherwise
+            the global configuration value.
+        """
         if isinstance(config, dict):
             return config.get(uid)
         return config
@@ -88,6 +103,16 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     def _extract_freq(self) -> Union[str, int]:
         """
         Extract and validate the frequency from the MLForecast instance.
+
+        Returns
+        -------
+        freq : str or int
+            Frequency set in the MLForecast instance.
+
+        Raises
+        ------
+        ValueError
+            If `mf_resid.freq` is missing or None.
         """
         freq = getattr(self.mf_resid, "freq", None)
         if freq is None:
@@ -100,6 +125,17 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     def _get_model_cols(self, df: pd.DataFrame) -> List[str]:
         """
         Extract model prediction column names from a forecasted DataFrame.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame containing time series predictions.
+
+        Returns
+        -------
+        cols : list of str
+            Columns representing model outputs, excluding identifier and time
+            columns.
         """
         return [c for c in df.columns if c not in [self.id_col_, self.time_col_]]
 
@@ -110,6 +146,23 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     ) -> Any:
         """
         Resolve the trend model configured for a SKU.
+
+        Parameters
+        ----------
+        uid : str or int
+            Unique identifier of the series.
+        default_trend_callable : callable
+            Factory without arguments that creates the fallback trend model.
+
+        Returns
+        -------
+        trend_model : StatsForecast model
+            A new model instance created by the configured or fallback factory.
+
+        Raises
+        ------
+        TypeError
+            If `trend_model_callable` resolves to a non-callable value.
         """
         trend_model_callable = self._get_sku_config(self.trend_model_callable, uid)
         if trend_model_callable is not None:
@@ -132,6 +185,24 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     ) -> Any:
         """
         Fit a StatsForecast pipeline on the trend component series.
+
+        Parameters
+        ----------
+        models : StatsForecast model or list of models
+            Statistical forecasting model(s) to fit on the trend component.
+        values : ndarray of shape (n_samples,)
+            Trend component values.
+        dates : pd.Series
+            Datetime or step index corresponding to the target values.
+        uid : str or int
+            Unique identifier for the group.
+        freq : str or int
+            Series frequency.
+
+        Returns
+        -------
+        sf : StatsForecast
+            Fitted StatsForecast instance.
         """
         from statsforecast import StatsForecast
 
@@ -146,6 +217,20 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     ) -> Any:
         """
         Fit an isolated copy of the base MLForecast pipeline on the extracted residual component.
+
+        Parameters
+        ----------
+        group : pd.DataFrame
+            Group-level source DataFrame containing time and exogenous features.
+        residual_part : ndarray of shape (n_samples,)
+            Residual values extracted from the trend decomposition.
+        prediction_intervals : PredictionIntervals, optional
+            Configuration for conformal prediction intervals.
+
+        Returns
+        -------
+        fitted_mf : MLForecast
+            Fitted deep copy of the base MLForecast instance.
         """
         df_residual = group[[self.id_col_, self.time_col_] + self.exog_cols_].copy()
         df_residual[self.target_col_] = residual_part
@@ -170,7 +255,32 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         prediction_intervals=None,
     ) -> "DTLWrapper":
         """
-        Fit Trend decomposition and sub-models for each unique group in the data.
+        Fit LOWESS trend decomposition and sub-models for each unique group.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Long-format panel dataset containing time series and exogenous
+            features.
+        id_col : str, default="unique_id"
+            Column identifying individual time series.
+        time_col : str, default="ds"
+            Column identifying timestamps or integer time steps.
+        target_col : str, default="y"
+            Target variable column name.
+        prediction_intervals : PredictionIntervals, optional
+            MLForecast conformal interval configuration for residual uncertainty
+            estimation.
+
+        Returns
+        -------
+        self : DTLWrapper
+            Fitted estimator.
+
+        Raises
+        ------
+        ValueError
+            If `mf_resid.freq` is missing or invalid.
         """
         from statsforecast.models import AutoETS
         from statsmodels.nonparametric.smoothers_lowess import lowess
@@ -230,6 +340,26 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     ) -> np.ndarray:
         """
         Apply horizontal penalization/filtering stabilization to raw predictions.
+
+        Parameters
+        ----------
+        y_hat : ndarray of shape (h,)
+            Raw recombined forecasts.
+        method : {"hpi", "hfi"}
+            Stabilization algorithm: 'hpi' (Horizontal Penalization Invariant)
+            or 'hfi' (Horizontal Filtering Invariant).
+        w_s : float
+            Stabilization smoothing intensity weight.
+
+        Returns
+        -------
+        y_hat_stable : ndarray of shape (h,)
+            Stabilized prediction sequence.
+
+        Raises
+        ------
+        ValueError
+            If method is not 'hpi' or 'hfi'.
         """
         from tinyshift.series import hpi, hfi
 
@@ -253,6 +383,39 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     ) -> pd.DataFrame:
         """
         Generate future forecasts by recombining trend and residual predictions.
+
+        Parameters
+        ----------
+        h : int
+            Forecast horizon (number of steps ahead to predict).
+        X_df : pd.DataFrame, optional
+            DataFrame containing exogenous features for the forecast horizon.
+        level : list of int or float, optional
+            Confidence levels (0-100) for prediction intervals.
+        stabilization_method : {"hpi", "hfi"}, optional
+            Horizontal stabilization technique to post-process point and
+            interval forecasts.
+        w_s : float, default=0.0
+            Stabilization weight parameter. Active only if `w_s > 0.0` and a
+            method is selected.
+
+        Returns
+        -------
+        preds_df : pd.DataFrame
+            DataFrame with predictions from all MLForecast estimators, unique
+            identifiers, timestamps, and optional prediction interval columns.
+
+        Raises
+        ------
+        RuntimeError
+            If the model is not fitted prior to calling predict.
+
+        Notes
+        -----
+        - Recombination occurs in log space if `log_transform=True`, followed
+          by scale inversion with `expm1`.
+        - Trend projections are added to every model and interval column
+          generated by MLForecast.
         """
         if not hasattr(self, "fitted_models_") or not self.fitted_models_:
             raise RuntimeError(
