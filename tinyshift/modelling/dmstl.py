@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 from tinyshift.utils.imports import requires_extra
+from functools import partial
 
 
 class DMSTLWrapper(BaseEstimator, RegressorMixin):
@@ -30,9 +31,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     season_length : int, list of int, or dict
         Seasonal period(s) passed directly to MSTL decomposition. A dictionary
         maps each unique identifier to an integer or list of integers.
-    trend_model : StatsForecast model, optional
-        Statistical model instance for the trend component. Defaults to
-        AutoETS(model="ZZN") if None.
+    trend_model_callable : callable or dict of callable, optional
+        Function without arguments that returns a configured StatsForecast
+        trend model. A dictionary may map each unique identifier to its own
+        callable. If None, an internal AutoETS(model="ZZN") model is used.
     seasonal_model_callable : callable or dict of callable, optional
         Function that receives a seasonal period and returns one configured
         StatsForecast model for that period. A dictionary may map each
@@ -53,10 +55,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Formatted list of seasonal lengths.
     freq_ : str or int
         Effective time series frequency retrieved from `mf_resid.freq`.
-    trend_model_ : StatsForecast model
-        Configured trend model.
     seasonal_models_ : dict
         Configured seasonal models by unique identifier and period.
+    trend_models_ : dict
+        Configured trend models by unique identifier.
     id_col_ : str
         Name of the unique identifier column set during fit.
     time_col_ : str
@@ -90,7 +92,12 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         season_length: Union[
             int, List[int], Dict[Union[str, int], Union[int, List[int]]]
         ],
-        trend_model=None,
+        trend_model_callable: Optional[
+            Union[
+                Callable[[], Any],
+                Dict[Union[str, int], Callable[[], Any]],
+            ]
+        ] = None,
         seasonal_model_callable: Optional[
             Union[
                 Callable[[int], Any],
@@ -101,7 +108,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     ) -> None:
         self.mf_resid = mf_resid
         self.season_length = season_length
-        self.trend_model = trend_model
+        self.trend_model_callable = trend_model_callable
         self.seasonal_model_callable = seasonal_model_callable
         self.log_transform = log_transform
 
@@ -180,6 +187,42 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             seasonal_part = components_df[seasonal_cols].sum(axis=1).values
         residual_part = components_df["resid"].fillna(0.0).values
         return trend_part, seasonal_part, residual_part
+
+    def _get_trend_config(
+        self,
+        uid: Union[str, int],
+        default_trend_callable: Callable[[], Any],
+    ) -> Any:
+        """
+        Resolve the trend model configured for a SKU.
+
+        Parameters
+        ----------
+        uid : str or int
+            Unique identifier of the series.
+        default_trend_callable : callable
+            Factory without arguments that creates the fallback trend model.
+
+        Returns
+        -------
+        trend_model : StatsForecast model
+            A new model instance created by the configured or fallback factory.
+
+        Raises
+        ------
+        TypeError
+            If `trend_model_callable` resolves to a non-callable value.
+        """
+        trend_model_callable = self._get_sku_config(self.trend_model_callable, uid)
+        if trend_model_callable is not None:
+            if not callable(trend_model_callable):
+                raise TypeError(
+                    f"trend_model_callable for unique_id {uid!r} must be "
+                    "a callable that accepts no arguments."
+                )
+            return trend_model_callable()
+
+        return default_trend_callable()
 
     def _get_seasonal_config(
         self, uid: Union[str, int], seasonal_naive_model
@@ -382,10 +425,6 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         )
         self.freq_ = self._extract_freq()
 
-        self.trend_model_ = (
-            self.trend_model if self.trend_model is not None else AutoETS(model="ZZN")
-        )
-
         self.id_col_ = id_col
         self.time_col_ = time_col
         self.target_col_ = target_col
@@ -394,8 +433,11 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ]
         self.fitted_models_ = {}
         self.seasonal_models_ = {}
+        self.trend_models_ = {}
 
         for uid, group in df.groupby(id_col):
+            trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
+
             season_lengths, seasonal_models = self._get_seasonal_config(
                 uid, SeasonalNaive
             )
@@ -415,7 +457,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             )
 
             sf_trend = self._fit_statsforecast(
-                self.trend_model_, trend_part, dates, uid, self.freq_
+                trend_model, trend_part, dates, uid, self.freq_
             )
             sf_seasonal = [
                 self._fit_statsforecast(
@@ -439,6 +481,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 "residual": fitted_mf,
             }
             self.seasonal_models_[uid] = seasonal_models
+            self.trend_models_[uid] = trend_model
 
         return self
 

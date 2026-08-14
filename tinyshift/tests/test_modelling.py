@@ -3,6 +3,7 @@
 # Licensed under the MIT License
 
 
+from functools import partial
 from types import SimpleNamespace
 import numpy as np
 import pandas as pd
@@ -127,7 +128,6 @@ class TestDMSTLWrapper:
         wrapper = DMSTLWrapper(
             mf_resid=SimpleNamespace(freq="D"),
             season_length=[7],
-            trend_model=None,
             log_transform=False,
         )
         wrapper.id_col_ = "unique_id"
@@ -219,3 +219,35 @@ class TestDMSTLWrapper:
 
         with pytest.raises(TypeError, match="seasonal_model_callable"):
             wrapper._get_seasonal_config("sku-a", AutoETS)
+
+    def test_trend_model_callable_creates_model_per_uid(self, monkeypatch):
+        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+
+        from statsforecast.models import AutoETS
+
+        wrapper = DMSTLWrapper(
+            mf_resid=SimpleNamespace(freq="D"),
+            season_length=7,
+            trend_model_callable=lambda: AutoETS(model="ZZN"),
+        )
+
+        assert wrapper.trend_model_callable().model == "ZZN"
+
+        default_callable = partial(AutoETS, model="ZZN")
+        resolved_model = wrapper._get_trend_config("sku-a", default_callable)
+        assert resolved_model.model == "ZZN"
+        assert resolved_model is not default_callable()
+
+    def test_trend_model_callable_rejects_model_instance(self, monkeypatch):
+        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+
+        from statsforecast.models import AutoETS
+
+        wrapper = DMSTLWrapper(
+            mf_resid=SimpleNamespace(freq="D"),
+            season_length=7,
+            trend_model_callable=AutoETS(model="ZZN"),
+        )
+
+        with pytest.raises(TypeError, match="trend_model_callable"):
+            wrapper.fit(pd.DataFrame({"unique_id": ["sku-a"], "ds": [1], "y": [1.0]}))
