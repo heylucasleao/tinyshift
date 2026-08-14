@@ -274,7 +274,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         sf_df = pd.DataFrame(
             {self.id_col_: uid, self.time_col_: dates, self.target_col_: values}
         )
-        models_list = models if isinstance(models, list) else [models]
+        models_list = copy.deepcopy(models if isinstance(models, list) else [models])
         return StatsForecast(models=models_list, freq=freq).fit(sf_df)
 
     def _fit_mlforecast(
