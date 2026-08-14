@@ -65,10 +65,10 @@ def detrend(
     if not isinstance(df, pd.DataFrame):
         raise TypeError("df must be a pandas DataFrame in Nixtla long format.")
 
-    if not 0 < frac <= 1:
-        raise ValueError("frac must be greater than 0 and less than or equal to 1.")
-    if not isinstance(df, pd.DataFrame):
-        raise TypeError("df must be a pandas DataFrame in Nixtla long format.")
+    required = [id_col, time_col, target_col]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(f"DataFrame is missing required columns: {missing}.")
 
     result = df.copy()
 
