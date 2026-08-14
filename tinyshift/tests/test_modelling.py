@@ -158,3 +158,22 @@ class TestDMSTLWrapper:
         assert seasonal.shape == (4,)
         assert residual.shape == (4,)
         assert cols == ["y", "model_a"]
+
+    def test_seasonal_config_resolves_per_uid_season_length(self, monkeypatch):
+        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+
+        wrapper = DMSTLWrapper(
+            mf_resid=SimpleNamespace(freq="D"),
+            season_length={"sku-a": [7, 30]},
+        )
+
+        class SeasonalNaive:
+            def __init__(self, season_length):
+                self.season_length = season_length
+
+        season_lengths, seasonal_models = wrapper._get_seasonal_config(
+            "sku-a", SeasonalNaive
+        )
+
+        assert season_lengths == [7, 30]
+        assert [model.season_length for model in seasonal_models] == [7, 30]

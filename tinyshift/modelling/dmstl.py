@@ -3,7 +3,7 @@
 # Licensed under the MIT License
 
 import copy
-from typing import Literal, Union, List, Tuple, Optional, Any
+from typing import Literal, Union, List, Tuple, Optional, Any, Dict
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
@@ -27,8 +27,9 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Base MLForecast pipeline configured with one or multiple machine
         learning estimators (e.g., `models=[LGBMRegressor(), XGBRegressor()]`)
         to fit the residual component. Must have `freq` defined.
-    season_length : int or list of int
-        Seasonal period(s) passed directly to MSTL decomposition.
+    season_length : int, list of int, or dict
+        Seasonal period(s) passed directly to MSTL decomposition. A dictionary
+        maps each unique identifier to an integer or list of integers.
     trend_model : StatsForecast model, optional
         Statistical model instance for the trend component. Defaults to
         AutoETS(model="MMN") if None.
@@ -84,7 +85,9 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     def __init__(
         self,
         mf_resid: Any,
-        season_length: Union[int, List[int]],
+        season_length: Union[
+            int, List[int], Dict[Union[str, int], Union[int, List[int]]]
+        ],
         trend_model=None,
         seasonal_model=None,
         log_transform: bool = False,
@@ -94,6 +97,12 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self.trend_model = trend_model
         self.seasonal_model = seasonal_model
         self.log_transform = log_transform
+
+    def _get_sku_config(self, config, uid: Union[str, int]):
+        """Resolve a global or per-series configuration value."""
+        if isinstance(config, dict):
+            return config.get(uid)
+        return config
 
     def _extract_freq(self) -> Union[str, int]:
         """
@@ -199,6 +208,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         if (
             not isinstance(season_lengths, list)
             or not season_lengths
+            or len(set(season_lengths)) != len(season_lengths)
             or any(
                 not isinstance(period, int) or isinstance(period, bool) or period <= 1
                 for period in season_lengths
@@ -206,14 +216,23 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ):
             raise ValueError(
                 f"season_length for unique_id {uid!r} must contain positive "
-                "integer periods greater than one."
+                "integer periods greater than one without duplicates."
             )
 
         seasonal_model = self._get_sku_config(self.seasonal_model, uid)
         if seasonal_model is None:
-            seasonal_models = [
-                seasonal_naive_model(season_length=period) for period in season_lengths
-            ]
+            seasonal_models = []
+            for period in season_lengths:
+                try:
+                    model = seasonal_naive_model(
+                        season_length=period,
+                        alias=f"SeasonalNaive-{period}",
+                    )
+                except TypeError as error:
+                    if "alias" not in str(error):
+                        raise
+                    model = seasonal_naive_model(season_length=period)
+                seasonal_models.append(model)
         else:
             seasonal_models = (
                 seasonal_model if isinstance(seasonal_model, list) else [seasonal_model]
@@ -331,26 +350,19 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         from tinyshift.series import extract_mstl_components
 
         self.season_length_ = (
-            [self.season_length]
-            if isinstance(self.season_length, int)
-            else self.season_length
+            self.season_length
+            if isinstance(self.season_length, dict)
+            else (
+                [self.season_length]
+                if isinstance(self.season_length, int)
+                else self.season_length
+            )
         )
         self.freq_ = self._extract_freq()
 
         self.trend_model_ = (
             self.trend_model if self.trend_model is not None else AutoETS(model="ZZN")
         )
-
-        if self.seasonal_model is not None:
-            self.seasonal_model_ = (
-                self.seasonal_model
-                if isinstance(self.seasonal_model, list)
-                else [self.seasonal_model]
-            )
-        else:
-            self.seasonal_model_ = [
-                SeasonalNaive(season_length=sl) for sl in self.season_length_
-            ]
 
         self.id_col_ = id_col
         self.time_col_ = time_col
@@ -361,6 +373,9 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self.fitted_models_ = {}
 
         for uid, group in df.groupby(id_col):
+            season_lengths, seasonal_models = self._get_seasonal_config(
+                uid, SeasonalNaive
+            )
             group_sorted = group.sort_values(time_col).copy()
             y_series = group_sorted[target_col].values
 
@@ -369,9 +384,9 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
             dates = group_sorted[time_col]
 
-            mstl = MSTL(y_series, periods=self.season_length_)
+            mstl = MSTL(y_series, periods=season_lengths)
             res = mstl.fit()
-            components_df = extract_mstl_components(res, self.season_length_)
+            components_df = extract_mstl_components(res, season_lengths)
             trend_part, seasonal_part, residual_part = self._process_components(
                 components_df
             )
@@ -380,7 +395,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 self.trend_model_, trend_part, dates, uid, self.freq_
             )
             sf_seasonal = self._fit_statsforecast(
-                self.seasonal_model_, seasonal_part, dates, uid, self.freq_
+                seasonal_models, seasonal_part, dates, uid, self.freq_
             )
             fitted_mf = self._fit_mlforecast(
                 group_sorted, residual_part, prediction_intervals
