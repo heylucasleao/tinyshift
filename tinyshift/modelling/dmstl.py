@@ -55,10 +55,6 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Formatted list of seasonal lengths.
     freq_ : str or int
         Effective time series frequency retrieved from `mf_resid.freq`.
-    seasonal_models_ : dict
-        Configured seasonal models by unique identifier and period.
-    trend_models_ : dict
-        Configured trend models by unique identifier.
     id_col_ : str
         Name of the unique identifier column set during fit.
     time_col_ : str
@@ -432,8 +428,6 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             c for c in df.columns if c not in [id_col, time_col, target_col]
         ]
         self.fitted_models_ = {}
-        self.seasonal_models_ = {}
-        self.trend_models_ = {}
 
         for uid, group in df.groupby(id_col):
             trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
@@ -480,8 +474,6 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 "seasonal": sf_seasonal,
                 "residual": fitted_mf,
             }
-            self.seasonal_models_[uid] = seasonal_models
-            self.trend_models_[uid] = trend_model
 
         return self
 
