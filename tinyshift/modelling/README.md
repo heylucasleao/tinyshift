@@ -1,6 +1,6 @@
 # ML Modeling Utilities Module (`modelling`)
 
-The `modelling` module provides sklearn-compatible preprocessing, feature engineering, and decomposed forecasting utilities for robust machine learning workflows. It includes multicollinearity reduction, feature residualization, robust scaling, MSTL decomposition with forecasting, and time-series feature generation.
+The `modelling` module provides sklearn-compatible preprocessing, feature engineering, and decomposed forecasting utilities for robust machine learning workflows. It includes multicollinearity reduction, feature residualization, robust scaling, LOWESS and MSTL decomposition with forecasting, and time-series feature generation.
 
 ## Features
 

@@ -13,7 +13,7 @@ For enterprise-grade solutions, consider [Nannyml](https://github.com/NannyML/na
 - **Outlier Detection**: **HBOS**, **PCA-based** and **SPAD** outlier detection algorithms  
 - **Classification Model Evaluation**: Calibration curves, confusion matrices, score distributions, and production confidence analysis
 - **Time Series Analysis**: Seasonality decomposition, trend analysis, forecasting diagnostics, and forecast stabilization
-- **Decomposed Forecasting**: DMSTL-based multi-seasonal forecasting for panel and long-horizon series
+- **Decomposed Forecasting**: DTL-based non-seasonal and DMSTL-based multi-seasonal forecasting for panel and long-horizon series
 - **Forecast Stability**: Metrics and interpolation methods for stable forecasting
 
 ## Technologies Used
@@ -291,6 +291,7 @@ These utilities cover:
 - `wape`: weighted absolute percentage error for overall accuracy
 - `pbias`: percent bias to detect over- or under-forecasting
 - `score`: composite score combining WAPE and absolute bias
+- `economic_loss`: financial loss from understock and overstock costs
 - `rmae`: relative mean absolute error versus a baseline model
 - `fva_rmae`: lead-time-aware RMAE for Forecast Value Added analysis
 
@@ -437,6 +438,7 @@ tinyshift/
 ├── modelling/                   # ML modeling utilities
 │   ├── README.md                # Module documentation
 │   ├── __init__.py              # Package exports
+│   ├── dtl.py                   # DTL LOWESS trend/residual forecasting wrapper
 │   ├── dmstl.py                 # DMSTL decomposed forecasting wrapper
 │   ├── multicollinearity.py     # VIF-based multicollinearity detection
 │   ├── residualizer.py          # Residualizer feature
