@@ -128,7 +128,6 @@ class TestDMSTLWrapper:
             mf_resid=SimpleNamespace(freq="D"),
             season_length=[7],
             trend_model=None,
-            seasonal_model=None,
             log_transform=False,
         )
         wrapper.id_col_ = "unique_id"
@@ -138,6 +137,7 @@ class TestDMSTLWrapper:
             {
                 "trend": [1.0, 2.0, 3.0, 4.0],
                 "seasonal_7": [0.1, 0.2, 0.1, 0.2],
+                "seasonal_30": [1.0, 2.0, 1.0, 2.0],
                 "resid": [0.0, 0.0, 0.0, 0.0],
             }
         )
@@ -159,6 +159,13 @@ class TestDMSTLWrapper:
         assert residual.shape == (4,)
         assert cols == ["y", "model_a"]
 
+        _, seasonal_parts, _ = wrapper._process_components(
+            components_df, split_seasonal=True
+        )
+        assert len(seasonal_parts) == 2
+        np.testing.assert_array_equal(seasonal_parts[0], [0.1, 0.2, 0.1, 0.2])
+        np.testing.assert_array_equal(seasonal_parts[1], [1.0, 2.0, 1.0, 2.0])
+
     def test_seasonal_config_resolves_per_uid_season_length(self, monkeypatch):
         monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
 
@@ -177,3 +184,38 @@ class TestDMSTLWrapper:
 
         assert season_lengths == [7, 30]
         assert [model.season_length for model in seasonal_models] == [7, 30]
+
+    def test_seasonal_config_accepts_model_factory(self, monkeypatch):
+        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+
+        from statsforecast.models import AutoETS
+
+        wrapper = DMSTLWrapper(
+            mf_resid=SimpleNamespace(freq="D"),
+            season_length=[7, 30],
+            seasonal_model_callable=lambda period: AutoETS(
+                season_length=period,
+                model="ZNM",
+                alias=f"AutoETS-{period}",
+            ),
+        )
+
+        season_lengths, seasonal_models = wrapper._get_seasonal_config("sku-a", AutoETS)
+
+        assert season_lengths == [7, 30]
+        assert [model.season_length for model in seasonal_models] == [7, 30]
+        assert [model.model for model in seasonal_models] == ["ZNM", "ZNM"]
+
+    def test_seasonal_config_rejects_model_instance(self, monkeypatch):
+        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+
+        from statsforecast.models import AutoETS
+
+        wrapper = DMSTLWrapper(
+            mf_resid=SimpleNamespace(freq="D"),
+            season_length=[7, 30],
+            seasonal_model_callable=AutoETS(model="ZNA"),
+        )
+
+        with pytest.raises(TypeError, match="seasonal_model_callable"):
+            wrapper._get_seasonal_config("sku-a", AutoETS)
