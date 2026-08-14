@@ -32,10 +32,56 @@ from tinyshift.series.metric import (
     rmae,
     fva_rmae,
     forecast_instability,
+    economic_loss,
 )
 from tinyshift.series.outlier import hampel_filter, bollinger_bands
 from tinyshift.series.stability import macv, mach, mascv, masch, rmsscv, rmssch
 from statsmodels.tsa.seasonal import DecomposeResult
+
+
+def test_economic_loss_aggregates_understock_and_overstock_by_id():
+    df = pd.DataFrame(
+        {
+            "unique_id": ["a", "a", "b"],
+            "y": [10.0, 5.0, 8.0],
+            "model": [8.0, 7.0, 10.0],
+            "cu": [3.0, 3.0, 2.0],
+            "co": [1.0, 1.0, 4.0],
+        }
+    )
+
+    result = economic_loss(
+        df,
+        models=["model"],
+        cost_understock="cu",
+        cost_overstock="co",
+    )
+
+    assert list(result.columns) == ["unique_id", "metric", "model"]
+    assert result.set_index("unique_id").loc["a", "metric"] == "economic_loss"
+    assert result.set_index("unique_id").loc["a", "model"] == pytest.approx(8.0)
+    assert result.set_index("unique_id").loc["b", "model"] == pytest.approx(8.0)
+
+
+def test_economic_loss_accepts_scalar_costs():
+    df = pd.DataFrame(
+        {
+            "unique_id": ["a", "a"],
+            "y": [10.0, 5.0],
+            "model_a": [8.0, 7.0],
+            "model_b": [12.0, 4.0],
+        }
+    )
+
+    result = economic_loss(
+        df,
+        models=["model_a", "model_b"],
+        cost_understock=3.0,
+        cost_overstock=1.0,
+    )
+
+    assert result.loc[0, "model_a"] == pytest.approx(8.0)
+    assert result.loc[0, "model_b"] == pytest.approx(5.0)
 
 
 class TestDiagnostic:

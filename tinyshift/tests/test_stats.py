@@ -14,6 +14,7 @@ from tinyshift.stats.utils import (
     chebyshev_guaranteed_percentage,
     expanding_window,
     generate_lag,
+    generate_panel_lags,
     is_obsolete,
     jacknife,
     mad,
@@ -59,6 +60,43 @@ def test_jackknife_and_mad_and_generate_lag():
     lagged = generate_lag(x, lag=2)
     np.testing.assert_allclose(lagged[:2], np.array([np.nan, np.nan]))
     np.testing.assert_allclose(lagged[2:], np.array([4.0, 4.0]))
+
+
+def test_generate_panel_lags_sorts_and_resets_each_series():
+    df = pd.DataFrame(
+        {
+            "unique_id": ["b", "a", "b", "a"],
+            "ds": [2, 2, 1, 1],
+            "y": [30.0, 20.0, 10.0, 5.0],
+        }
+    )
+
+    result = generate_panel_lags(df, lags=[1, 2])
+
+    assert result[["unique_id", "ds"]].values.tolist() == [
+        ["a", 1],
+        ["a", 2],
+        ["b", 1],
+        ["b", 2],
+    ]
+    np.testing.assert_allclose(
+        result["y_lag_1"].to_numpy(), [np.nan, 5.0, np.nan, 10.0]
+    )
+    np.testing.assert_allclose(
+        result["y_diff_lag_1"].to_numpy(), [np.nan, 15.0, np.nan, 20.0]
+    )
+    assert result["y_lag_2"].isna().all()
+    assert result["y_diff_lag_2"].isna().all()
+
+
+def test_generate_panel_lags_rejects_invalid_lags():
+    df = pd.DataFrame({"unique_id": ["a", "a"], "ds": [1, 2], "y": [1.0, 2.0]})
+
+    with pytest.raises(ValueError, match="positive integers"):
+        generate_panel_lags(df, lags=[0])
+
+    with pytest.raises(ValueError, match="duplicates"):
+        generate_panel_lags(df, lags=[1, 1])
 
 
 def test_remove_leading_zeros_and_is_obsolete():
