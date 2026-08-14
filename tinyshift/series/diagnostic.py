@@ -11,6 +11,95 @@ import pandas as pd
 from statsmodels.tsa.seasonal import DecomposeResult
 from scipy.fft import rfft, rfftfreq
 from scipy.signal import find_peaks
+from statsmodels.nonparametric.smoothers_lowess import lowess
+
+
+def detrend(
+    df: pd.DataFrame,
+    frac: float = 0.2,
+    robust: bool = True,
+    id_col: str = "unique_id",
+    time_col: str = "ds",
+    target_col: str = "y",
+) -> pd.DataFrame:
+    """
+    Decompose a Nixtla-format panel into LOWESS trend and residual.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Nixtla long-format panel with identifier, timestamp and target columns.
+        Additional columns are preserved. Missing values in the target are linearly
+        interpolated only while estimating the trend; original values are
+        preserved in the output.
+    frac : float, default=0.2
+        Fraction of observations used for each local LOWESS regression.
+        Larger values produce a smoother trend.
+    robust : bool, default=True
+        Whether to perform robustifying LOWESS iterations that down-weight
+        outliers.
+    id_col : str, default="unique_id"
+        Column identifying each time series.
+    time_col : str, default="ds"
+        Column containing timestamps or integer time steps.
+    target_col : str, default="y"
+        Column containing the observed target values.
+    Returns
+    -------
+    pd.DataFrame
+        Copy of ``df`` with ``trend`` and ``detrended`` appended. Rows retain
+        their original order.
+
+    Raises
+    ------
+    TypeError
+        If ``df`` is not a pandas DataFrame.
+    ValueError
+        If a required Nixtla column is missing, a series has fewer than two
+        observations, or ``frac`` is not in the interval ``(0, 1]``.
+    """
+
+    if not 0 < frac <= 1:
+        raise ValueError("frac must be greater than 0 and less than or equal to 1.")
+
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("df must be a pandas DataFrame in Nixtla long format.")
+
+    if not 0 < frac <= 1:
+        raise ValueError("frac must be greater than 0 and less than or equal to 1.")
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("df must be a pandas DataFrame in Nixtla long format.")
+
+    result = df.copy()
+
+    counts = result.groupby(id_col, observed=True)[target_col].transform("count")
+    if (counts < 2).any():
+        raise ValueError(
+            "Each unique_id series must contain at least two observations."
+        )
+
+    result = result.sort_values([id_col, time_col])
+
+    clean_series = result.groupby(id_col, observed=True)[target_col].transform(
+        lambda g: g.interpolate(method="linear", limit_direction="both")
+    )
+
+    it = 3 if robust else 0
+
+    def _apply_lowess(s: pd.Series) -> pd.Series:
+        """Applies LOWESS smoothing to a pandas Series."""
+        y = s.to_numpy(dtype=float)
+        x = np.arange(len(y))
+        trend = lowess(y, x, frac=frac, it=it, return_sorted=False)
+        return pd.Series(trend, index=s.index)
+
+    result["trend"] = clean_series.groupby(result[id_col], observed=True).transform(
+        _apply_lowess
+    )
+
+    result["detrended"] = result[target_col] - result["trend"]
+
+    return result.loc[df.index]
 
 
 def detect_seasonal_periods(

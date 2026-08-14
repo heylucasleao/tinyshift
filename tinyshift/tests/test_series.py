@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from tinyshift.series.diagnostic import (
+    detrend,
     detect_seasonal_periods,
     hurst_exponent,
     trend_significance,
@@ -38,6 +39,89 @@ from statsmodels.tsa.seasonal import DecomposeResult
 
 
 class TestDiagnostic:
+    def test_detrend_returns_nixtla_columns_and_residual(self):
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["a"] * 20,
+                "ds": pd.date_range("2024-01-01", periods=20, freq="D"),
+                "y": np.linspace(1.0, 10.0, 20),
+            }
+        )
+
+        result = detrend(frame, frac=0.3, robust=False)
+
+        assert list(result.columns) == ["unique_id", "ds", "y", "trend", "detrended"]
+        np.testing.assert_allclose(result["detrended"], result["y"] - result["trend"])
+
+    def test_detrend_interpolates_missing_values_only_for_trend(self):
+        series = pd.DataFrame(
+            {
+                "unique_id": ["a"] * 5,
+                "ds": pd.date_range("2024-01-01", periods=5, freq="D"),
+                "y": [1.0, np.nan, 3.0, 4.0, 5.0],
+            }
+        )
+
+        result = detrend(series, frac=0.5)
+
+        assert np.isnan(result.loc[1, "y"])
+        assert np.isfinite(result.loc[1, "trend"])
+        assert np.isnan(result.loc[1, "detrended"])
+
+    def test_detrend_rejects_invalid_frac(self):
+        with pytest.raises(ValueError, match="frac"):
+            detrend(
+                pd.DataFrame({"unique_id": ["a", "a"], "ds": [1, 2], "y": [1.0, 2.0]}),
+                frac=0.0,
+            )
+
+    def test_detrend_rejects_non_dataframe_input(self):
+        with pytest.raises(TypeError, match="DataFrame"):
+            detrend([1.0, 2.0, 3.0])
+
+    def test_detrend_accepts_nixtla_style_panel(self):
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["a", "a", "b", "b"],
+                "ds": [2, 1, 1, 2],
+                "y": [2.0, 1.0, 4.0, 5.0],
+            }
+        )
+
+        result = detrend(frame, frac=1.0, robust=False)
+
+        assert list(result.columns) == ["unique_id", "ds", "y", "trend", "detrended"]
+        assert result[["unique_id", "ds", "y"]].equals(frame)
+        assert result["trend"].notna().all()
+        np.testing.assert_allclose(result["detrended"], result["y"] - result["trend"])
+
+    def test_detrend_accepts_custom_nixtla_column_names(self):
+        frame = pd.DataFrame(
+            {
+                "series_id": ["a"] * 4,
+                "timestamp": [1, 2, 3, 4],
+                "value": [1.0, 2.0, 3.0, 4.0],
+            }
+        )
+
+        result = detrend(
+            frame,
+            frac=1.0,
+            robust=False,
+            id_col="series_id",
+            time_col="timestamp",
+            target_col="value",
+        )
+
+        assert result[["series_id", "timestamp", "value"]].equals(frame)
+        np.testing.assert_allclose(
+            result["detrended"], result["value"] - result["trend"]
+        )
+
+    def test_detrend_panel_rejects_missing_columns(self):
+        with pytest.raises(ValueError, match="missing required columns"):
+            detrend(pd.DataFrame({"unique_id": ["a"], "y": [1.0]}))
+
     def test_detect_seasonal_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         periods = detect_seasonal_periods(x)

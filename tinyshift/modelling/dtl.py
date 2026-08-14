@@ -283,7 +283,7 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
             If `mf_resid.freq` is missing or invalid.
         """
         from statsforecast.models import AutoETS
-        from statsmodels.nonparametric.smoothers_lowess import lowess
+        from tinyshift.series import detrend
 
         self.freq_ = self._extract_freq()
 
@@ -295,38 +295,32 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         ]
         self.fitted_models_ = {}
 
+        df_proc = df[[id_col, time_col, target_col] + self.exog_cols_].copy()
+
+        if self.log_transform:
+            df_proc[target_col] = np.log1p(df_proc[target_col])
+
+        decomp_df = detrend(
+            df_proc,
+            frac=self.trend_frac,
+            robust=self.robust,
+            id_col=id_col,
+            time_col=time_col,
+            target_col=target_col,
+        )
+
         for uid, group in df.groupby(id_col):
             trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
 
-            group_sorted = group.sort_values(time_col).copy()
-            y_series = group_sorted[target_col].values
-
-            if self.log_transform:
-                y_series = np.log1p(y_series)
-
-            dates = group_sorted[time_col]
-
-            y_series_clean = (
-                pd.Series(y_series)
-                .interpolate(method="linear", limit_direction="both")
-                .values
-            )
-
-            trend_part = lowess(
-                y_series_clean,
-                np.arange(len(y_series_clean)),
-                frac=self.trend_frac,
-                it=3 if self.robust else 0,
-                return_sorted=False,
-            )
-            residual_part = y_series - trend_part
+            decomp_group = decomp_df.loc[group.index]
+            dates = group[time_col]
+            trend_part = decomp_group["trend"].to_numpy()
+            residual_part = decomp_group["detrended"].to_numpy()
 
             sf_trend = self._fit_statsforecast(
                 trend_model, trend_part, dates, uid, self.freq_
             )
-            fitted_mf = self._fit_mlforecast(
-                group_sorted, residual_part, prediction_intervals
-            )
+            fitted_mf = self._fit_mlforecast(group, residual_part, prediction_intervals)
 
             self.fitted_models_[uid] = {
                 "trend": sf_trend,
