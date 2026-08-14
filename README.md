@@ -338,6 +338,7 @@ The `tinyshift.modelling` package contains preprocessing and forecasting wrapper
 - `filter_features_by_vif` — remove highly correlated features using VIF filtering
 - `FeatureResidualizer` — residualize correlated predictors while preserving information
 - `RobustGaussianScaler` — robust scaling with winsorization and power transforms
+- `DTLWrapper` — decomposed LOWESS trend plus ML residual forecasting for non-seasonal data
 - `DMSTLWrapper` — decomposed MSTL forecasting wrapper for panel/multi-seasonal data
 - `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
 
@@ -375,9 +376,19 @@ confidence_interval = bootstrap_bca_interval(
 )
 ```
 
-### 9. Decomposed Forecasting with DMSTL
+### 9. Decomposed Forecasting with DTL and DMSTL
 
-TinyShift also includes a decomposed multi-seasonal forecasting wrapper for panel or long-horizon forecasting tasks:
+TinyShift includes decomposed forecasting wrappers for non-seasonal and multi-seasonal panel data. `DTLWrapper` extracts a robust LOWESS trend and models residuals with `MLForecast`:
+
+```python
+from tinyshift.modelling import DTLWrapper
+
+model = DTLWrapper(mf_resid=mf_resid, trend_frac=0.2, robust=True)
+model.fit(df, id_col="unique_id", time_col="ds", target_col="y")
+preds = model.predict(h=14, stabilization_method="hfi", w_s=0.2)
+```
+
+For multiple seasonalities, use `DMSTLWrapper`:
 
 ```python
 from tinyshift.modelling import DMSTLWrapper

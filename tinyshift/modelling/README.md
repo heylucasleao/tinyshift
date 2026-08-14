@@ -87,7 +87,29 @@ X_scaled = scaler.fit_transform(
 
 ---
 
-### 4. Decomposed Forecasting Wrapper (`dmstl.py`)
+### 4. Decomposed Trend-Local Wrapper (`dtl.py`)
+
+#### **`DTLWrapper`** - LOWESS Trend + Residual ML Forecasting
+Wrapper for non-seasonal panel forecasting. It extracts a robust LOWESS trend, forecasts that component with StatsForecast, and models the residual component with `MLForecast`.
+
+```python
+from tinyshift.modelling import DTLWrapper
+from mlforecast import MLForecast
+from sklearn.ensemble import RandomForestRegressor
+
+mf_resid = MLForecast(models=[RandomForestRegressor()], freq='D')
+wrapper = DTLWrapper(mf_resid=mf_resid, trend_frac=0.2, robust=True)
+
+wrapper.fit(df, id_col='unique_id', time_col='ds', target_col='y')
+predictions = wrapper.predict(h=14)
+```
+
+**When to use:**
+- For non-seasonal panel forecasting
+- When a smooth robust trend should be forecast separately from residual dynamics
+- To combine LOWESS decomposition with machine-learning residual forecasts
+
+### 5. Decomposed Forecasting Wrapper (`dmstl.py`)
 
 #### **`DMSTLWrapper`** - MSTL-Based Trend/Seasonality + Residual ML Modeling
 Wrapper that decomposes a panel time series using MSTL, fits statistical models for trend and seasonality, and models residual structure with `MLForecast`.
@@ -114,7 +136,7 @@ predictions = wrapper.predict(df_future)
 
 ---
 
-### 5. Time Series Feature Engineering (`ts_features.py`)
+### 6. Time Series Feature Engineering (`ts_features.py`)
 
 #### **`relative_strength_index`**
 Computes the Relative Strength Index (RSI) for a univariate series.
@@ -156,6 +178,7 @@ The `tinyshift.modelling` package exports:
 - `filter_features_by_vif`
 - `FeatureResidualizer`
 - `RobustGaussianScaler`
+- `DTLWrapper`
 - `DMSTLWrapper`
 - `relative_strength_index`
 - `standardize_returns`
@@ -166,6 +189,6 @@ The `tinyshift.modelling` package exports:
 
 ## Notes
 
-- `DMSTLWrapper` depends on `statsmodels`, `statsforecast`, and `mlforecast`.
+- `DTLWrapper` and `DMSTLWrapper` depend on `statsmodels`, `statsforecast`, and `mlforecast`.
 - `fourier_seasonality` expects a pandas DataFrame with a datetime column.
 - `ts_features` functions are lightweight feature engineering helpers for time-series forecasting.
