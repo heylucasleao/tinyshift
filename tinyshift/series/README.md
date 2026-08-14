@@ -58,6 +58,12 @@ The `series` module of tinyshift provides quantitative tools for time series ana
   Computes `WAPE + |PBias|` as a combined performance metric.
   **When to use:** To summarize accuracy and bias in one value.
 
+- **`economic_loss`**
+  Calculates the total financial loss from understock and overstock for one or
+  more forecasting models using Newsvendor-style costs.
+  **When to use:** To evaluate forecasts using business costs instead of only
+  statistical error.
+
 - **`rmae`**
   Computes Relative Mean Absolute Error against a baseline forecast.
   **When to use:** To evaluate whether a model adds value over a benchmark.
@@ -69,6 +75,33 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 - **`forecast_instability`**
   Measures instability across consecutive forecast origins.
   **When to use:** To quantify forecast nervousness and revision magnitude.
+
+Example with per-row costs:
+
+```python
+from tinyshift.series import economic_loss
+
+loss = economic_loss(
+    df,
+    models=["forecast"],
+    id_col="unique_id",
+    target_col="y",
+    cost_understock="cu",
+    cost_overstock="co",
+)
+```
+
+`economic_loss` calculates:
+
+```text
+understock = max(y - forecast, 0)
+overstock = max(forecast - y, 0)
+loss = understock * cost_understock + overstock * cost_overstock
+```
+
+The result is aggregated by `unique_id` and returns the `economic_loss` metric
+label. Costs can also be provided as fixed scalar values, such as
+`cost_understock=3.0` and `cost_overstock=1.0`.
 
 ### 4. Diagnostics & Decomposition
 
@@ -156,6 +189,7 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 | **WAPE**                               | 0 → ∞         | Volume-weighted accuracy                                     | "How far off are my forecasts in aggregate volume terms?"          |
 | **PBias**                              | -∞ → ∞       | Directional bias                                             | "Am I systematically over- or under-forecasting?"                  |
 | **Score**                              | 0 → ∞         | Accuracy + bias composite                                    | "How do accuracy and bias trade off in one metric?"               |
+| **Economic Loss**                      | 0 → ∞         | Financial cost of understock and overstock                    | "What is the business cost of this forecast?"                    |
 | **RMAE**                               | 0 → ∞         | Value against a baseline                                      | "Does this model outperform a benchmark?"                         |
 | **FVA RMAE**                           | 0 → ∞         | Forecast Value Added                                          | "Does this model add operational value?"                          |
 | **Forecast Instability**               | 0 → ∞         | Revision instability                                           | "How much do forecasts change between origins?"                   |

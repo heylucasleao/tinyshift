@@ -528,3 +528,87 @@ def forecast_instability(
     )
 
     return res
+
+
+def economic_loss(
+    df: pd.DataFrame,
+    models: List[str],
+    id_col: str = "unique_id",
+    target_col: str = "y",
+    cost_understock: Union[str, float] = "cu",
+    cost_overstock: Union[str, float] = "co",
+) -> pd.DataFrame:
+    """Calculate Total Economic Loss (financial cost in currency) for multiple models.
+
+    Evaluates forecasting models based on the Newsvendor cost model, measuring
+    the financial impact of stockouts (understocking) and excess inventory (overstocking)
+    per SKU.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Evaluation DataFrame containing ground-truth values, model forecasts,
+        and unit costs for understock and overstock.
+    models : List[str]
+        List of column names corresponding to the forecasting models to evaluate.
+    id_col : str, default="unique_id"
+        Column name identifying unique series or group identifiers.
+    target_col : str, default="y"
+        Column name containing actual target values.
+    cost_understock : str or float, default="cu"
+        Column name or fixed scalar value representing the unit cost of stockout.
+    cost_overstock : str or float, default="co"
+        Column name or fixed scalar value representing the unit cost of excess.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame formatted with `id_col`, `metric` label ('economic_loss'), and
+        columns for each evaluated model containing their respective financial losses.
+
+    Notes
+    -----
+    Interpretation:
+    - Measures financial penalty in monetary units (e.g., currency).
+    - Calculated as: (Understock Units * Unit Cost of Understock) + (Overstock Units * Unit Cost of Overstock).
+    - Always non-negative (>= 0). Lower values indicate higher business efficiency.
+
+    Understock and Overstock Mechanics:
+    - **Understock (Rupture):** Occurs when actual demand exceeds the model's forecast (y > forecast).
+      Calculated as max(0, y - forecast), representing the units of unmet demand.
+    - **Overstock (Excess):** Occurs when the model's forecast exceeds actual demand (forecast > y).
+      Calculated as max(0, forecast - y), representing the unsold units left in inventory.
+
+    Final Economic Loss Calculation:
+    - For each SKU and period, the total monetary loss is obtained by weighting
+      the shortage and excess units by their respective unit costs (C_u and C_o):
+      Economic Loss = (Understock × C_u) + (Overstock × C_o)
+    - Finally, these individual period losses are aggregated by summing them over time
+      for each unique SKU (`id_col`).
+    """
+    if not models:
+        raise ValueError("The 'models' list cannot be empty.")
+    if not all(model in df.columns for model in models):
+        missing_models = [model for model in models if model not in df.columns]
+        raise ValueError(
+            f"The following model columns are missing from the DataFrame: {missing_models}"
+        )
+
+    cu = (
+        df[cost_understock]
+        if isinstance(cost_understock, str) and cost_understock in df.columns
+        else cost_understock
+    )
+    co = (
+        df[cost_overstock]
+        if isinstance(cost_overstock, str) and cost_overstock in df.columns
+        else cost_overstock
+    )
+
+    understock = df[models].rsub(df[target_col], axis=0).clip(lower=0)
+    overstock = df[models].sub(df[target_col], axis=0).clip(lower=0)
+    loss_per_row = (understock.mul(cu, axis=0)) + (overstock.mul(co, axis=0))
+    res = loss_per_row.groupby(df[id_col], observed=True).sum().reset_index()
+
+    res.insert(1, "metric", "economic_loss")
+    return res

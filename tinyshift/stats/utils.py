@@ -222,6 +222,69 @@ def generate_lag(
     return np.concatenate((np.nan * np.ones(lag), (X[lag:] - X[:-lag])))
 
 
+def generate_panel_lags(
+    df: pd.DataFrame,
+    lags: List[int],
+    id_col: str = "unique_id",
+    time_col: str = "ds",
+    target_col: str = "y",
+) -> pd.DataFrame:
+    """
+    Generate lagged values and lagged differences for a Nixtla-style panel.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Nixtla-format panel containing identifier, timestamp, and target columns.
+    lags : list of int
+        Lag intervals to generate.
+    id_col : str, default="unique_id"
+        Column identifying each time series.
+    time_col : str, default="ds"
+        Column containing timestamps or time steps.
+    target_col : str, default="y"
+        Column containing target values.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of the input sorted by identifier and time, with columns named
+        ``{target_col}_lag_{lag}`` and ``{target_col}_diff_lag_{lag}``.
+    """
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("df must be a pandas DataFrame.")
+
+    required = [id_col, time_col, target_col]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(f"DataFrame is missing required columns: {missing}.")
+
+    if not lags:
+        raise ValueError("lags must contain at least one lag.")
+
+    if any(
+        not isinstance(lag, int) or isinstance(lag, bool) or lag <= 0 for lag in lags
+    ):
+        raise ValueError("All lags must be positive integers.")
+
+    if len(set(lags)) != len(lags):
+        raise ValueError("lags cannot contain duplicates.")
+
+    result = df.sort_values([id_col, time_col]).copy()
+    grouped_target = result.groupby(id_col, sort=False)[target_col]
+
+    for lag in lags:
+        result[f"{target_col}_lag_{lag}"] = grouped_target.shift(lag)
+        result[f"{target_col}_diff_lag_{lag}"] = grouped_target.transform(
+            lambda series, lag=lag: generate_lag(
+                series.to_numpy(),
+                lag=lag,
+            )
+        )
+
+    return result
+
+
 def remove_leading_zeros(group):
     """
     Removes leading zeros from a time series group.

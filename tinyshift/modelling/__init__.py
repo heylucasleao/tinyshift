@@ -6,5 +6,6 @@
 from .multicollinearity import filter_features_by_vif
 from .residualizer import FeatureResidualizer
 from .scaler import RobustGaussianScaler
+from .dtl import DTLWrapper
 from .dmstl import DMSTLWrapper
 from .ts_features import *
