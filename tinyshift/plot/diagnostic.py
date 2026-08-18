@@ -667,6 +667,7 @@ def pami(
         m=m,
         delay=delay,
         normalize=normalize,
+        return_mode="value_only",
     )
 
     lags = np.arange(1, len(pami_values) + 1)

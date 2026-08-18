@@ -10,6 +10,9 @@ from collections import Counter
 import math
 from .diagnostic import trend_significance
 from scipy import signal
+from typing import List, Literal, Tuple, Union
+import numpy as np
+import scipy.signal as signal
 
 
 def foreca(
@@ -507,18 +510,22 @@ def permutation_auto_mutual_information(
     return pami if not normalize else pami / H_min if H_min > 0 else 0.0
 
 
+from typing import Any, List, Literal, Tuple, Union
+import numpy as np
+import scipy.signal as signal
+
+
 def select_pami_lag(
     values: Union[np.ndarray, List[float]],
     max_tau: int = 365,
     m: int = 3,
     delay: int = 1,
     normalize: bool = False,
-) -> Tuple[int, float, np.ndarray]:
+    return_mode: Literal["range", "point", "short_term", "value_only"] = "range",
+    short_term: int = 1,
+) -> Tuple[Union[int, List[int]], float, np.ndarray]:
     """
-    Find the first local minimum of PAMI across candidate lags.
-
-    If no strict local minimum exists, the lag with the lowest PAMI value is
-    returned instead.
+    Find the first local minimum of PAMI across candidate lags and format the optimal lag output.
 
     Parameters
     ----------
@@ -532,20 +539,27 @@ def select_pami_lag(
         Embedding delay for permutation patterns.
     normalize : bool, default=False
         Whether to normalize PAMI values to the [0, 1] range.
+    return_mode : {"range", "point", "short_term", "value_only"}, default="range"
+        Determines how the optimal lag structure is formatted:
+        - "range": Returns continuous window from 1 to tau (e.g., [1, 2, ..., tau]).
+        - "point": Returns a list with only the selected lag (e.g., [tau]).
+        - "short_term": Returns short-term consecutive lags plus the selected tau (e.g., [1, tau]).
+        - "value_only": Returns the raw optimal lag integer for backward compatibility.
+    short_term : int, default=1
+        Number of consecutive short-term lags to include when `return_mode="short_term"`.
 
     Returns
     -------
-    Tuple[int, float, np.ndarray]
+    Tuple[Union[int, List[int]], float, np.ndarray]
         A tuple containing:
-        - int: The selected optimal lag (tau).
+        - Union[int, List[int]]: Selected lag integer or list of lag indices based on `return_mode`.
         - float: The PAMI value at the selected lag.
         - np.ndarray: The array of evaluated PAMI values for lags from 1 to max_tau.
 
     Raises
     ------
     ValueError
-        If no valid lag can be evaluated (e.g., if the time series is too short
-        for the given embedding parameters).
+        If no valid lag can be evaluated or if an invalid `return_mode` is provided.
     """
     values = np.asarray(values, dtype=float)
     max_valid_tau = len(values) - (m - 1) * delay - 1
@@ -567,7 +581,26 @@ def select_pami_lag(
             for tau in taus
         ]
     )
+
     minima, _ = signal.find_peaks(-pami_values)
     position = minima[0] if len(minima) else int(np.argmin(pami_values))
+    selected_tau = int(taus[position])
+    pami_val = float(pami_values[position])
 
-    return int(taus[position]), float(pami_values[position]), pami_values
+    if return_mode == "value_only":
+        return selected_tau, pami_val, pami_values
+
+    if return_mode == "point":
+        lags_output = [selected_tau]
+    elif return_mode == "short_term":
+        short_lags = list(range(1, min(short_term, selected_tau) + 1))
+        lags_output = sorted(list(set(short_lags + [selected_tau])))
+    elif return_mode == "range":
+        lags_output = list(range(1, selected_tau + 1))
+    else:
+        raise ValueError(
+            f"Invalid return_mode '{return_mode}'. "
+            "Choose from 'range', 'point', 'short_term', or 'value_only'."
+        )
+
+    return lags_output, pami_val, pami_values

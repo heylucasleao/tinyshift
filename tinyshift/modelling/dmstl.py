@@ -389,7 +389,11 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
         if lags_config == "auto":
             selected_lag, _, _ = select_pami_lag(residual_part, **self.pami_params)
-            return [selected_lag] if selected_lag > 0 else [1]
+            if isinstance(selected_lag, int):
+                lags_list = [selected_lag] if selected_lag > 0 else [1]
+            else:
+                lags_list = selected_lag
+            return lags_list if lags_list else [1]
 
         if isinstance(lags_config, int):
             return list(range(1, lags_config + 1))

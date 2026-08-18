@@ -104,7 +104,7 @@ def detrend(
 
 def detect_seasonal_periods(
     series: Union[np.ndarray, List[float], pd.Series, pd.DataFrame],
-    top_k: int = 3,
+    top_k: int = 2,
     noise_threshold_factor: float = 2.0,
     unique_id_col: str = "unique_id",
     target_col: Optional[str] = None,
@@ -121,7 +121,7 @@ def detect_seasonal_periods(
     series : Union[np.ndarray, List[float], pd.Series, pd.DataFrame]
         Input 1D time series data or a panel DataFrame. A DataFrame must
         contain `unique_id_col` and a target column, and returns periods per ID.
-    top_k : int, default=3
+    top_k : int, default=2
         Maximum number of candidate periods to return, ordered by spectral power.
     noise_threshold_factor : float, default=2.0
         Multiplier applied to the average spectral amplitude to filter out
