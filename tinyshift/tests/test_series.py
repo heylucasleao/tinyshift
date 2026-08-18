@@ -23,6 +23,7 @@ from tinyshift.series.forecastability import (
     permutation_entropy,
     theoretical_limit,
     permutation_auto_mutual_information,
+    select_pami_lag,
 )
 from tinyshift.series.interpolation import vi, hpi, hfi
 from tinyshift.series.metric import (
@@ -264,6 +265,40 @@ class TestForecastability:
         x = np.array([0, 1, 0, 1, 0, 1], dtype=float)
         pami = permutation_auto_mutual_information(x)
         assert np.isfinite(pami)
+
+    def test_select_pami_lag(self, monkeypatch):
+        pami_values = {1: 0.8, 2: 0.4, 3: 0.7, 4: 0.2}
+
+        def fake_pami(values, tau, m, delay, normalize):
+            return pami_values[tau]
+
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.select_pami_lag",
+            fake_pami,
+        )
+
+        tau, value = select_pami_lag(np.arange(10), max_tau=4)
+
+        assert tau == 2
+        assert value == pytest.approx(0.4)
+
+    def test_select_pami_lag_falls_back_to_global_minimum(self, monkeypatch):
+        def fake_pami(values, tau, m, delay, normalize):
+            return float(5 - tau)
+
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.select_pami_lag",
+            fake_pami,
+        )
+
+        tau, value = select_pami_lag(np.arange(10), max_tau=4)
+
+        assert tau == 4
+        assert value == pytest.approx(1.0)
+
+    def test_select_pami_lag_rejects_short_series(self):
+        with pytest.raises(ValueError):
+            select_pami_lag(np.arange(3), m=3)
 
 
 class TestInterpolation:

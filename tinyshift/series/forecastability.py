@@ -505,3 +505,63 @@ def permutation_auto_mutual_information(
     )  # Mutual Information
 
     return pami if not normalize else pami / H_min if H_min > 0 else 0.0
+
+
+def select_pami_lag(
+    values: Union[np.ndarray, List[float]],
+    max_tau: int = 365,
+    m: int = 3,
+    delay: int = 1,
+    normalize: bool = False,
+) -> Tuple[int, float, np.ndarray]:
+    """
+    Find the first local minimum of normalized PAMI across candidate lags.
+
+    If no strict local minimum exists, the lag with the lowest PAMI value is
+    returned instead.
+
+    Parameters
+    ----------
+    values : Union[np.ndarray, List[float]]
+        One-dimensional time series data.
+    max_tau : int, default=365
+        Largest lag to evaluate.
+    m : int, default=3
+        Embedding dimension for permutation patterns.
+    delay : int, default=1
+        Embedding delay for permutation patterns.
+
+    Returns
+    -------
+    Tuple[int, float, np.ndarray]
+        The selected lag, its PAMI value, and the full array of evaluated PAMI values.
+
+    Raises
+    ------
+    ValueError
+        If no valid lag can be evaluated.
+    """
+    values = np.asarray(values, dtype=float)
+    max_valid_tau = len(values) - (m - 1) * delay - 1
+    max_tau = min(max_tau, max_valid_tau)
+
+    if max_tau < 1:
+        raise ValueError("Time series is too short for the given m and delay")
+
+    taus = np.arange(1, max_tau + 1)
+    pami_values = np.array(
+        [
+            permutation_auto_mutual_information(
+                values,
+                tau=int(tau),
+                m=m,
+                delay=delay,
+                normalize=normalize,
+            )
+            for tau in taus
+        ]
+    )
+    minima, _ = signal.find_peaks(-pami_values)
+    position = minima[0] if len(minima) else int(np.argmin(pami_values))
+
+    return int(taus[position]), float(pami_values[position]), pami_values
