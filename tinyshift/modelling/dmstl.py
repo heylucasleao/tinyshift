@@ -529,7 +529,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Raises
         ------
         ValueError
-            If `mf_resid.freq` is missing or invalid.
+            If ``freq`` is missing or invalid.
         """
         from statsforecast.models import AutoETS, SeasonalNaive
         from statsmodels.tsa.seasonal import MSTL
