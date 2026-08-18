@@ -62,12 +62,68 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Keyword arguments forwarded to ``select_pami_lag`` when ``nlags`` is
         ``"auto"``.
 
+    Notes
+    -----
+    When ``season_length="auto"``, the wrapper uses
+    :func:`tinyshift.series.detect_seasonal_periods` to detrend each series,
+    detect dominant frequency peaks with an FFT, and convert those peaks into
+    candidate seasonal periods. When ``nlags="auto"``, it uses
+    :func:`tinyshift.series.select_pami_lag` to select a residual lag from the
+    first local minimum of permutation auto-mutual information (PAMI), falling
+    back to the lowest evaluated value when no local minimum exists.
+
+    Examples
+    --------
+    A residual model factory receives the selected lags and the forecasting
+    frequency and returns a configured ``MLForecast`` instance::
+
+        from mlforecast import MLForecast
+        from sklearn.ensemble import RandomForestRegressor
+
+        def residual_model(nlags, freq):
+            return MLForecast(
+                models=[RandomForestRegressor(n_estimators=100, random_state=0)],
+                lags=nlags,
+                freq=freq,
+            )
+
+        model = DMSTLWrapper(
+            residual_model_callable=residual_model,
+            freq="D",
+            season_length=[7, 30],
+            nlags="auto",
+        )
+
+    Automatic seasonal detection and explicit PAMI settings can be enabled
+    with keyword arguments::
+
+        model = DMSTLWrapper(
+            residual_model_callable=residual_model,
+            freq="D",
+            season_length="auto",
+            seasonal_detection_params={
+                "top_k": 2,
+                "noise_threshold_factor": 1.5,
+            },
+            nlags="auto",
+            pami_params={"max_tau": 48, "m": 3, "delay": 1},
+        )
+
+    Manual configurations may be global or selected per ``unique_id``::
+
+        model = DMSTLWrapper(
+            residual_model_callable=residual_model,
+            freq="D",
+            season_length={"series_a": [7, 30], "series_b": 7},
+            nlags={"series_a": [1, 2, 3], "series_b": "auto"},
+        )
+
     Attributes
     ----------
     season_length_ : list of int, dict, or str
         Seasonal length configuration supplied at initialization.
     freq_ : str or int
-        Effective time series frequency retrieved from `mf_resid.freq`.
+        Effective time series frequency configured through ``freq``.
     id_col_ : str
         Name of the unique identifier column set during fit.
     time_col_ : str
