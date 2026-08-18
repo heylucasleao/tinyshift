@@ -2,8 +2,6 @@
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-from types import SimpleNamespace
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -17,14 +15,16 @@ class TestDTLWrapper:
         monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
 
         wrapper = DTLWrapper(
-            mf_resid=SimpleNamespace(freq="MS"),
+            residual_model_callable=lambda nlags, freq: None,
+            freq="MS",
             trend_frac=0.3,
             robust=False,
             log_transform=True,
         )
 
         params = wrapper.get_params()
-        assert params["mf_resid"].freq == "MS"
+        assert params["freq"] == "MS"
+        assert params["residual_model_callable"] is not None
         assert params["trend_frac"] == 0.3
         assert params["robust"] is False
         assert params["log_transform"] is True
@@ -40,7 +40,8 @@ class TestDTLWrapper:
             return model
 
         wrapper = DTLWrapper(
-            mf_resid=SimpleNamespace(freq="MS"),
+            residual_model_callable=lambda nlags, freq: None,
+            freq="MS",
             trend_model_callable=trend_factory,
         )
 
@@ -53,7 +54,8 @@ class TestDTLWrapper:
         monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
 
         wrapper = DTLWrapper(
-            mf_resid=SimpleNamespace(freq="MS"),
+            residual_model_callable=lambda nlags, freq: None,
+            freq="MS",
             trend_model_callable=object(),
         )
 
@@ -63,7 +65,11 @@ class TestDTLWrapper:
     def test_fit_stores_trend_and_residual_models_together(self, monkeypatch):
         monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
 
-        wrapper = DTLWrapper(mf_resid=SimpleNamespace(freq="MS"), trend_frac=0.5)
+        wrapper = DTLWrapper(
+            residual_model_callable=lambda nlags, freq: None,
+            freq="MS",
+            trend_frac=0.5,
+        )
         wrapper._fit_statsforecast = lambda models, values, dates, uid, freq: {
             "component": "trend",
             "uid": uid,
@@ -94,7 +100,10 @@ class TestDTLWrapper:
     def test_model_columns_exclude_id_and_time(self, monkeypatch):
         monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
 
-        wrapper = DTLWrapper(mf_resid=SimpleNamespace(freq="MS"))
+        wrapper = DTLWrapper(
+            residual_model_callable=lambda nlags, freq: None,
+            freq="MS",
+        )
         wrapper.id_col_ = "unique_id"
         wrapper.time_col_ = "ds"
 
@@ -107,3 +116,59 @@ class TestDTLWrapper:
         )
 
         assert wrapper._get_model_cols(predictions) == ["LinearRegression"]
+
+    def test_residual_lags_support_manual_and_auto_configuration(self, monkeypatch):
+        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+        calls = []
+
+        def fake_select(values, **kwargs):
+            calls.append((values, kwargs))
+            return 4, 0.2, np.array([0.5, 0.4, 0.3, 0.2])
+
+        monkeypatch.setattr("tinyshift.series.select_pami_lag", fake_select)
+
+        wrapper = DTLWrapper(
+            residual_model_callable=lambda nlags, freq: None,
+            freq="MS",
+            nlags={"series-a": "auto", "series-b": 2},
+            pami_params={"max_tau": 12, "m": 3},
+        )
+
+        assert wrapper._get_residual_lags("series-b", np.arange(10)) == [1, 2]
+        assert wrapper._get_residual_lags("series-a", np.arange(10)) == [4]
+        assert calls[0][1] == {"max_tau": 12, "m": 3, "return_mode": "value_only"}
+
+    def test_residual_factory_receives_lags_and_frequency(self, monkeypatch):
+        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+        received = {}
+
+        class ResidualModel:
+            def fit(self, *args, **kwargs):
+                return self
+
+        def residual_factory(nlags, freq):
+            received.update(nlags=nlags, freq=freq)
+            return ResidualModel()
+
+        wrapper = DTLWrapper(
+            residual_model_callable=residual_factory,
+            freq="MS",
+            nlags=3,
+        )
+        wrapper.freq_ = wrapper.freq
+        wrapper.id_col_ = "unique_id"
+        wrapper.time_col_ = "ds"
+        wrapper.target_col_ = "y"
+        wrapper.exog_cols_ = []
+
+        group = pd.DataFrame(
+            {
+                "unique_id": ["series-a"] * 4,
+                "ds": pd.date_range("2024-01-01", periods=4, freq="MS"),
+                "y": [1.0, 2.0, 3.0, 4.0],
+            }
+        )
+
+        wrapper._fit_mlforecast(group, np.zeros(4))
+
+        assert received == {"nlags": [1, 2, 3], "freq": "MS"}
