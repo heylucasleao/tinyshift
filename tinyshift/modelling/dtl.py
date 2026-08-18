@@ -513,6 +513,11 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
             raise RuntimeError(
                 "The model must be fitted with .fit() before making predictions."
             )
+        if self.exog_cols_ and X_df is None:
+            raise ValueError(
+                f"The model was fitted with exogenous features {self.exog_cols_}. "
+                "You must provide 'X_df' covering the forecast horizon."
+            )
 
         preds_list = []
 
