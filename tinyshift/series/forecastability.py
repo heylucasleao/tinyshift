@@ -3,14 +3,13 @@
 # Licensed under the MIT License
 
 
-from typing import Union, List, Tuple
 import numpy as np
 from scipy.signal import periodogram
 from collections import Counter
 import math
 from .diagnostic import trend_significance
 from scipy import signal
-from typing import List, Literal, Tuple, Union
+from typing import List, Literal, Tuple, Union, Optional
 import numpy as np
 import scipy.signal as signal
 
@@ -510,17 +509,13 @@ def permutation_auto_mutual_information(
     return pami if not normalize else pami / H_min if H_min > 0 else 0.0
 
 
-from typing import Any, List, Literal, Tuple, Union
-import numpy as np
-import scipy.signal as signal
-
-
 def select_pami_lag(
     values: Union[np.ndarray, List[float]],
     max_tau: int = 365,
     m: int = 3,
     delay: int = 1,
     normalize: bool = False,
+    fallback: Optional[int] = None,
     return_mode: Literal["range", "point", "short_term", "value_only"] = "range",
     short_term: int = 1,
 ) -> Tuple[Union[int, List[int]], float, np.ndarray]:
@@ -539,6 +534,9 @@ def select_pami_lag(
         Embedding delay for permutation patterns.
     normalize : bool, default=False
         Whether to normalize PAMI values to the [0, 1] range.
+    fallback : int, optional
+        Default lag to return when no local minimum is found in the PAMI curve.
+        If None and no local minimum is detected, a ValueError is raised.
     return_mode : {"range", "point", "short_term", "value_only"}, default="range"
         Determines how the optimal lag structure is formatted:
         - "range": Returns continuous window from 1 to tau (e.g., [1, 2, ..., tau]).
@@ -559,7 +557,16 @@ def select_pami_lag(
     Raises
     ------
     ValueError
-        If no valid lag can be evaluated or if an invalid `return_mode` is provided.
+        If the time series is too short for the given parameters (`max_tau < 1`),
+        if no local minimum is found and `fallback` is None, or if an invalid
+        `return_mode` is provided.
+
+    Notes
+    -----
+    The optimal lag resolution follows this decision logic:
+    1. First local minimum in the PAMI curve (`scipy.signal.find_peaks`).
+    2. Explicit `fallback` value if provided and no local minimum exists.
+    3. Raises `ValueError` if no local minimum exists and `fallback` is None.
     """
     values = np.asarray(values, dtype=float)
     max_valid_tau = len(values) - (m - 1) * delay - 1
@@ -583,24 +590,44 @@ def select_pami_lag(
     )
 
     minima, _ = signal.find_peaks(-pami_values)
-    position = minima[0] if len(minima) else int(np.argmin(pami_values))
-    selected_tau = int(taus[position])
-    pami_val = float(pami_values[position])
 
-    if return_mode == "value_only":
-        return selected_tau, pami_val, pami_values
+    def _resolve_selected_tau() -> Tuple[int, float]:
+        """Resolves optimal tau and PAMI value using local minimum or explicit fallback."""
+        if len(minima) > 0:
+            position = minima[0]
+            return int(taus[position]), float(pami_values[position])
 
-    if return_mode == "point":
-        lags_output = [selected_tau]
-    elif return_mode == "short_term":
-        short_lags = list(range(1, min(short_term, selected_tau) + 1))
-        lags_output = sorted(list(set(short_lags + [selected_tau])))
-    elif return_mode == "range":
-        lags_output = list(range(1, selected_tau + 1))
-    else:
+        if fallback is not None:
+            if 1 <= fallback <= len(pami_values):
+                pami_val = float(pami_values[fallback - 1])
+            else:
+                pami_val = np.nan
+            return fallback, pami_val
+
+        raise ValueError(
+            "No local minimum was found in the PAMI curve and no explicit 'fallback' "
+            "lag was provided. Provide a 'fallback' value (e.g., fallback=1) to handle "
+            "flat or monotonic PAMI curves."
+        )
+
+    def _format_lags_output(tau: int) -> Union[int, List[int]]:
+        """Formats selected tau into requested structure based on return_mode."""
+        if return_mode == "value_only":
+            return tau
+        if return_mode == "point":
+            return [tau]
+        if return_mode == "short_term":
+            short_lags = list(range(1, min(short_term, tau) + 1))
+            return sorted(list(set(short_lags + [tau])))
+        if return_mode == "range":
+            return list(range(1, tau + 1))
+
         raise ValueError(
             f"Invalid return_mode '{return_mode}'. "
             "Choose from 'range', 'point', 'short_term', or 'value_only'."
         )
+
+    selected_tau, pami_val = _resolve_selected_tau()
+    lags_output = _format_lags_output(selected_tau)
 
     return lags_output, pami_val, pami_values
