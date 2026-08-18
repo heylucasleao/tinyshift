@@ -23,6 +23,7 @@ from tinyshift.series.forecastability import (
     permutation_entropy,
     theoretical_limit,
     permutation_auto_mutual_information,
+    select_pami_lag,
 )
 from tinyshift.series.interpolation import vi, hpi, hfi
 from tinyshift.series.metric import (
@@ -171,8 +172,49 @@ class TestDiagnostic:
     def test_detect_seasonal_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         periods = detect_seasonal_periods(x)
-        assert len(periods) >= 0
-        assert all(p > 1 for p in periods)
+        assert 8 in periods
+        assert periods == sorted(set(periods))
+
+    def test_detect_seasonal_periods_ignores_missing_values(self):
+        x = np.sin(2 * np.pi * np.arange(32) / 8)
+        x[[3, 17]] = np.nan
+
+        periods = detect_seasonal_periods(pd.Series(x), top_k=1)
+
+        assert periods == [8]
+
+    def test_detect_seasonal_periods_supports_panel_data(self):
+        steps = np.arange(32)
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["weekly"] * 32 + ["biweekly"] * 32,
+                "y": np.concatenate(
+                    [
+                        np.sin(2 * np.pi * steps / 8),
+                        np.sin(2 * np.pi * steps / 16),
+                    ]
+                ),
+            }
+        )
+
+        periods = detect_seasonal_periods(frame, top_k=1)
+
+        assert periods["weekly"] == [8]
+        assert periods["biweekly"] == [16]
+
+    def test_detect_seasonal_periods_infers_single_numeric_target(self):
+        steps = np.arange(32)
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["a"] * 32,
+                "timestamp": pd.date_range("2024-01-01", periods=32),
+                "value": np.sin(2 * np.pi * steps / 8),
+            }
+        )
+
+        periods = detect_seasonal_periods(frame, top_k=1)
+
+        assert periods == {"a": [8]}
 
     def test_hurst_exponent(self):
         x = np.cumsum(np.random.RandomState(0).normal(size=60))
@@ -227,6 +269,20 @@ class TestDiagnostic:
         with pytest.raises(ValueError):
             detect_seasonal_periods(np.array([1.0, 2.0, 3.0, 4.0]), top_k=0)
 
+        with pytest.raises(ValueError, match="unique ID"):
+            detect_seasonal_periods(pd.DataFrame({"y": [1.0, 2.0, 3.0, 4.0]}))
+
+        with pytest.raises(ValueError, match="Could not infer"):
+            detect_seasonal_periods(
+                pd.DataFrame(
+                    {
+                        "unique_id": ["a"] * 4,
+                        "first": [1.0, 2.0, 3.0, 4.0],
+                        "second": [4.0, 3.0, 2.0, 1.0],
+                    }
+                )
+            )
+
 
 class TestForecastability:
     def test_foreca(self):
@@ -264,6 +320,107 @@ class TestForecastability:
         x = np.array([0, 1, 0, 1, 0, 1], dtype=float)
         pami = permutation_auto_mutual_information(x)
         assert np.isfinite(pami)
+
+    def test_select_pami_lag(self, monkeypatch):
+        pami_values = {1: 0.8, 2: 0.4, 3: 0.7, 4: 0.2}
+
+        def fake_pami(values, tau, m, delay, normalize):
+            return pami_values[tau]
+
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            fake_pami,
+        )
+
+        tau, value, values = select_pami_lag(
+            np.arange(10), max_tau=4, return_mode="value_only"
+        )
+
+        assert tau == 2
+        assert value == pytest.approx(0.4)
+        np.testing.assert_allclose(values, [0.8, 0.4, 0.7, 0.2])
+
+    def test_select_pami_lag_falls_back_to_global_minimum(self, monkeypatch):
+        def fake_pami(values, tau, m, delay, normalize):
+            return float(5 - tau)
+
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            fake_pami,
+        )
+
+        tau, value, values = select_pami_lag(
+            np.arange(10), max_tau=4, return_mode="value_only"
+        )
+
+        assert tau == 4
+        assert value == pytest.approx(1.0)
+        np.testing.assert_allclose(values, [4.0, 3.0, 2.0, 1.0])
+
+    def test_select_pami_lag_rejects_short_series(self):
+        with pytest.raises(ValueError):
+            select_pami_lag(np.arange(3), m=3)
+
+    def test_select_pami_lag_return_modes(self, monkeypatch):
+        pami_values = {1: 0.8, 2: 0.6, 3: 0.2, 4: 0.7, 5: 0.5}
+
+        def fake_pami(values, tau, m, delay, normalize):
+            assert normalize is True
+            return pami_values[tau]
+
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            fake_pami,
+        )
+
+        for return_mode, expected_lags in [
+            ("range", [1, 2, 3]),
+            ("point", [3]),
+            ("short_term", [1, 2, 3]),
+        ]:
+            lags, value, values = select_pami_lag(
+                np.arange(10),
+                max_tau=5,
+                normalize=True,
+                return_mode=return_mode,
+                short_term=2,
+            )
+            assert lags == expected_lags
+            assert value == pytest.approx(0.2)
+            np.testing.assert_allclose(values, [0.8, 0.6, 0.2, 0.7, 0.5])
+
+        lag, value, values = select_pami_lag(
+            np.arange(10), max_tau=5, normalize=True, return_mode="value_only"
+        )
+        assert lag == 3
+        assert value == pytest.approx(0.2)
+        np.testing.assert_allclose(values, [0.8, 0.6, 0.2, 0.7, 0.5])
+
+    def test_select_pami_lag_clips_max_tau_to_valid_range(self, monkeypatch):
+        evaluated_taus = []
+
+        def fake_pami(values, tau, m, delay, normalize):
+            evaluated_taus.append(tau)
+            return float(tau)
+
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            fake_pami,
+        )
+
+        _, _, values = select_pami_lag(np.arange(8), max_tau=100, m=3, delay=2)
+
+        assert evaluated_taus == [1, 2, 3]
+        np.testing.assert_allclose(values, [1.0, 2.0, 3.0])
+
+    def test_select_pami_lag_rejects_invalid_return_mode(self, monkeypatch):
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            lambda values, tau, m, delay, normalize: float(tau),
+        )
+
+        with pytest.raises(ValueError, match="Invalid return_mode"):
+            select_pami_lag(np.arange(8), max_tau=3, return_mode="invalid")
 
 
 class TestInterpolation:

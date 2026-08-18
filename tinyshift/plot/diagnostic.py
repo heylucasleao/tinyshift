@@ -622,17 +622,15 @@ def pami(
     Parameters
     ----------
     X : np.ndarray, list of float, or pd.Series
-        Time series data to analyze.
-    nlags : int, default=10
+        One-dimensional time series data to analyze.
+    nlags : int, default=30
         Maximum lag to compute PAMI.
-        Default is 30 or half the length of the series, whichever is smaller.
-
     m : int, default=3
         Embedding dimension for permutation patterns. Typically between 3-7.
     delay : int, default=1
         Embedding delay for time series reconstruction.
     normalize : bool, default=False
-        Whether to normalize PAMI values to [0,1] range.
+        Whether to normalize PAMI values to [0, 1] range.
     fig_type : str, optional
         Plotly figure output type. Passed to `fig.show()`.
         E.g.: 'json', 'html', 'notebook'.
@@ -653,30 +651,31 @@ def pami(
     - Bar chart showing PAMI values for each lag
     - Confidence band at ±1.96/√N level (gray dashed line)
     - Local minima markers (red circles) indicating potential optimal lags
+    - Selected optimal lag marker (cyan circle) highlighting the chosen lag
 
     Local minima in PAMI often correspond to meaningful time delays in the
     underlying dynamical system and can be used for lag selection in forecasting
     or embedding dimension analysis.
     """
-    from scipy.signal import argrelextrema
+    from scipy.signal import find_peaks
     import plotly.graph_objects as go
-    from tinyshift.series import permutation_auto_mutual_information
+    from tinyshift.series import select_pami_lag
 
-    nlags = min(nlags, (len(X) // 2) - 1)
-    lags = np.arange(1, nlags + 1)
-    pami_values = np.array(
-        [
-            permutation_auto_mutual_information(
-                X, tau=lag, m=m, delay=delay, normalize=normalize
-            )
-            for lag in lags
-        ]
+    best_lag, best_value, pami_values = select_pami_lag(
+        X,
+        max_tau=nlags,
+        m=m,
+        delay=delay,
+        normalize=normalize,
+        return_mode="value_only",
     )
-    local_minima = argrelextrema(pami_values, np.less)[0]
-    offset = 0.01 * np.max(pami_values)
 
-    min_lag = lags[local_minima]
-    min_value = pami_values[local_minima]
+    lags = np.arange(1, len(pami_values) + 1)
+    minima_idx, _ = find_peaks(-pami_values)
+    min_lag = lags[minima_idx]
+    min_value = pami_values[minima_idx]
+
+    offset = 0.01 * np.max(pami_values)
     N = len(X)
     conf = 1.96 / np.sqrt(N)
 
@@ -699,15 +698,29 @@ def pami(
         x=min_lag,
         y=min_value + offset,
         mode="markers",
-        marker=dict(color="#d62728", size=4, symbol="circle"),
+        marker=dict(color="#d62728", size=6, symbol="circle"),
         name="Local Minima",
         hoverinfo="skip",
         showlegend=True,
     )
+    selected_marker = go.Scatter(
+        x=[best_lag],
+        y=[best_value + offset],
+        customdata=[best_value],
+        mode="markers",
+        marker=dict(
+            color="#00d2ff",
+            size=6,
+            symbol="circle",
+        ),
+        name="Optimal Lag",
+        hoverinfo="skip",
+        showlegend=True,
+    )
 
-    fig = go.Figure([pami_bar, band_upper, min_marker])
+    fig = go.Figure([pami_bar, band_upper, min_marker, selected_marker])
     fig.update_layout(
-        title=f"Permutation Auto-Mutual Information (PAMI) by Lag",
+        title="Permutation Auto-Mutual Information (PAMI) by Lag",
         xaxis_title="Lag",
         yaxis_title="PAMI",
         hovermode="x",

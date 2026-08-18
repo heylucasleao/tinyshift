@@ -224,7 +224,7 @@ def generate_lag(
 
 def generate_panel_lags(
     df: pd.DataFrame,
-    lags: List[int],
+    nlags: List[int],
     id_col: str = "unique_id",
     time_col: str = "ds",
     target_col: str = "y",
@@ -236,7 +236,7 @@ def generate_panel_lags(
     ----------
     df : pd.DataFrame
         Nixtla-format panel containing identifier, timestamp, and target columns.
-    lags : list of int
+    nlags : list of int
         Lag intervals to generate.
     id_col : str, default="unique_id"
         Column identifying each time series.
@@ -259,21 +259,21 @@ def generate_panel_lags(
     if missing:
         raise ValueError(f"DataFrame is missing required columns: {missing}.")
 
-    if not lags:
-        raise ValueError("lags must contain at least one lag.")
+    if not nlags:
+        raise ValueError("nlags must contain at least one lag.")
 
     if any(
-        not isinstance(lag, int) or isinstance(lag, bool) or lag <= 0 for lag in lags
+        not isinstance(lag, int) or isinstance(lag, bool) or lag <= 0 for lag in nlags
     ):
         raise ValueError("All lags must be positive integers.")
 
-    if len(set(lags)) != len(lags):
-        raise ValueError("lags cannot contain duplicates.")
+    if len(set(nlags)) != len(nlags):
+        raise ValueError("nlags cannot contain duplicates.")
 
     result = df.sort_values([id_col, time_col]).copy()
     grouped_target = result.groupby(id_col, sort=False)[target_col]
 
-    for lag in lags:
+    for lag in nlags:
         result[f"{target_col}_lag_{lag}"] = grouped_target.shift(lag)
         result[f"{target_col}_diff_lag_{lag}"] = grouped_target.transform(
             lambda series, lag=lag: generate_lag(

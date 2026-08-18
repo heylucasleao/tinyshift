@@ -71,7 +71,7 @@ def test_generate_panel_lags_sorts_and_resets_each_series():
         }
     )
 
-    result = generate_panel_lags(df, lags=[1, 2])
+    result = generate_panel_lags(df, nlags=[1, 2])
 
     assert result[["unique_id", "ds"]].values.tolist() == [
         ["a", 1],
@@ -93,10 +93,10 @@ def test_generate_panel_lags_rejects_invalid_lags():
     df = pd.DataFrame({"unique_id": ["a", "a"], "ds": [1, 2], "y": [1.0, 2.0]})
 
     with pytest.raises(ValueError, match="positive integers"):
-        generate_panel_lags(df, lags=[0])
+        generate_panel_lags(df, nlags=[0])
 
     with pytest.raises(ValueError, match="duplicates"):
-        generate_panel_lags(df, lags=[1, 1])
+        generate_panel_lags(df, nlags=[1, 1])
 
 
 def test_remove_leading_zeros_and_is_obsolete():

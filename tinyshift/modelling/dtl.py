@@ -23,10 +23,13 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
 
     Parameters
     ----------
-    mf_resid : MLForecast
-        Base MLForecast pipeline configured with one or multiple machine
-        learning estimators (e.g., `models=[LGBMRegressor(), XGBRegressor()]`)
-        to fit the residual component. Must have `freq` defined.
+    residual_model_callable : callable or dict of callable, optional
+        Factory that receives ``nlags`` and ``freq`` and returns the MLForecast
+        model used for the residual component. A dictionary may map each
+        unique identifier to its own factory. The factory may accept these
+        arguments as keywords or as two positional arguments.
+    freq : str or int
+        Frequency passed to the residual model and StatsForecast models.
     trend_model_callable : callable or dict of callable, optional
         Function without arguments that returns a configured StatsForecast
         trend model. A dictionary may map each unique identifier to its own
@@ -41,11 +44,57 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         If True, applies np.log1p before decomposition and np.expm1 during
         prediction. Use this when the underlying series exhibits multiplicative
         dynamics.
+    nlags : int, list of int, dict, "auto", or None, default="auto"
+        Residual lag configuration. An integer creates all lags from 1 through
+        that value; a list is used directly; ``"auto"`` selects one lag with
+        :func:`tinyshift.series.select_pami_lag`. A dictionary may map each
+        unique identifier to one of these configurations.
+    pami_params : dict, optional
+        Keyword arguments forwarded to ``select_pami_lag`` when ``nlags`` is
+        ``"auto"``.
+
+    Notes
+    -----
+    When ``nlags="auto"``, the wrapper uses
+    :func:`tinyshift.series.select_pami_lag` to select a residual lag from the
+    first local minimum of permutation auto-mutual information (PAMI), falling
+    back to the lowest evaluated value when no local minimum exists.
+
+    Examples
+    --------
+    A residual model factory receives the selected lags and frequency::
+
+        from mlforecast import MLForecast
+        from sklearn.ensemble import RandomForestRegressor
+
+        def residual_model(nlags, freq):
+            return MLForecast(
+                models=[RandomForestRegressor(n_estimators=100, random_state=0)],
+                lags=nlags,
+                freq=freq,
+            )
+
+        model = DTLWrapper(
+            residual_model_callable=residual_model,
+            freq="D",
+            nlags="auto",
+            pami_params={"max_tau": 48, "m": 3, "delay": 1},
+        )
+
+    Manual lags and per-series configuration are also supported::
+
+        model = DTLWrapper(
+            residual_model_callable=residual_model,
+            freq="D",
+            nlags={"series_a": [1, 2, 3], "series_b": "auto"},
+            trend_frac=0.3,
+            robust=True,
+        )
 
     Attributes
     ----------
     freq_ : str or int
-        Effective time series frequency retrieved from `mf_resid.freq`.
+        Effective time series frequency configured through ``freq``.
     id_col_ : str
         Name of the unique identifier column set during fit.
     time_col_ : str
@@ -62,7 +111,13 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     @requires_extra("series")
     def __init__(
         self,
-        mf_resid: Any,
+        residual_model_callable: Optional[
+            Union[
+                Callable[[List[int], Union[str, int]], Any],
+                Dict[Union[str, int], Callable[[List[int], Union[str, int]], Any]],
+            ]
+        ] = None,
+        freq: Optional[Union[str, int]] = None,
         trend_model_callable: Optional[
             Union[
                 Callable[[], Any],
@@ -72,12 +127,24 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         trend_frac: float = 0.2,
         robust: bool = True,
         log_transform: bool = False,
+        nlags: Optional[
+            Union[
+                int,
+                List[int],
+                Dict[Union[str, int], Union[int, List[int], Literal["auto"]]],
+                Literal["auto"],
+            ]
+        ] = "auto",
+        pami_params: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self.mf_resid = mf_resid
+        self.residual_model_callable = residual_model_callable
+        self.freq = freq
         self.trend_model_callable = trend_model_callable
         self.trend_frac = trend_frac
         self.robust = robust
         self.log_transform = log_transform
+        self.nlags = nlags
+        self.pami_params = pami_params or {}
 
     def _get_sku_config(self, config, uid: Union[str, int]):
         """
@@ -99,28 +166,6 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         if isinstance(config, dict):
             return config.get(uid)
         return config
-
-    def _extract_freq(self) -> Union[str, int]:
-        """
-        Extract and validate the frequency from the MLForecast instance.
-
-        Returns
-        -------
-        freq : str or int
-            Frequency set in the MLForecast instance.
-
-        Raises
-        ------
-        ValueError
-            If `mf_resid.freq` is missing or None.
-        """
-        freq = getattr(self.mf_resid, "freq", None)
-        if freq is None:
-            raise ValueError(
-                "The provided MLForecast instance does not have 'freq' defined. "
-                "Ensure 'freq' is set when instantiating MLForecast."
-            )
-        return freq
 
     def _get_model_cols(self, df: pd.DataFrame) -> List[str]:
         """
@@ -174,6 +219,34 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
             return trend_model_callable()
 
         return default_trend_callable()
+
+    def _get_residual_lags(
+        self,
+        uid: Union[str, int],
+        residual_part: np.ndarray,
+    ) -> List[int]:
+        """Resolve manual or PAMI-selected residual lags for one series."""
+        lags_config = self._get_sku_config(self.nlags, uid)
+
+        if lags_config == "auto":
+            from tinyshift.series import select_pami_lag
+
+            selected_lag, _, _ = select_pami_lag(
+                residual_part, **self.pami_params, return_mode="value_only"
+            )
+            return [selected_lag] if selected_lag > 0 else [1]
+
+        if isinstance(lags_config, int) and not isinstance(lags_config, bool):
+            if lags_config < 1:
+                raise ValueError("nlags must be positive")
+            return list(range(1, lags_config + 1))
+
+        if isinstance(lags_config, list):
+            return lags_config
+
+        raise ValueError(
+            f"Invalid lags configuration for unique_id {uid!r}: {lags_config}"
+        )
 
     def _fit_statsforecast(
         self,
@@ -235,7 +308,28 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         df_residual = group[[self.id_col_, self.time_col_] + self.exog_cols_].copy()
         df_residual[self.target_col_] = residual_part
 
-        mf_resid = copy.deepcopy(self.mf_resid)
+        residual_callable = self._get_sku_config(
+            self.residual_model_callable, group[self.id_col_].iloc[0]
+        )
+        if residual_callable is None:
+            raise ValueError(
+                f"'residual_model_callable' must be provided for unique_id "
+                f"{group[self.id_col_].iloc[0]!r}."
+            )
+        if not callable(residual_callable):
+            raise TypeError(
+                f"residual_model_callable for unique_id "
+                f"{group[self.id_col_].iloc[0]!r} must be callable."
+            )
+
+        computed_lags = self._get_residual_lags(
+            group[self.id_col_].iloc[0], residual_part
+        )
+        try:
+            mf_resid = residual_callable(nlags=computed_lags, freq=self.freq_)
+        except TypeError:
+            mf_resid = residual_callable(computed_lags, self.freq_)
+
         mf_resid.fit(
             df_residual,
             id_col=self.id_col_,
@@ -280,12 +374,16 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         Raises
         ------
         ValueError
-            If `mf_resid.freq` is missing or invalid.
+            If ``freq`` or ``residual_model_callable`` is missing or invalid.
         """
         from statsforecast.models import AutoETS
         from tinyshift.series import detrend
 
-        self.freq_ = self._extract_freq()
+        if self.freq is None:
+            raise ValueError(
+                "Parameter 'freq' must be explicitly declared when initializing DTLWrapper."
+            )
+        self.freq_ = self.freq
 
         self.id_col_ = id_col
         self.time_col_ = time_col
