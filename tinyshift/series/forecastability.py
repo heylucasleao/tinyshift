@@ -515,14 +515,14 @@ def select_pami_lag(
     normalize: bool = False,
 ) -> Tuple[int, float, np.ndarray]:
     """
-    Find the first local minimum of normalized PAMI across candidate lags.
+    Find the first local minimum of PAMI across candidate lags.
 
     If no strict local minimum exists, the lag with the lowest PAMI value is
     returned instead.
 
     Parameters
     ----------
-    values : Union[np.ndarray, List[float]]
+    values : np.ndarray or list of float
         One-dimensional time series data.
     max_tau : int, default=365
         Largest lag to evaluate.
@@ -530,16 +530,22 @@ def select_pami_lag(
         Embedding dimension for permutation patterns.
     delay : int, default=1
         Embedding delay for permutation patterns.
+    normalize : bool, default=False
+        Whether to normalize PAMI values to the [0, 1] range.
 
     Returns
     -------
     Tuple[int, float, np.ndarray]
-        The selected lag, its PAMI value, and the full array of evaluated PAMI values.
+        A tuple containing:
+        - int: The selected optimal lag (tau).
+        - float: The PAMI value at the selected lag.
+        - np.ndarray: The array of evaluated PAMI values for lags from 1 to max_tau.
 
     Raises
     ------
     ValueError
-        If no valid lag can be evaluated.
+        If no valid lag can be evaluated (e.g., if the time series is too short
+        for the given embedding parameters).
     """
     values = np.asarray(values, dtype=float)
     max_valid_tau = len(values) - (m - 1) * delay - 1
