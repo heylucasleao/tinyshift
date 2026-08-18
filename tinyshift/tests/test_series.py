@@ -273,28 +273,30 @@ class TestForecastability:
             return pami_values[tau]
 
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.select_pami_lag",
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
             fake_pami,
         )
 
-        tau, value = select_pami_lag(np.arange(10), max_tau=4)
+        tau, value, values = select_pami_lag(np.arange(10), max_tau=4)
 
         assert tau == 2
         assert value == pytest.approx(0.4)
+        np.testing.assert_allclose(values, [0.8, 0.4, 0.7, 0.2])
 
     def test_select_pami_lag_falls_back_to_global_minimum(self, monkeypatch):
         def fake_pami(values, tau, m, delay, normalize):
             return float(5 - tau)
 
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.select_pami_lag",
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
             fake_pami,
         )
 
-        tau, value = select_pami_lag(np.arange(10), max_tau=4)
+        tau, value, values = select_pami_lag(np.arange(10), max_tau=4)
 
         assert tau == 4
         assert value == pytest.approx(1.0)
+        np.testing.assert_allclose(values, [4.0, 3.0, 2.0, 1.0])
 
     def test_select_pami_lag_rejects_short_series(self):
         with pytest.raises(ValueError):
