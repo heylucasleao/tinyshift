@@ -106,6 +106,7 @@ def detect_seasonal_periods(
     series: Union[np.ndarray, List[float], pd.Series, pd.DataFrame],
     top_k: int = 2,
     noise_threshold_factor: float = 2.0,
+    fallback: Optional[Union[int, List[int]]] = None,
     unique_id_col: str = "unique_id",
     target_col: Optional[str] = None,
 ) -> Union[List[int], Dict[Any, List[int]]]:
@@ -126,6 +127,10 @@ def detect_seasonal_periods(
     noise_threshold_factor : float, default=2.0
         Multiplier applied to the average spectral amplitude to filter out
         background noise peaks.
+    fallback : int or List[int], optional
+        Value(s) to return when no significant seasonal periods are detected.
+        If an integer is passed, it is converted to a single-element list.
+        If None, returns an empty list `[]` when no peaks are found.
     unique_id_col : str, default="unique_id"
         DataFrame column containing the series identifiers.
     target_col : str, optional
@@ -137,9 +142,8 @@ def detect_seasonal_periods(
     -------
     List[int] or dict
         For 1D input, a list of candidate seasonal periods sorted by dominant
-        magnitude. For DataFrame input, a dictionary mapping each unique ID to
-        its list of candidate periods. Empty lists indicate no significant
-        periodic peaks.
+        magnitude (or `fallback` if no peaks are found). For DataFrame input,
+        a dictionary mapping each unique ID to its list of candidate periods.
 
     Raises
     ------
@@ -183,9 +187,16 @@ def detect_seasonal_periods(
                 group[target_col],
                 top_k=top_k,
                 noise_threshold_factor=noise_threshold_factor,
+                fallback=fallback,
             )
             for unique_id, group in series.groupby(unique_id_col, sort=False)
         }
+
+    fallback_values = (
+        [fallback]
+        if isinstance(fallback, int)
+        else (fallback if fallback is not None else [])
+    )
 
     if isinstance(series, pd.Series):
         s = series.dropna().to_numpy(dtype=np.float64)
@@ -196,6 +207,7 @@ def detect_seasonal_periods(
     n = len(s)
     if n < 4:
         raise ValueError(f"Input series must have at least 4 observations, got {n}.")
+
     x = np.arange(n)
     poly_fit = np.polyfit(x, s, 1)
     signal = s - np.polyval(poly_fit, x)
@@ -206,14 +218,14 @@ def detect_seasonal_periods(
 
     non_dc_amplitudes = amplitudes[1:]
     if len(non_dc_amplitudes) == 0:
-        return []
+        return fallback_values
 
     noise_level = np.mean(non_dc_amplitudes) * noise_threshold_factor
     peaks, _ = find_peaks(non_dc_amplitudes, height=noise_level)
     peaks = peaks + 1
 
     if len(peaks) == 0:
-        return []
+        return fallback_values
 
     sorted_peaks = sorted(peaks, key=lambda idx: amplitudes[idx], reverse=True)[:top_k]
 
@@ -224,6 +236,9 @@ def detect_seasonal_periods(
             period = int(round(1.0 / freq))
             if 1 < period <= n // 2 and period not in periods:
                 periods.append(period)
+
+    if not periods:
+        return fallback_values
 
     return sorted(periods)
 

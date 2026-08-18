@@ -183,6 +183,17 @@ class TestDiagnostic:
 
         assert periods == [8]
 
+    @pytest.mark.parametrize(
+        ("fallback", "expected"),
+        [(None, []), (12, [12]), ([7, 30], [7, 30])],
+    )
+    def test_detect_seasonal_periods_uses_fallback_without_peaks(
+        self, fallback, expected
+    ):
+        periods = detect_seasonal_periods(np.ones(32), fallback=fallback)
+
+        assert periods == expected
+
     def test_detect_seasonal_periods_supports_panel_data(self):
         steps = np.arange(32)
         frame = pd.DataFrame(
