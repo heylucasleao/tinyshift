@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 
-from tinyshift.series import detect_seasonal_periods
+from tinyshift.series import detect_seasonal_periods, select_pami_lag
 from tinyshift.utils.imports import requires_extra
 
 
@@ -73,7 +73,13 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     @requires_extra("series")
     def __init__(
         self,
-        mf_resid: Any,
+        residual_model_callable: Optional[
+            Union[
+                Callable[[List[int], Union[str, int]], Any],
+                Dict[Union[str, int], Callable[[List[int], Union[str, int]], Any]],
+            ]
+        ] = None,
+        freq: Optional[Union[str, int]] = None,
         season_length: Optional[
             Union[
                 int,
@@ -95,13 +101,25 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 Dict[Union[str, int], Callable[[int], Any]],
             ]
         ] = None,
+        nlags: Optional[
+            Union[
+                int,
+                List[int],
+                Dict[Union[str, int], Union[int, List[int], Literal["auto"]]],
+                Literal["auto"],
+            ]
+        ] = "auto",
+        pami_params: Optional[Dict[str, Any]] = None,
         log_transform: bool = False,
     ) -> None:
-        self.mf_resid = mf_resid
+        self.residual_model_callable = residual_model_callable
+        self.freq = freq
         self.season_length = season_length
         self.seasonal_detection_params = seasonal_detection_params or {}
         self.trend_model_callable = trend_model_callable
         self.seasonal_model_callable = seasonal_model_callable
+        self.nlags = nlags
+        self.pami_params = pami_params or {}
         self.log_transform = log_transform
 
     def _get_sku_config(self, config, uid: Union[str, int]):
@@ -109,28 +127,6 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         if isinstance(config, dict):
             return config.get(uid)
         return config
-
-    def _extract_freq(self) -> Union[str, int]:
-        """
-        Extract and validate the frequency from the MLForecast instance.
-
-        Returns
-        -------
-        freq : str or int
-            Frequency set in the MLForecast instance.
-
-        Raises
-        ------
-        ValueError
-            If `mf_resid.freq` is missing or None.
-        """
-        freq = getattr(self.mf_resid, "freq", None)
-        if freq is None:
-            raise ValueError(
-                "The provided MLForecast instance does not have 'freq' defined. "
-                "Ensure 'freq' is set when instantiating MLForecast."
-            )
-        return freq
 
     def _get_model_cols(self, df: pd.DataFrame) -> List[str]:
         """
@@ -314,6 +310,27 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
         return season_lengths, seasonal_models
 
+    def _get_residual_lags(
+        self,
+        uid: Union[str, int],
+        residual_part: np.ndarray,
+    ) -> List[int]:
+        """Resolve or calculate autoregressive lags for the residual component via select_pami_lag or manual config."""
+        lags_config = self._get_sku_config(self.lags, uid)
+
+        if lags_config == "auto":
+            selected_lag, _, _ = select_pami_lag(residual_part, **self.pami_params)
+            return [selected_lag] if selected_lag > 0 else [1]
+
+        if isinstance(lags_config, int):
+            return list(range(1, lags_config + 1))
+        elif isinstance(lags_config, list):
+            return lags_config
+
+        raise ValueError(
+            f"Invalid lags configuration for unique_id {uid!r}: {lags_config}"
+        )
+
     def _fit_statsforecast(
         self,
         models: Any,
@@ -355,6 +372,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self,
         group: pd.DataFrame,
         residual_part: np.ndarray,
+        uid: Union[str, int],
         prediction_intervals: Optional[Any] = None,
     ) -> Any:
         """
@@ -377,7 +395,25 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         df_residual = group[[self.id_col_, self.time_col_] + self.exog_cols_].copy()
         df_residual[self.target_col_] = residual_part
 
-        mf_resid = copy.deepcopy(self.mf_resid)
+        residual_callable = self._get_sku_config(self.residual_model_callable, uid)
+
+        if residual_callable is None:
+            raise ValueError(
+                f"'residual_model_callable' must be provided for unique_id {uid!r}."
+            )
+        if not callable(residual_callable):
+            raise TypeError(
+                f"residual_model_callable for unique_id {uid!r} must be a callable "
+                "accepting (nlags, freq)."
+            )
+
+        computed_lags = self._get_residual_lags(uid, residual_part)
+
+        try:
+            mf_resid = residual_callable(nlags=computed_lags, freq=self.freq_)
+        except TypeError:
+            mf_resid = residual_callable(computed_lags, self.freq_)
+
         mf_resid.fit(
             df_residual,
             id_col=self.id_col_,
@@ -424,7 +460,15 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         """
         from statsforecast.models import AutoETS, SeasonalNaive
         from statsmodels.tsa.seasonal import MSTL
+
         from tinyshift.series import extract_mstl_components
+
+        if self.freq is None:
+            raise ValueError(
+                "Parameter 'freq' must be explicitly declared when initializing DMSTLWrapper."
+            )
+
+        self.freq_ = self.freq
 
         self.season_length_ = (
             self.season_length
@@ -435,7 +479,6 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 else self.season_length
             )
         )
-        self.freq_ = self._extract_freq()
 
         self.id_col_ = id_col
         self.time_col_ = time_col
@@ -483,7 +526,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 )
             ]
             fitted_mf = self._fit_mlforecast(
-                group_sorted, residual_part, prediction_intervals
+                group_sorted, residual_part, uid, prediction_intervals
             )
 
             self.fitted_models_[uid] = {
@@ -587,6 +630,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             df_trend = sf_trend.predict(h=h)
             trend_cols = self._get_model_cols(df_trend)
             trend_preds = df_trend[trend_cols].sum(axis=1).values
+
             seasonal_preds = np.zeros(h)
             for seasonal_model in sf_seasonal:
                 df_seasonal = seasonal_model.predict(h=h)
