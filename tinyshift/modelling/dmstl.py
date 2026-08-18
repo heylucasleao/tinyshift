@@ -3,12 +3,14 @@
 # Licensed under the MIT License
 
 import copy
-from typing import Callable, Literal, Union, List, Tuple, Optional, Any, Dict
+from functools import partial
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
+
+from tinyshift.series import detect_seasonal_periods, select_pami_lag
 from tinyshift.utils.imports import requires_extra
-from functools import partial
 
 
 class DMSTLWrapper(BaseEstimator, RegressorMixin):
@@ -24,13 +26,21 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
     Parameters
     ----------
-    mf_resid : MLForecast
-        Base MLForecast pipeline configured with one or multiple machine
-        learning estimators (e.g., `models=[LGBMRegressor(), XGBRegressor()]`)
-        to fit the residual component. Must have `freq` defined.
-    season_length : int, list of int, or dict
-        Seasonal period(s) passed directly to MSTL decomposition. A dictionary
-        maps each unique identifier to an integer or list of integers.
+    residual_model_callable : callable or dict of callable, optional
+        Factory that receives ``nlags`` and ``freq`` and returns the MLForecast
+        model used for the residual component. A dictionary may map each
+        unique identifier to its own factory. The factory may accept these
+        arguments as keywords or as two positional arguments.
+    freq : str or int, optional
+        Frequency passed to the residual model and StatsForecast models.
+    season_length : int, list of int, dict, "auto", or None, default="auto"
+        Seasonal period(s) passed directly to MSTL decomposition.
+        - If "auto", automatically detects candidate periods via `detect_seasonal_periods`.
+        - If None, raises a ValueError indicating that a period must be specified.
+        - A dictionary maps each unique identifier to an integer, list of integers, or "auto".
+    seasonal_detection_params : dict, optional
+        Keyword arguments passed to `detect_seasonal_periods` when `season_length` is "auto"
+        (e.g., `{"top_k": 2, "noise_threshold_factor": 1.5}`).
     trend_model_callable : callable or dict of callable, optional
         Function without arguments that returns a configured StatsForecast
         trend model. A dictionary may map each unique identifier to its own
@@ -42,19 +52,78 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         creates one SeasonalNaive model for each period.
     log_transform : bool, default=False
         If True, applies np.log1p before decomposition and np.expm1 during
-        prediction. Use this when the underlying series exhibits multiplicative
-        dynamics (i.e., seasonal amplitudes or noise grow proportionally with
-        the trend level). Log-transforming converts the multiplicative model
-        (Y = T * S * R) into an additive space (log(Y) = log(T) + log(S) + log(R)),
-        allowing standard MSTL to perform mathematically rigorous multiplicative
-        decompositions while preventing negative domain errors.
+        prediction.
+    nlags : int, list of int, dict, "auto", or None, default="auto"
+        Residual lag configuration. An integer creates all lags from 1 through
+        that value; a list is used directly; ``"auto"`` selects one lag with
+        :func:`tinyshift.series.select_pami_lag`. A dictionary may map each
+        unique identifier to one of these configurations.
+    pami_params : dict, optional
+        Keyword arguments forwarded to ``select_pami_lag`` when ``nlags`` is
+        ``"auto"``.
+
+    Notes
+    -----
+    When ``season_length="auto"``, the wrapper uses
+    :func:`tinyshift.series.detect_seasonal_periods` to detrend each series,
+    detect dominant frequency peaks with an FFT, and convert those peaks into
+    candidate seasonal periods. When ``nlags="auto"``, it uses
+    :func:`tinyshift.series.select_pami_lag` to select a residual lag from the
+    first local minimum of permutation auto-mutual information (PAMI), falling
+    back to the lowest evaluated value when no local minimum exists.
+
+    Examples
+    --------
+    A residual model factory receives the selected lags and the forecasting
+    frequency and returns a configured ``MLForecast`` instance::
+
+        from mlforecast import MLForecast
+        from sklearn.ensemble import RandomForestRegressor
+
+        def residual_model(nlags, freq):
+            return MLForecast(
+                models=[RandomForestRegressor(n_estimators=100, random_state=0)],
+                lags=nlags,
+                freq=freq,
+            )
+
+        model = DMSTLWrapper(
+            residual_model_callable=residual_model,
+            freq="D",
+            season_length=[7, 30],
+            nlags="auto",
+        )
+
+    Automatic seasonal detection and explicit PAMI settings can be enabled
+    with keyword arguments::
+
+        model = DMSTLWrapper(
+            residual_model_callable=residual_model,
+            freq="D",
+            season_length="auto",
+            seasonal_detection_params={
+                "top_k": 2,
+                "noise_threshold_factor": 1.5,
+            },
+            nlags="auto",
+            pami_params={"max_tau": 48, "m": 3, "delay": 1},
+        )
+
+    Manual configurations may be global or selected per ``unique_id``::
+
+        model = DMSTLWrapper(
+            residual_model_callable=residual_model,
+            freq="D",
+            season_length={"series_a": [7, 30], "series_b": 7},
+            nlags={"series_a": [1, 2, 3], "series_b": "auto"},
+        )
 
     Attributes
     ----------
-    season_length_ : list of int
-        Formatted list of seasonal lengths.
+    season_length_ : list of int, dict, or str
+        Seasonal length configuration supplied at initialization.
     freq_ : str or int
-        Effective time series frequency retrieved from `mf_resid.freq`.
+        Effective time series frequency configured through ``freq``.
     id_col_ : str
         Name of the unique identifier column set during fit.
     time_col_ : str
@@ -66,28 +135,27 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     fitted_models_ : dict
         Dictionary holding fitted StatsForecast (trend, seasonal) and
         MLForecast (residual) models mapped by unique_id.
-
-    Notes
-    -----
-    **Horizontal Stabilization (HPI / HFI):**
-    Post-processing horizontal stabilization routines can be enabled during `predict()`
-    via `stabilization_method` to mitigate variance explosion across multi-step horizons:
-
-    - **HPI (Horizontal Penalization Invariant):** Applies a penalization penalty to
-      abrupt step-to-step variations in the multi-step horizon. Use when forecasts
-      suffer from high variance or non-physical oscillations across adjacent time steps.
-    - **HFI (Horizontal Filtering Invariant):** Filters high-frequency noise from
-      the forecasted path while preserving underlying momentum. Use when multi-step
-      predictions are overly noisy or sensitive to residual ML fluctuations.
     """
 
     @requires_extra("series")
     def __init__(
         self,
-        mf_resid: Any,
-        season_length: Union[
-            int, List[int], Dict[Union[str, int], Union[int, List[int]]]
-        ],
+        residual_model_callable: Optional[
+            Union[
+                Callable[[List[int], Union[str, int]], Any],
+                Dict[Union[str, int], Callable[[List[int], Union[str, int]], Any]],
+            ]
+        ] = None,
+        freq: Optional[Union[str, int]] = None,
+        season_length: Optional[
+            Union[
+                int,
+                List[int],
+                Dict[Union[str, int], Union[int, List[int], Literal["auto"]]],
+                Literal["auto"],
+            ]
+        ] = "auto",
+        seasonal_detection_params: Optional[Dict[str, Any]] = None,
         trend_model_callable: Optional[
             Union[
                 Callable[[], Any],
@@ -100,41 +168,32 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 Dict[Union[str, int], Callable[[int], Any]],
             ]
         ] = None,
+        nlags: Optional[
+            Union[
+                int,
+                List[int],
+                Dict[Union[str, int], Union[int, List[int], Literal["auto"]]],
+                Literal["auto"],
+            ]
+        ] = "auto",
+        pami_params: Optional[Dict[str, Any]] = None,
         log_transform: bool = False,
     ) -> None:
-        self.mf_resid = mf_resid
+        self.residual_model_callable = residual_model_callable
+        self.freq = freq
         self.season_length = season_length
+        self.seasonal_detection_params = seasonal_detection_params or {}
         self.trend_model_callable = trend_model_callable
         self.seasonal_model_callable = seasonal_model_callable
+        self.nlags = nlags
+        self.pami_params = pami_params or {}
         self.log_transform = log_transform
 
     def _get_sku_config(self, config, uid: Union[str, int]):
-        """Resolve a global or per-series configuration value."""
+        """Return a global value or the value configured for one series ID."""
         if isinstance(config, dict):
             return config.get(uid)
         return config
-
-    def _extract_freq(self) -> Union[str, int]:
-        """
-        Extract and validate the frequency from the MLForecast instance.
-
-        Returns
-        -------
-        freq : str or int
-            Frequency set in the MLForecast instance.
-
-        Raises
-        ------
-        ValueError
-            If `mf_resid.freq` is missing or None.
-        """
-        freq = getattr(self.mf_resid, "freq", None)
-        if freq is None:
-            raise ValueError(
-                "The provided MLForecast instance does not have 'freq' defined. "
-                "Ensure 'freq' is set when instantiating MLForecast."
-            )
-        return freq
 
     def _get_model_cols(self, df: pd.DataFrame) -> List[str]:
         """
@@ -221,7 +280,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         return default_trend_callable()
 
     def _get_seasonal_config(
-        self, uid: Union[str, int], seasonal_naive_model
+        self,
+        uid: Union[str, int],
+        series: np.ndarray,
+        seasonal_naive_model: Any,
     ) -> Tuple[List[int], List[Any]]:
         """
         Resolve the seasonal periods and models configured for a SKU.
@@ -230,6 +292,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ----------
         uid : str or int
             Unique identifier of the series.
+        series : ndarray of shape (n_samples,)
+            Target values used when ``season_length`` is ``"auto"``.
         seasonal_naive_model : callable
             SeasonalNaive constructor used by the default factory.
 
@@ -247,15 +311,29 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             positive integer greater than one.
         """
         season_length = self._get_sku_config(self.season_length, uid)
+
         if season_length is None:
             raise ValueError(
                 f"No season_length configured for unique_id {uid!r}. "
-                "Provide a period for every series."
+                "Provide a valid seasonal period or set season_length='auto'."
             )
 
-        season_lengths = (
-            [season_length] if isinstance(season_length, int) else season_length
-        )
+        if season_length == "auto":
+            detected_periods = detect_seasonal_periods(
+                series, **self.seasonal_detection_params
+            )
+            if not detected_periods:
+                raise ValueError(
+                    f"Automatic seasonal detection failed for unique_id {uid!r}. "
+                    "No significant seasonal peaks were identified via FFT. "
+                    "Specify 'season_length' manually for this series."
+                )
+            season_lengths = detected_periods
+        else:
+            season_lengths = (
+                [season_length] if isinstance(season_length, int) else season_length
+            )
+
         if (
             not isinstance(season_lengths, list)
             or not season_lengths
@@ -301,9 +379,34 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
         return season_lengths, seasonal_models
 
+    def _get_residual_lags(
+        self,
+        uid: Union[str, int],
+        residual_part: np.ndarray,
+    ) -> List[int]:
+        """Resolve or calculate autoregressive lags for the residual component via select_pami_lag or manual config."""
+        lags_config = self._get_sku_config(self.nlags, uid)
+
+        if lags_config == "auto":
+            selected_lag, _, _ = select_pami_lag(residual_part, **self.pami_params)
+            if isinstance(selected_lag, int):
+                lags_list = [selected_lag] if selected_lag > 0 else [1]
+            else:
+                lags_list = selected_lag
+            return lags_list if lags_list else [1]
+
+        if isinstance(lags_config, int):
+            return list(range(1, lags_config + 1))
+        elif isinstance(lags_config, list):
+            return lags_config
+
+        raise ValueError(
+            f"Invalid lags configuration for unique_id {uid!r}: {lags_config}"
+        )
+
     def _fit_statsforecast(
         self,
-        models,
+        models: Any,
         values: np.ndarray,
         dates: pd.Series,
         uid: Union[str, int],
@@ -339,7 +442,11 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         return StatsForecast(models=models_list, freq=freq).fit(sf_df)
 
     def _fit_mlforecast(
-        self, group: pd.DataFrame, residual_part: np.ndarray, prediction_intervals=None
+        self,
+        group: pd.DataFrame,
+        residual_part: np.ndarray,
+        uid: Union[str, int],
+        prediction_intervals: Optional[Any] = None,
     ) -> Any:
         """
         Fit a isolated copy of the base MLForecast pipeline on the extracted residual component.
@@ -361,7 +468,25 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         df_residual = group[[self.id_col_, self.time_col_] + self.exog_cols_].copy()
         df_residual[self.target_col_] = residual_part
 
-        mf_resid = copy.deepcopy(self.mf_resid)
+        residual_callable = self._get_sku_config(self.residual_model_callable, uid)
+
+        if residual_callable is None:
+            raise ValueError(
+                f"'residual_model_callable' must be provided for unique_id {uid!r}."
+            )
+        if not callable(residual_callable):
+            raise TypeError(
+                f"residual_model_callable for unique_id {uid!r} must be a callable "
+                "accepting (nlags, freq)."
+            )
+
+        computed_lags = self._get_residual_lags(uid, residual_part)
+
+        try:
+            mf_resid = residual_callable(nlags=computed_lags, freq=self.freq_)
+        except TypeError:
+            mf_resid = residual_callable(computed_lags, self.freq_)
+
         mf_resid.fit(
             df_residual,
             id_col=self.id_col_,
@@ -378,7 +503,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         id_col: str = "unique_id",
         time_col: str = "ds",
         target_col: str = "y",
-        prediction_intervals=None,
+        prediction_intervals: Optional[Any] = None,
     ) -> "DMSTLWrapper":
         """
         Fit MSTL decomposition and sub-models for each unique group in the data.
@@ -404,11 +529,19 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Raises
         ------
         ValueError
-            If `mf_resid.freq` is missing or invalid.
+            If ``freq`` is missing or invalid.
         """
-        from statsmodels.tsa.seasonal import MSTL
         from statsforecast.models import AutoETS, SeasonalNaive
+        from statsmodels.tsa.seasonal import MSTL
+
         from tinyshift.series import extract_mstl_components
+
+        if self.freq is None:
+            raise ValueError(
+                "Parameter 'freq' must be explicitly declared when initializing DMSTLWrapper."
+            )
+
+        self.freq_ = self.freq
 
         self.season_length_ = (
             self.season_length
@@ -419,7 +552,6 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 else self.season_length
             )
         )
-        self.freq_ = self._extract_freq()
 
         self.id_col_ = id_col
         self.time_col_ = time_col
@@ -430,16 +562,17 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self.fitted_models_ = {}
 
         for uid, group in df.groupby(id_col):
-            trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
-
-            season_lengths, seasonal_models = self._get_seasonal_config(
-                uid, SeasonalNaive
-            )
             group_sorted = group.sort_values(time_col).copy()
             y_series = group_sorted[target_col].values
 
             if self.log_transform:
                 y_series = np.log1p(y_series)
+
+            trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
+
+            season_lengths, seasonal_models = self._get_seasonal_config(
+                uid, y_series, SeasonalNaive
+            )
 
             dates = group_sorted[time_col]
 
@@ -466,7 +599,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 )
             ]
             fitted_mf = self._fit_mlforecast(
-                group_sorted, residual_part, prediction_intervals
+                group_sorted, residual_part, uid, prediction_intervals
             )
 
             self.fitted_models_[uid] = {
@@ -503,7 +636,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ValueError
             If method is not 'hpi' or 'hfi'.
         """
-        from tinyshift.series import hpi, hfi
+        from tinyshift.series import hfi, hpi
 
         if method == "hpi":
             return hpi(y_hat, w_s=w_s)
@@ -570,6 +703,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             df_trend = sf_trend.predict(h=h)
             trend_cols = self._get_model_cols(df_trend)
             trend_preds = df_trend[trend_cols].sum(axis=1).values
+
             seasonal_preds = np.zeros(h)
             for seasonal_model in sf_seasonal:
                 df_seasonal = seasonal_model.predict(h=h)

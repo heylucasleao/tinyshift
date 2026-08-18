@@ -97,8 +97,21 @@ from tinyshift.modelling import DTLWrapper
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
 
-mf_resid = MLForecast(models=[RandomForestRegressor()], freq='D')
-wrapper = DTLWrapper(mf_resid=mf_resid, trend_frac=0.2, robust=True)
+def residual_model_callable(nlags, freq):
+    return MLForecast(
+        models=[RandomForestRegressor(random_state=42)],
+        lags=nlags,
+        freq=freq,
+    )
+
+wrapper = DTLWrapper(
+    residual_model_callable=residual_model_callable,
+    freq="D",
+    nlags="auto",
+    pami_params={"max_tau": 48, "m": 3, "delay": 1},
+    trend_frac=0.2,
+    robust=True,
+)
 
 wrapper.fit(df, id_col='unique_id', time_col='ds', target_col='y')
 predictions = wrapper.predict(h=14)
@@ -119,10 +132,20 @@ from tinyshift.modelling import DMSTLWrapper
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
 
-mf_resid = MLForecast(models=[RandomForestRegressor()], freq='D')
+def residual_model_callable(nlags, freq):
+    return MLForecast(
+        models=[RandomForestRegressor(random_state=42)],
+        lags=nlags,
+        freq=freq,
+    )
+
 wrapper = DMSTLWrapper(
-    mf_resid=mf_resid,
-    season_length=[7, 365],
+    residual_model_callable=residual_model_callable,
+    freq="D",
+    season_length="auto",
+    seasonal_detection_params={"top_k": 2, "noise_threshold_factor": 1.5},
+    nlags="auto",
+    pami_params={"max_tau": 48, "m": 3, "delay": 1},
 )
 
 wrapper.fit(df, id_col='unique_id', time_col='ds', target_col='y')
