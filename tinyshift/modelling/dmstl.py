@@ -26,10 +26,13 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
     Parameters
     ----------
-    mf_resid : MLForecast
-        Base MLForecast pipeline configured with one or multiple machine
-        learning estimators (e.g., `models=[LGBMRegressor(), XGBRegressor()]`)
-        to fit the residual component. Must have `freq` defined.
+    residual_model_callable : callable or dict of callable, optional
+        Factory that receives ``nlags`` and ``freq`` and returns the MLForecast
+        model used for the residual component. A dictionary may map each
+        unique identifier to its own factory. The factory may accept these
+        arguments as keywords or as two positional arguments.
+    freq : str or int, optional
+        Frequency passed to the residual model and StatsForecast models.
     season_length : int, list of int, dict, "auto", or None, default="auto"
         Seasonal period(s) passed directly to MSTL decomposition.
         - If "auto", automatically detects candidate periods via `detect_seasonal_periods`.
@@ -50,11 +53,19 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     log_transform : bool, default=False
         If True, applies np.log1p before decomposition and np.expm1 during
         prediction.
+    nlags : int, list of int, dict, "auto", or None, default="auto"
+        Residual lag configuration. An integer creates all lags from 1 through
+        that value; a list is used directly; ``"auto"`` selects one lag with
+        :func:`tinyshift.series.select_pami_lag`. A dictionary may map each
+        unique identifier to one of these configurations.
+    pami_params : dict, optional
+        Keyword arguments forwarded to ``select_pami_lag`` when ``nlags`` is
+        ``"auto"``.
 
     Attributes
     ----------
     season_length_ : list of int, dict, or str
-        Formatted seasonal length configuration.
+        Seasonal length configuration supplied at initialization.
     freq_ : str or int
         Effective time series frequency retrieved from `mf_resid.freq`.
     id_col_ : str
@@ -123,7 +134,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self.log_transform = log_transform
 
     def _get_sku_config(self, config, uid: Union[str, int]):
-        """Resolve a global or per-series configuration value."""
+        """Return a global value or the value configured for one series ID."""
         if isinstance(config, dict):
             return config.get(uid)
         return config
@@ -225,6 +236,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ----------
         uid : str or int
             Unique identifier of the series.
+        series : ndarray of shape (n_samples,)
+            Target values used when ``season_length`` is ``"auto"``.
         seasonal_naive_model : callable
             SeasonalNaive constructor used by the default factory.
 
@@ -316,7 +329,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         residual_part: np.ndarray,
     ) -> List[int]:
         """Resolve or calculate autoregressive lags for the residual component via select_pami_lag or manual config."""
-        lags_config = self._get_sku_config(self.lags, uid)
+        lags_config = self._get_sku_config(self.nlags, uid)
 
         if lags_config == "auto":
             selected_lag, _, _ = select_pami_lag(residual_part, **self.pami_params)

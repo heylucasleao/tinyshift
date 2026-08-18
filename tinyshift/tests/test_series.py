@@ -172,8 +172,49 @@ class TestDiagnostic:
     def test_detect_seasonal_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         periods = detect_seasonal_periods(x)
-        assert len(periods) >= 0
-        assert all(p > 1 for p in periods)
+        assert 8 in periods
+        assert periods == sorted(set(periods))
+
+    def test_detect_seasonal_periods_ignores_missing_values(self):
+        x = np.sin(2 * np.pi * np.arange(32) / 8)
+        x[[3, 17]] = np.nan
+
+        periods = detect_seasonal_periods(pd.Series(x), top_k=1)
+
+        assert periods == [8]
+
+    def test_detect_seasonal_periods_supports_panel_data(self):
+        steps = np.arange(32)
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["weekly"] * 32 + ["biweekly"] * 32,
+                "y": np.concatenate(
+                    [
+                        np.sin(2 * np.pi * steps / 8),
+                        np.sin(2 * np.pi * steps / 16),
+                    ]
+                ),
+            }
+        )
+
+        periods = detect_seasonal_periods(frame, top_k=1)
+
+        assert periods["weekly"] == [8]
+        assert periods["biweekly"] == [16]
+
+    def test_detect_seasonal_periods_infers_single_numeric_target(self):
+        steps = np.arange(32)
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["a"] * 32,
+                "timestamp": pd.date_range("2024-01-01", periods=32),
+                "value": np.sin(2 * np.pi * steps / 8),
+            }
+        )
+
+        periods = detect_seasonal_periods(frame, top_k=1)
+
+        assert periods == {"a": [8]}
 
     def test_hurst_exponent(self):
         x = np.cumsum(np.random.RandomState(0).normal(size=60))
@@ -227,6 +268,20 @@ class TestDiagnostic:
 
         with pytest.raises(ValueError):
             detect_seasonal_periods(np.array([1.0, 2.0, 3.0, 4.0]), top_k=0)
+
+        with pytest.raises(ValueError, match="unique ID"):
+            detect_seasonal_periods(pd.DataFrame({"y": [1.0, 2.0, 3.0, 4.0]}))
+
+        with pytest.raises(ValueError, match="Could not infer"):
+            detect_seasonal_periods(
+                pd.DataFrame(
+                    {
+                        "unique_id": ["a"] * 4,
+                        "first": [1.0, 2.0, 3.0, 4.0],
+                        "second": [4.0, 3.0, 2.0, 1.0],
+                    }
+                )
+            )
 
 
 class TestForecastability:
