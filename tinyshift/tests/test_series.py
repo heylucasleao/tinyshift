@@ -332,7 +332,9 @@ class TestForecastability:
             fake_pami,
         )
 
-        tau, value, values = select_pami_lag(np.arange(10), max_tau=4)
+        tau, value, values = select_pami_lag(
+            np.arange(10), max_tau=4, return_mode="value_only"
+        )
 
         assert tau == 2
         assert value == pytest.approx(0.4)
@@ -347,7 +349,9 @@ class TestForecastability:
             fake_pami,
         )
 
-        tau, value, values = select_pami_lag(np.arange(10), max_tau=4)
+        tau, value, values = select_pami_lag(
+            np.arange(10), max_tau=4, return_mode="value_only"
+        )
 
         assert tau == 4
         assert value == pytest.approx(1.0)
@@ -356,6 +360,67 @@ class TestForecastability:
     def test_select_pami_lag_rejects_short_series(self):
         with pytest.raises(ValueError):
             select_pami_lag(np.arange(3), m=3)
+
+    def test_select_pami_lag_return_modes(self, monkeypatch):
+        pami_values = {1: 0.8, 2: 0.6, 3: 0.2, 4: 0.7, 5: 0.5}
+
+        def fake_pami(values, tau, m, delay, normalize):
+            assert normalize is True
+            return pami_values[tau]
+
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            fake_pami,
+        )
+
+        for return_mode, expected_lags in [
+            ("range", [1, 2, 3]),
+            ("point", [3]),
+            ("short_term", [1, 2, 3]),
+        ]:
+            lags, value, values = select_pami_lag(
+                np.arange(10),
+                max_tau=5,
+                normalize=True,
+                return_mode=return_mode,
+                short_term=2,
+            )
+            assert lags == expected_lags
+            assert value == pytest.approx(0.2)
+            np.testing.assert_allclose(values, [0.8, 0.6, 0.2, 0.7, 0.5])
+
+        lag, value, values = select_pami_lag(
+            np.arange(10), max_tau=5, normalize=True, return_mode="value_only"
+        )
+        assert lag == 3
+        assert value == pytest.approx(0.2)
+        np.testing.assert_allclose(values, [0.8, 0.6, 0.2, 0.7, 0.5])
+
+    def test_select_pami_lag_clips_max_tau_to_valid_range(self, monkeypatch):
+        evaluated_taus = []
+
+        def fake_pami(values, tau, m, delay, normalize):
+            evaluated_taus.append(tau)
+            return float(tau)
+
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            fake_pami,
+        )
+
+        _, _, values = select_pami_lag(np.arange(8), max_tau=100, m=3, delay=2)
+
+        assert evaluated_taus == [1, 2, 3]
+        np.testing.assert_allclose(values, [1.0, 2.0, 3.0])
+
+    def test_select_pami_lag_rejects_invalid_return_mode(self, monkeypatch):
+        monkeypatch.setattr(
+            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            lambda values, tau, m, delay, normalize: float(tau),
+        )
+
+        with pytest.raises(ValueError, match="Invalid return_mode"):
+            select_pami_lag(np.arange(8), max_tau=3, return_mode="invalid")
 
 
 class TestInterpolation:
