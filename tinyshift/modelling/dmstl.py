@@ -3,12 +3,14 @@
 # Licensed under the MIT License
 
 import copy
-from typing import Callable, Literal, Union, List, Tuple, Optional, Any, Dict
+from functools import partial
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
+
+from tinyshift.series import detect_seasonal_periods
 from tinyshift.utils.imports import requires_extra
-from functools import partial
 
 
 class DMSTLWrapper(BaseEstimator, RegressorMixin):
@@ -28,9 +30,14 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         Base MLForecast pipeline configured with one or multiple machine
         learning estimators (e.g., `models=[LGBMRegressor(), XGBRegressor()]`)
         to fit the residual component. Must have `freq` defined.
-    season_length : int, list of int, or dict
-        Seasonal period(s) passed directly to MSTL decomposition. A dictionary
-        maps each unique identifier to an integer or list of integers.
+    season_length : int, list of int, dict, "auto", or None, default="auto"
+        Seasonal period(s) passed directly to MSTL decomposition.
+        - If "auto", automatically detects candidate periods via `detect_seasonal_periods`.
+        - If None, raises a ValueError indicating that a period must be specified.
+        - A dictionary maps each unique identifier to an integer, list of integers, or "auto".
+    seasonal_detection_params : dict, optional
+        Keyword arguments passed to `detect_seasonal_periods` when `season_length` is "auto"
+        (e.g., `{"top_k": 2, "noise_threshold_factor": 1.5}`).
     trend_model_callable : callable or dict of callable, optional
         Function without arguments that returns a configured StatsForecast
         trend model. A dictionary may map each unique identifier to its own
@@ -42,17 +49,12 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         creates one SeasonalNaive model for each period.
     log_transform : bool, default=False
         If True, applies np.log1p before decomposition and np.expm1 during
-        prediction. Use this when the underlying series exhibits multiplicative
-        dynamics (i.e., seasonal amplitudes or noise grow proportionally with
-        the trend level). Log-transforming converts the multiplicative model
-        (Y = T * S * R) into an additive space (log(Y) = log(T) + log(S) + log(R)),
-        allowing standard MSTL to perform mathematically rigorous multiplicative
-        decompositions while preventing negative domain errors.
+        prediction.
 
     Attributes
     ----------
-    season_length_ : list of int
-        Formatted list of seasonal lengths.
+    season_length_ : list of int, dict, or str
+        Formatted seasonal length configuration.
     freq_ : str or int
         Effective time series frequency retrieved from `mf_resid.freq`.
     id_col_ : str
@@ -66,28 +68,21 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     fitted_models_ : dict
         Dictionary holding fitted StatsForecast (trend, seasonal) and
         MLForecast (residual) models mapped by unique_id.
-
-    Notes
-    -----
-    **Horizontal Stabilization (HPI / HFI):**
-    Post-processing horizontal stabilization routines can be enabled during `predict()`
-    via `stabilization_method` to mitigate variance explosion across multi-step horizons:
-
-    - **HPI (Horizontal Penalization Invariant):** Applies a penalization penalty to
-      abrupt step-to-step variations in the multi-step horizon. Use when forecasts
-      suffer from high variance or non-physical oscillations across adjacent time steps.
-    - **HFI (Horizontal Filtering Invariant):** Filters high-frequency noise from
-      the forecasted path while preserving underlying momentum. Use when multi-step
-      predictions are overly noisy or sensitive to residual ML fluctuations.
     """
 
     @requires_extra("series")
     def __init__(
         self,
         mf_resid: Any,
-        season_length: Union[
-            int, List[int], Dict[Union[str, int], Union[int, List[int]]]
-        ],
+        season_length: Optional[
+            Union[
+                int,
+                List[int],
+                Dict[Union[str, int], Union[int, List[int], Literal["auto"]]],
+                Literal["auto"],
+            ]
+        ] = "auto",
+        seasonal_detection_params: Optional[Dict[str, Any]] = None,
         trend_model_callable: Optional[
             Union[
                 Callable[[], Any],
@@ -104,6 +99,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     ) -> None:
         self.mf_resid = mf_resid
         self.season_length = season_length
+        self.seasonal_detection_params = seasonal_detection_params or {}
         self.trend_model_callable = trend_model_callable
         self.seasonal_model_callable = seasonal_model_callable
         self.log_transform = log_transform
@@ -221,7 +217,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         return default_trend_callable()
 
     def _get_seasonal_config(
-        self, uid: Union[str, int], seasonal_naive_model
+        self,
+        uid: Union[str, int],
+        series: np.ndarray,
+        seasonal_naive_model: Any,
     ) -> Tuple[List[int], List[Any]]:
         """
         Resolve the seasonal periods and models configured for a SKU.
@@ -247,15 +246,29 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             positive integer greater than one.
         """
         season_length = self._get_sku_config(self.season_length, uid)
+
         if season_length is None:
             raise ValueError(
                 f"No season_length configured for unique_id {uid!r}. "
-                "Provide a period for every series."
+                "Provide a valid seasonal period or set season_length='auto'."
             )
 
-        season_lengths = (
-            [season_length] if isinstance(season_length, int) else season_length
-        )
+        if season_length == "auto":
+            detected_periods = detect_seasonal_periods(
+                series, **self.seasonal_detection_params
+            )
+            if not detected_periods:
+                raise ValueError(
+                    f"Automatic seasonal detection failed for unique_id {uid!r}. "
+                    "No significant seasonal peaks were identified via FFT. "
+                    "Specify 'season_length' manually for this series."
+                )
+            season_lengths = detected_periods
+        else:
+            season_lengths = (
+                [season_length] if isinstance(season_length, int) else season_length
+            )
+
         if (
             not isinstance(season_lengths, list)
             or not season_lengths
@@ -303,7 +316,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
     def _fit_statsforecast(
         self,
-        models,
+        models: Any,
         values: np.ndarray,
         dates: pd.Series,
         uid: Union[str, int],
@@ -339,7 +352,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         return StatsForecast(models=models_list, freq=freq).fit(sf_df)
 
     def _fit_mlforecast(
-        self, group: pd.DataFrame, residual_part: np.ndarray, prediction_intervals=None
+        self,
+        group: pd.DataFrame,
+        residual_part: np.ndarray,
+        prediction_intervals: Optional[Any] = None,
     ) -> Any:
         """
         Fit a isolated copy of the base MLForecast pipeline on the extracted residual component.
@@ -378,7 +394,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         id_col: str = "unique_id",
         time_col: str = "ds",
         target_col: str = "y",
-        prediction_intervals=None,
+        prediction_intervals: Optional[Any] = None,
     ) -> "DMSTLWrapper":
         """
         Fit MSTL decomposition and sub-models for each unique group in the data.
@@ -406,8 +422,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ValueError
             If `mf_resid.freq` is missing or invalid.
         """
-        from statsmodels.tsa.seasonal import MSTL
         from statsforecast.models import AutoETS, SeasonalNaive
+        from statsmodels.tsa.seasonal import MSTL
         from tinyshift.series import extract_mstl_components
 
         self.season_length_ = (
@@ -430,16 +446,17 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         self.fitted_models_ = {}
 
         for uid, group in df.groupby(id_col):
-            trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
-
-            season_lengths, seasonal_models = self._get_seasonal_config(
-                uid, SeasonalNaive
-            )
             group_sorted = group.sort_values(time_col).copy()
             y_series = group_sorted[target_col].values
 
             if self.log_transform:
                 y_series = np.log1p(y_series)
+
+            trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
+
+            season_lengths, seasonal_models = self._get_seasonal_config(
+                uid, y_series, SeasonalNaive
+            )
 
             dates = group_sorted[time_col]
 
@@ -503,7 +520,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         ValueError
             If method is not 'hpi' or 'hfi'.
         """
-        from tinyshift.series import hpi, hfi
+        from tinyshift.series import hfi, hpi
 
         if method == "hpi":
             return hpi(y_hat, w_s=w_s)
