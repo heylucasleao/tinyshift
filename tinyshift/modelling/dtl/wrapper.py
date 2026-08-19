@@ -72,6 +72,15 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
     is evaluated per series in both modes; global mode then uses the union of
     the selected lags.
 
+    The LOWESS trend is always decomposed and forecast per ``unique_id``:
+    trend values are never shared across series. However, when several series
+    resolve to the same trend model factory (the common case, since
+    ``trend_model_callable`` defaults to one shared factory), those series are
+    fitted together in a single panel-wide StatsForecast call instead of one
+    call per series. Each SKU still gets its own fitted parameters. Series
+    configured with a per-``unique_id`` factory (a ``dict``) are only batched
+    with other series that resolve to that same factory object.
+
     Examples
     --------
     A shared residual factory can be used in either mode::
