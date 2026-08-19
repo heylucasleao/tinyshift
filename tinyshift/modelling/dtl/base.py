@@ -111,6 +111,7 @@ class BaseDTL(BaseEstimator, RegressorMixin):
 
         residuals = []
         for uid, group in df.groupby(id_col):
+            group = group.sort_values(time_col).copy()
             trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
             component = decomposed.loc[group.index]
             trend = component["trend"].to_numpy()
