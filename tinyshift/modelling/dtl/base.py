@@ -45,11 +45,19 @@ class BaseDTL(BaseEstimator, RegressorMixin):
             column for column in frame if column not in (self.id_col_, self.time_col_)
         ]
 
-    def _get_trend_config(self, uid, default_factory):
-        factory = self._get_sku_config(self.trend_model_callable, uid)
-        if factory is not None and not callable(factory):
+    def _resolve_trend_factory(self, uid, default_factory):
+        """Resolve the trend model factory configured for one SKU.
+
+        The same ``default_factory`` reference is reused across every SKU that
+        has no per-``unique_id`` override, which lets :meth:`fit` batch those
+        series into a single panel-wide StatsForecast call.
+        """
+        factory = (
+            self._get_sku_config(self.trend_model_callable, uid) or default_factory
+        )
+        if not callable(factory):
             raise TypeError("trend_model_callable must be callable.")
-        return (factory or default_factory)()
+        return factory
 
     def _get_residual_lags(self, uid, residual_part: np.ndarray) -> List[int]:
         config = self._get_sku_config(self.nlags, uid)
@@ -66,14 +74,53 @@ class BaseDTL(BaseEstimator, RegressorMixin):
             return config
         raise ValueError(f"Invalid lags configuration for unique_id {uid!r}: {config}")
 
-    def _fit_statsforecast(self, model, values, dates, uid):
+    def _fit_panel(self, models, rows):
+        """Fit one StatsForecast instance on a panel built from several series.
+
+        Each row is ``(uid, values, dates)``. Every SKU still contributes its
+        own values, but SKUs sharing the same resolved trend factory are
+        concatenated into one panel so a single StatsForecast call fits all of
+        them, instead of one call per SKU.
+        """
         from statsforecast import StatsForecast
 
-        frame = pd.DataFrame(
-            {self.id_col_: uid, self.time_col_: dates, self.target_col_: values}
+        frame = pd.concat(
+            [
+                pd.DataFrame(
+                    {self.id_col_: uid, self.time_col_: dates, self.target_col_: values}
+                )
+                for uid, values, dates in rows
+            ],
+            ignore_index=True,
         )
-        models = copy.deepcopy(model if isinstance(model, list) else [model])
         return StatsForecast(models=models, freq=self.freq_).fit(frame)
+
+    def _fit_statsforecast(self, model, values, dates, uid):
+        """Fit one StatsForecast instance for a single SKU.
+
+        Kept for backward compatibility; :meth:`fit` uses :meth:`_fit_panel`
+        directly so that SKUs sharing a trend factory can be batched together.
+        """
+        models = copy.deepcopy(model if isinstance(model, list) else [model])
+        return self._fit_panel(models, [(uid, values, dates)])
+
+    def _register_trend_row(
+        self, trend_groups, uid_trend_key, trend_factory, uid, trend, dates
+    ):
+        """Assign one SKU's trend row to its shared-factory panel bucket."""
+        trend_key = id(trend_factory)
+        bucket = trend_groups.setdefault(
+            trend_key, {"factory": trend_factory, "rows": []}
+        )
+        bucket["rows"].append((uid, trend, dates))
+        uid_trend_key[uid] = trend_key
+
+    def _fit_trend_panels(self, trend_groups):
+        """Fit one StatsForecast panel per trend bucket."""
+        return {
+            key: self._fit_panel([bucket["factory"]()], bucket["rows"])
+            for key, bucket in trend_groups.items()
+        }
 
     def _fit_residuals(self, residuals, prediction_intervals, static_features):
         raise NotImplementedError
@@ -114,23 +161,32 @@ class BaseDTL(BaseEstimator, RegressorMixin):
             target_col=target_col,
         )
 
+        # Created once per fit() call so every SKU without a per-unique_id
+        # override resolves to the SAME factory reference below, which lets
+        # them be batched into one panel-wide StatsForecast call.
+        default_trend_factory = partial(AutoETS, model="ZZN")
+
+        trend_groups: Dict[int, Dict[str, Any]] = {}
+        uid_trend_key: Dict[Union[str, int], int] = {}
         residuals = []
         for uid, group in df.groupby(id_col):
             group = group.sort_values(time_col).copy()
-            trend_model = self._get_trend_config(uid, partial(AutoETS, model="ZZN"))
+            trend_factory = self._resolve_trend_factory(uid, default_trend_factory)
             component = decomposed.loc[group.index]
             trend = component["trend"].to_numpy()
             residual = component["detrended"].to_numpy()
             lags = self._get_residual_lags(uid, residual)
             self.skus_nlags_[uid] = lags
-            self.fitted_models_[uid] = {
-                "trend": self._fit_statsforecast(
-                    trend_model, trend, group[time_col], uid
-                )
-            }
+            self._register_trend_row(
+                trend_groups, uid_trend_key, trend_factory, uid, trend, group[time_col]
+            )
             frame = group[[id_col, time_col] + self.exog_cols_].copy()
             frame[target_col] = residual
             residuals.append((uid, frame, lags))
+
+        trend_fitted = self._fit_trend_panels(trend_groups)
+        for uid, key in uid_trend_key.items():
+            self.fitted_models_[uid] = {"trend": trend_fitted[key]}
 
         self._fit_residuals(residuals, prediction_intervals, static_features)
         return self
@@ -142,6 +198,25 @@ class BaseDTL(BaseEstimator, RegressorMixin):
             return hfi(values, w_s=weight)
         raise ValueError("stabilization_method must be 'hpi' or 'hfi'.")
 
+    def _predict_component_for_uid(self, model, cache, uid, h):
+        """Predict one shared trend model once and return one SKU's values."""
+        if id(model) not in cache:
+            cache[id(model)] = model.predict(h=h)
+        frame = cache[id(model)]
+        frame = frame[frame[self.id_col_] == uid]
+        return frame[self._get_model_cols(frame)].sum(axis=1).to_numpy()
+
+    def _recombine_uid_forecast(self, frame, trend, stabilization_method, w_s):
+        """Add trend to each residual model column and post-process it."""
+        for column in self._get_model_cols(frame):
+            values = frame[column].to_numpy() + trend
+            if self.log_transform:
+                values = np.expm1(values)
+            if stabilization_method is not None and w_s > 0:
+                values = self._stabilize(values, stabilization_method, w_s)
+            frame[column] = values
+        return frame
+
     def predict(self, h, X_df=None, level=None, stabilization_method=None, w_s=0.0):
         if not hasattr(self, "fitted_models_") or not self.fitted_models_:
             raise RuntimeError(
@@ -152,21 +227,19 @@ class BaseDTL(BaseEstimator, RegressorMixin):
                 "X_df is required because the model was fitted with exogenous features."
             )
         residual_predictions = self._predict_residuals(h, X_df, level)
+        # A trend model may be shared by several SKUs (panel fit), so each
+        # distinct fitted object is predicted only once here.
+        trend_cache: Dict[int, pd.DataFrame] = {}
         predictions = []
         for uid, models in self.fitted_models_.items():
-            trend_frame = models["trend"].predict(h=h)
-            trend = (
-                trend_frame[self._get_model_cols(trend_frame)].sum(axis=1).to_numpy()
+            trend = self._predict_component_for_uid(
+                models["trend"], trend_cache, uid, h
             )
             frame = residual_predictions[
                 residual_predictions[self.id_col_] == uid
             ].copy()
-            for column in self._get_model_cols(frame):
-                values = frame[column].to_numpy() + trend
-                if self.log_transform:
-                    values = np.expm1(values)
-                if stabilization_method is not None and w_s > 0:
-                    values = self._stabilize(values, stabilization_method, w_s)
-                frame[column] = values
+            frame = self._recombine_uid_forecast(
+                frame, trend, stabilization_method, w_s
+            )
             predictions.append(frame)
         return pd.concat(predictions, ignore_index=True)

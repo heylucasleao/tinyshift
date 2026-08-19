@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -100,7 +101,7 @@ class TestDTLWrapper:
         assert len(wrapper.residual_mlforecast_.frame) == 4
 
     def test_fit_sorts_each_series_before_modeling(self, monkeypatch):
-        captured_dates = []
+        captured_rows = []
 
         def fake_detrend(frame, **kwargs):
             return pd.DataFrame(
@@ -118,9 +119,7 @@ class TestDTLWrapper:
             trend_model_callable=lambda: object(),
             nlags=1,
         )
-        wrapper._fit_statsforecast = (
-            lambda model, values, dates, uid: captured_dates.append(list(dates))
-        )
+        wrapper._fit_panel = lambda models, rows: captured_rows.append(rows)
         wrapper._fit_residuals = (
             lambda residuals, prediction_intervals, static_features: None
         )
@@ -135,6 +134,44 @@ class TestDTLWrapper:
 
         wrapper.fit(frame)
 
-        assert captured_dates == [
-            list(pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"]))
-        ]
+        [(uid, _, dates)] = captured_rows[0]
+        assert uid == "series-a"
+        assert list(dates) == list(
+            pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"])
+        )
+
+    def test_fit_batches_skus_sharing_default_trend_factory(self):
+        from mlforecast import MLForecast
+        from sklearn.linear_model import LinearRegression
+
+        def residual_model_callable(nlags, freq):
+            return MLForecast(models=[LinearRegression()], lags=nlags, freq=freq)
+
+        dates = pd.date_range("2024-01-01", periods=20, freq="MS")
+        frame = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "unique_id": uid,
+                        "ds": dates,
+                        "y": np.arange(20, dtype=float) * 0.1 + offset,
+                    }
+                )
+                for uid, offset in [("a", 0.0), ("b", 5.0)]
+            ],
+            ignore_index=True,
+        )
+
+        wrapper = DTLLocalWrapper(
+            residual_model_callable=residual_model_callable,
+            freq="MS",
+            nlags=1,
+        )
+        wrapper.fit(frame)
+
+        assert (
+            wrapper.fitted_models_["a"]["trend"] is wrapper.fitted_models_["b"]["trend"]
+        )
+
+        predictions = wrapper.predict(h=3)
+        assert set(predictions["unique_id"]) == {"a", "b"}
