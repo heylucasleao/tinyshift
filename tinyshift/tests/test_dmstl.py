@@ -100,6 +100,53 @@ class TestDMSTLWrapper:
         assert factory_calls == [([1, 2, 3], "D")]
         assert len(wrapper.residual_mlforecast_.frame) == 4
 
+    def test_fit_batches_skus_sharing_default_trend_and_seasonal_factories(self):
+        from sklearn.linear_model import LinearRegression
+        from mlforecast import MLForecast
+
+        def residual_model_callable(nlags, freq):
+            return MLForecast(models=[LinearRegression()], lags=nlags, freq=freq)
+
+        dates = pd.date_range("2024-01-01", periods=28, freq="D")
+        pattern = np.tile(np.arange(7, dtype=float), 4)
+        frame = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "unique_id": uid,
+                        "ds": dates,
+                        "y": np.arange(28, dtype=float) * 0.1 + pattern + offset,
+                    }
+                )
+                for uid, offset in [("a", 0.0), ("b", 5.0)]
+            ],
+            ignore_index=True,
+        )
+
+        wrapper = DMSTLLocalWrapper(
+            residual_model_callable=residual_model_callable,
+            freq="D",
+            season_length=[7],
+            nlags=1,
+        )
+        wrapper.fit(frame)
+
+        # SKUs without a per-unique_id override share the same resolved
+        # factory, so they must be batched into one panel StatsForecast call
+        # instead of one call per SKU.
+        assert (
+            wrapper.fitted_models_["a"]["trend"] is wrapper.fitted_models_["b"]["trend"]
+        )
+        assert (
+            wrapper.fitted_models_["a"]["seasonal"][0]
+            is wrapper.fitted_models_["b"]["seasonal"][0]
+        )
+
+        predictions = wrapper.predict(h=3)
+        assert set(predictions["unique_id"]) == {"a", "b"}
+        assert (predictions["unique_id"] == "a").sum() == 3
+        assert (predictions["unique_id"] == "b").sum() == 3
+
     def test_stabilization_rejects_unknown_method(self):
         wrapper = DMSTLLocalWrapper()
 
