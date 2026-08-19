@@ -167,6 +167,97 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         frame[self.target_col_] = residual_part
         return frame
 
+    def _resolve_uid_config(
+        self,
+        uid: Union[str, int],
+        values: np.ndarray,
+        default_trend_factory: Callable[[], Any],
+        default_seasonal_factory: Callable[[int], Any],
+    ) -> tuple:
+        """Resolve the trend factory, seasonal periods, and seasonal factory for one SKU."""
+        trend_factory = (
+            self._get_sku_config(self.trend_model_callable, uid)
+            or default_trend_factory
+        )
+        if not callable(trend_factory):
+            raise TypeError(
+                f"trend_model_callable for unique_id {uid!r} must be callable."
+            )
+        periods = self._resolve_seasonal_periods(uid, values)
+        seasonal_factory = self._resolve_seasonal_factory(uid, default_seasonal_factory)
+        return trend_factory, periods, seasonal_factory
+
+    def _decompose_uid(self, values: np.ndarray, periods: List[int]) -> tuple:
+        """Run MSTL for one SKU and split the result into trend/seasonal/residual."""
+        from statsmodels.tsa.seasonal import MSTL
+
+        components = extract_mstl_components(
+            MSTL(values, periods=periods).fit(), periods
+        )
+        trend = components["trend"].bfill().ffill().to_numpy()
+        seasonal_cols = [
+            column for column in components if column.startswith("seasonal")
+        ]
+        residual = components["resid"].fillna(0.0).to_numpy()
+        return trend, seasonal_cols, components, residual
+
+    def _register_trend_row(
+        self,
+        trend_groups: Dict[int, Dict[str, Any]],
+        uid_trend_key: Dict[Union[str, int], int],
+        trend_factory: Callable[[], Any],
+        uid: Union[str, int],
+        trend: np.ndarray,
+        dates: pd.Series,
+    ) -> None:
+        """Assign one SKU's trend row to its shared-factory panel bucket."""
+        trend_key = id(trend_factory)
+        bucket = trend_groups.setdefault(
+            trend_key, {"factory": trend_factory, "rows": []}
+        )
+        bucket["rows"].append((uid, trend, dates))
+        uid_trend_key[uid] = trend_key
+
+    def _register_seasonal_rows(
+        self,
+        seasonal_groups: Dict[tuple, Dict[str, Any]],
+        uid_seasonal_keys: Dict[Union[str, int], List[tuple]],
+        seasonal_factory: Callable[[int], Any],
+        periods: List[int],
+        seasonal_cols: List[str],
+        components: pd.DataFrame,
+        uid: Union[str, int],
+        dates: pd.Series,
+    ) -> None:
+        """Assign one SKU's seasonal rows to their (period, factory) panel buckets."""
+        seasonal_keys = []
+        for period, column in zip(periods, seasonal_cols):
+            key = (period, id(seasonal_factory))
+            bucket = seasonal_groups.setdefault(
+                key, {"factory": seasonal_factory, "period": period, "rows": []}
+            )
+            bucket["rows"].append(
+                (uid, components[column].fillna(0.0).to_numpy(), dates)
+            )
+            seasonal_keys.append(key)
+        uid_seasonal_keys[uid] = seasonal_keys
+
+    def _fit_grouped_panels(
+        self,
+        trend_groups: Dict[int, Dict[str, Any]],
+        seasonal_groups: Dict[tuple, Dict[str, Any]],
+    ) -> tuple:
+        """Fit one StatsForecast panel per trend/seasonal bucket."""
+        trend_fitted = {
+            key: self._fit_panel([bucket["factory"]()], bucket["rows"])
+            for key, bucket in trend_groups.items()
+        }
+        seasonal_fitted = {
+            key: self._fit_panel([bucket["factory"](bucket["period"])], bucket["rows"])
+            for key, bucket in seasonal_groups.items()
+        }
+        return trend_fitted, seasonal_fitted
+
     def _fit_residuals(
         self,
         residuals: List[tuple[Union[str, int], pd.DataFrame, List[int]]],
@@ -193,7 +284,6 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         static_features: Optional[List[str]] = None,
     ) -> "BaseDMSTL":
         from statsforecast.models import AutoETS, SeasonalNaive
-        from statsmodels.tsa.seasonal import MSTL
 
         if self.freq is None:
             raise ValueError(
@@ -233,62 +323,35 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             if self.log_transform:
                 values = np.log1p(values)
 
-            trend_factory = (
-                self._get_sku_config(self.trend_model_callable, uid)
-                or default_trend_factory
+            trend_factory, periods, seasonal_factory = self._resolve_uid_config(
+                uid, values, default_trend_factory, default_seasonal_factory
             )
-            if not callable(trend_factory):
-                raise TypeError(
-                    f"trend_model_callable for unique_id {uid!r} must be callable."
-                )
-
-            periods = self._resolve_seasonal_periods(uid, values)
-            seasonal_factory = self._resolve_seasonal_factory(
-                uid, default_seasonal_factory
+            trend, seasonal_cols, components, residual = self._decompose_uid(
+                values, periods
             )
-
-            components = extract_mstl_components(
-                MSTL(values, periods=periods).fit(), periods
-            )
-            trend = components["trend"].bfill().ffill().to_numpy()
-            seasonal_cols = [
-                column for column in components if column.startswith("seasonal")
-            ]
-            residual = components["resid"].fillna(0.0).to_numpy()
             lags = self._get_residual_lags(uid, residual)
             self.skus_nlags_[uid] = lags
 
             dates = group[time_col]
-
-            trend_key = id(trend_factory)
-            trend_bucket = trend_groups.setdefault(
-                trend_key, {"factory": trend_factory, "rows": []}
+            self._register_trend_row(
+                trend_groups, uid_trend_key, trend_factory, uid, trend, dates
             )
-            trend_bucket["rows"].append((uid, trend, dates))
-            uid_trend_key[uid] = trend_key
-
-            seasonal_keys = []
-            for period, column in zip(periods, seasonal_cols):
-                key = (period, id(seasonal_factory))
-                seasonal_bucket = seasonal_groups.setdefault(
-                    key, {"factory": seasonal_factory, "period": period, "rows": []}
-                )
-                seasonal_bucket["rows"].append(
-                    (uid, components[column].fillna(0.0).to_numpy(), dates)
-                )
-                seasonal_keys.append(key)
-            uid_seasonal_keys[uid] = seasonal_keys
+            self._register_seasonal_rows(
+                seasonal_groups,
+                uid_seasonal_keys,
+                seasonal_factory,
+                periods,
+                seasonal_cols,
+                components,
+                uid,
+                dates,
+            )
 
             residuals.append((uid, self._make_residual_frame(group, residual), lags))
 
-        trend_fitted = {
-            key: self._fit_panel([bucket["factory"]()], bucket["rows"])
-            for key, bucket in trend_groups.items()
-        }
-        seasonal_fitted = {
-            key: self._fit_panel([bucket["factory"](bucket["period"])], bucket["rows"])
-            for key, bucket in seasonal_groups.items()
-        }
+        trend_fitted, seasonal_fitted = self._fit_grouped_panels(
+            trend_groups, seasonal_groups
+        )
 
         for uid in uid_trend_key:
             self.fitted_models_[uid] = {
@@ -308,6 +371,38 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             return hfi(values, w_s=weight)
         raise ValueError("stabilization_method must be 'hpi' or 'hfi'.")
 
+    def _predict_component_for_uid(
+        self,
+        model: Any,
+        cache: Dict[int, pd.DataFrame],
+        uid: Union[str, int],
+        h: int,
+    ) -> np.ndarray:
+        """Predict one shared trend/seasonal model once and return one SKU's values."""
+        if id(model) not in cache:
+            cache[id(model)] = model.predict(h=h)
+        frame = cache[id(model)]
+        frame = frame[frame[self.id_col_] == uid]
+        return frame[self._get_model_cols(frame)].sum(axis=1).to_numpy()
+
+    def _recombine_uid_forecast(
+        self,
+        frame: pd.DataFrame,
+        trend: np.ndarray,
+        seasonal: np.ndarray,
+        stabilization_method: Optional[Literal["hpi", "hfi"]],
+        w_s: float,
+    ) -> pd.DataFrame:
+        """Add trend/seasonal to each residual model column and post-process it."""
+        for column in self._get_model_cols(frame):
+            values = frame[column].to_numpy() + trend + seasonal
+            if self.log_transform:
+                values = np.expm1(values)
+            if stabilization_method is not None and w_s > 0:
+                values = self._stabilize(values, stabilization_method, w_s)
+            frame[column] = values
+        return frame
+
     def predict(
         self,
         h: int,
@@ -326,40 +421,24 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             )
         residual_predictions = self._predict_residuals(h, X_df, level)
         # A trend/seasonal model may be shared by several SKUs (panel fit), so
-        # each distinct fitted object is predicted only once and its output is
-        # filtered by unique_id below.
-        trend_prediction_cache: Dict[int, pd.DataFrame] = {}
-        seasonal_prediction_cache: Dict[int, pd.DataFrame] = {}
+        # each distinct fitted object is predicted only once here.
+        trend_cache: Dict[int, pd.DataFrame] = {}
+        seasonal_cache: Dict[int, pd.DataFrame] = {}
         predictions = []
         for uid, models in self.fitted_models_.items():
-            trend_model = models["trend"]
-            if id(trend_model) not in trend_prediction_cache:
-                trend_prediction_cache[id(trend_model)] = trend_model.predict(h=h)
-            trend_frame = trend_prediction_cache[id(trend_model)]
-            trend_frame = trend_frame[trend_frame[self.id_col_] == uid]
-            trend = (
-                trend_frame[self._get_model_cols(trend_frame)].sum(axis=1).to_numpy()
+            trend = self._predict_component_for_uid(
+                models["trend"], trend_cache, uid, h
             )
             seasonal = np.zeros(h)
             for model in models["seasonal"]:
-                if id(model) not in seasonal_prediction_cache:
-                    seasonal_prediction_cache[id(model)] = model.predict(h=h)
-                seasonal_frame = seasonal_prediction_cache[id(model)]
-                seasonal_frame = seasonal_frame[seasonal_frame[self.id_col_] == uid]
-                seasonal += (
-                    seasonal_frame[self._get_model_cols(seasonal_frame)]
-                    .sum(axis=1)
-                    .to_numpy()
+                seasonal += self._predict_component_for_uid(
+                    model, seasonal_cache, uid, h
                 )
             frame = residual_predictions[
                 residual_predictions[self.id_col_] == uid
             ].copy()
-            for column in self._get_model_cols(frame):
-                values = frame[column].to_numpy() + trend + seasonal
-                if self.log_transform:
-                    values = np.expm1(values)
-                if stabilization_method is not None and w_s > 0:
-                    values = self._stabilize(values, stabilization_method, w_s)
-                frame[column] = values
+            frame = self._recombine_uid_forecast(
+                frame, trend, seasonal, stabilization_method, w_s
+            )
             predictions.append(frame)
         return pd.concat(predictions, ignore_index=True)
