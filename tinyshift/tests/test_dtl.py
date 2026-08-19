@@ -19,7 +19,7 @@ class TestDTLWrapper:
         )
 
         params = wrapper.get_params()
-        assert params["mode"] == "local"
+        assert params["mode"] == "global"
         assert params["freq"] == "MS"
         assert params["trend_frac"] == 0.3
         assert params["robust"] is False
