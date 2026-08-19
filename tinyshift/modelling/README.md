@@ -122,10 +122,13 @@ predictions = wrapper.predict(h=14)
 - When a smooth robust trend should be forecast separately from residual dynamics
 - To combine LOWESS decomposition with machine-learning residual forecasts
 
-### 5. Decomposed Forecasting Wrapper (`dmstl.py`)
+### 5. Decomposed Forecasting Wrappers (`dmstl/`)
 
 #### **`DMSTLWrapper`** - MSTL-Based Trend/Seasonality + Residual ML Modeling
-Wrapper that decomposes a panel time series using MSTL, fits statistical models for trend and seasonality, and models residual structure with `MLForecast`.
+Facade that decomposes each panel series with MSTL, fits statistical models for trend and seasonality, and delegates residual modeling to one of two strategies selected with `mode`.
+
+- `mode="local"`: one residual `MLForecast` model per `unique_id`. A residual factory and lag configuration may be global or specific to each series.
+- `mode="global"`: one residual `MLForecast` model for the complete residual panel. The factory must be a single callable, and the model receives the sorted union of the lags resolved for each series.
 
 ```python
 from tinyshift.modelling import DMSTLWrapper
@@ -140,6 +143,7 @@ def residual_model_callable(nlags, freq):
     )
 
 wrapper = DMSTLWrapper(
+    mode="global",
     residual_model_callable=residual_model_callable,
     freq="D",
     season_length="auto",
@@ -151,6 +155,9 @@ wrapper = DMSTLWrapper(
 wrapper.fit(df, id_col='unique_id', time_col='ds', target_col='y')
 predictions = wrapper.predict(df_future)
 ```
+
+Only `DMSTLWrapper` is part of the public DMSTL API. Select the residual
+strategy with `mode="local"` or `mode="global"` when creating the wrapper.
 
 **When to use:**
 - For multi-seasonal panel forecasting
