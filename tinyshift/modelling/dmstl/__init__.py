@@ -1,3 +1,6 @@
-from .wrapper import DMSTLWrapper
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
 
-__all__ = ["DMSTLWrapper"]
+
+from .wrapper import DMSTLWrapper

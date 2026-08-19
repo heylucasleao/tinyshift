@@ -1,3 +1,8 @@
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
+
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import pandas as pd
@@ -74,6 +79,17 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
     The global strategy then uses the union of the selected lags. Prediction
     recombines trend, seasonal, and residual forecasts and applies ``expm1``
     after recombination when ``log_transform=True``.
+
+    Trend and seasonal components are always decomposed and modeled per
+    ``unique_id``: MSTL decomposition and forecast values are never shared
+    across series. However, when several series resolve to the same trend or
+    seasonal model factory (the common case, since ``trend_model_callable``
+    and ``seasonal_model_callable`` default to one shared factory), those
+    series are fitted together in a single panel-wide StatsForecast call
+    instead of one call per series. This reduces the number of StatsForecast
+    fits without changing that each SKU still gets its own fitted parameters.
+    Series configured with a per-``unique_id`` factory (a ``dict``) are only
+    batched with other series that resolve to that same factory object.
 
     Examples
     --------
