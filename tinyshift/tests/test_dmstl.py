@@ -183,3 +183,41 @@ class TestDMSTLWrapper:
         assert wrapper._get_residual_lags("sku-a", np.arange(8)) == [3]
         assert len(select_calls) == 1
         assert select_calls[0][1] == {"max_tau": 10}
+
+    def test_residual_model_receives_static_features(self, monkeypatch):
+        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+        fit_arguments = {}
+
+        class ResidualModel:
+            def fit(self, *args, **kwargs):
+                fit_arguments.update(kwargs)
+                return self
+
+        wrapper = DMSTLWrapper(
+            residual_model_callable=lambda nlags, freq: ResidualModel(),
+            freq="D",
+            nlags=1,
+        )
+        wrapper.freq_ = wrapper.freq
+        wrapper.id_col_ = "unique_id"
+        wrapper.time_col_ = "ds"
+        wrapper.target_col_ = "y"
+        wrapper.exog_cols_ = ["store_id"]
+
+        group = pd.DataFrame(
+            {
+                "unique_id": ["sku-a"] * 4,
+                "ds": pd.date_range("2024-01-01", periods=4, freq="D"),
+                "y": [1.0, 2.0, 3.0, 4.0],
+                "store_id": [1] * 4,
+            }
+        )
+
+        wrapper._fit_mlforecast(
+            group,
+            np.zeros(4),
+            "sku-a",
+            static_features=["store_id"],
+        )
+
+        assert fit_arguments["static_features"] == ["store_id"]

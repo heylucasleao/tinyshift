@@ -286,7 +286,11 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         return StatsForecast(models=models_list, freq=freq).fit(sf_df)
 
     def _fit_mlforecast(
-        self, group: pd.DataFrame, residual_part: np.ndarray, prediction_intervals=None
+        self,
+        group: pd.DataFrame,
+        residual_part: np.ndarray,
+        prediction_intervals=None,
+        static_features: Optional[List[str]] = None,
     ) -> Any:
         """
         Fit an isolated copy of the base MLForecast pipeline on the extracted residual component.
@@ -299,6 +303,8 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
             Residual values extracted from the trend decomposition.
         prediction_intervals : PredictionIntervals, optional
             Configuration for conformal prediction intervals.
+        static_features : list of str, optional
+            Exogenous columns whose values are constant within each series.
 
         Returns
         -------
@@ -336,6 +342,7 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
             time_col=self.time_col_,
             target_col=self.target_col_,
             prediction_intervals=prediction_intervals,
+            static_features=static_features,
         )
         return mf_resid
 
@@ -347,6 +354,7 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         time_col: str = "ds",
         target_col: str = "y",
         prediction_intervals=None,
+        static_features: Optional[List[str]] = None,
     ) -> "DTLWrapper":
         """
         Fit LOWESS trend decomposition and sub-models for each unique group.
@@ -365,6 +373,9 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         prediction_intervals : PredictionIntervals, optional
             MLForecast conformal interval configuration for residual uncertainty
             estimation.
+        static_features : list of str, optional
+            Exogenous columns that are constant within each series for the
+            residual MLForecast model.
 
         Returns
         -------
@@ -418,7 +429,12 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
             sf_trend = self._fit_statsforecast(
                 trend_model, trend_part, dates, uid, self.freq_
             )
-            fitted_mf = self._fit_mlforecast(group, residual_part, prediction_intervals)
+            fitted_mf = self._fit_mlforecast(
+                group,
+                residual_part,
+                prediction_intervals,
+                static_features,
+            )
 
             self.fitted_models_[uid] = {
                 "trend": sf_trend,
@@ -512,6 +528,11 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         if not hasattr(self, "fitted_models_") or not self.fitted_models_:
             raise RuntimeError(
                 "The model must be fitted with .fit() before making predictions."
+            )
+        if self.exog_cols_ and X_df is None:
+            raise ValueError(
+                f"The model was fitted with exogenous features {self.exog_cols_}. "
+                "You must provide 'X_df' covering the forecast horizon."
             )
 
         preds_list = []

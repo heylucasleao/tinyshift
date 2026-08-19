@@ -75,11 +75,17 @@ class TestDTLWrapper:
             "uid": uid,
             "values": values,
         }
-        wrapper._fit_mlforecast = lambda group, residual, prediction_intervals: {
-            "component": "residual",
-            "uid": group["unique_id"].iloc[0],
-            "values": residual,
-        }
+        captured = {}
+
+        def fit_residual(group, residual, prediction_intervals, static_features):
+            captured["static_features"] = static_features
+            return {
+                "component": "residual",
+                "uid": group["unique_id"].iloc[0],
+                "values": residual,
+            }
+
+        wrapper._fit_mlforecast = fit_residual
 
         frame = pd.DataFrame(
             {
@@ -89,12 +95,13 @@ class TestDTLWrapper:
             }
         )
 
-        fitted = wrapper.fit(frame)
+        fitted = wrapper.fit(frame, static_features=["store_id"])
 
         assert fitted is wrapper
         assert set(wrapper.fitted_models_) == {"series-a"}
         assert wrapper.fitted_models_["series-a"]["trend"]["component"] == "trend"
         assert wrapper.fitted_models_["series-a"]["residual"]["component"] == "residual"
+        assert captured["static_features"] == ["store_id"]
         assert not hasattr(wrapper, "trend_models_")
 
     def test_model_columns_exclude_id_and_time(self, monkeypatch):
@@ -142,8 +149,11 @@ class TestDTLWrapper:
         monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
         received = {}
 
+        fit_arguments = {}
+
         class ResidualModel:
             def fit(self, *args, **kwargs):
+                fit_arguments.update(kwargs)
                 return self
 
         def residual_factory(nlags, freq):
@@ -169,6 +179,7 @@ class TestDTLWrapper:
             }
         )
 
-        wrapper._fit_mlforecast(group, np.zeros(4))
+        wrapper._fit_mlforecast(group, np.zeros(4), static_features=["store_id"])
 
         assert received == {"nlags": [1, 2, 3], "freq": "MS"}
+        assert fit_arguments["static_features"] == ["store_id"]

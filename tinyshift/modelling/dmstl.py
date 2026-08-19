@@ -447,6 +447,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         residual_part: np.ndarray,
         uid: Union[str, int],
         prediction_intervals: Optional[Any] = None,
+        static_features: Optional[List[str]] = None,
     ) -> Any:
         """
         Fit a isolated copy of the base MLForecast pipeline on the extracted residual component.
@@ -459,6 +460,8 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             Extracted residual values to be modeled.
         prediction_intervals : PredictionIntervals, optional
             Configuration for conformal prediction intervals.
+        static_features : list of str, optional
+            Exogenous columns whose values are constant within each series.
 
         Returns
         -------
@@ -493,6 +496,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             time_col=self.time_col_,
             target_col=self.target_col_,
             prediction_intervals=prediction_intervals,
+            static_features=static_features,
         )
         return mf_resid
 
@@ -504,6 +508,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         time_col: str = "ds",
         target_col: str = "y",
         prediction_intervals: Optional[Any] = None,
+        static_features: Optional[List[str]] = None,
     ) -> "DMSTLWrapper":
         """
         Fit MSTL decomposition and sub-models for each unique group in the data.
@@ -520,6 +525,9 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             Target variable column name.
         prediction_intervals : PredictionIntervals, optional
             MLForecast conformal interval configuration for residual uncertainty estimation.
+        static_features : list of str, optional
+            Exogenous columns that are constant within each series for the
+            residual MLForecast model.
 
         Returns
         -------
@@ -599,7 +607,11 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
                 )
             ]
             fitted_mf = self._fit_mlforecast(
-                group_sorted, residual_part, uid, prediction_intervals
+                group_sorted,
+                residual_part,
+                uid,
+                prediction_intervals,
+                static_features,
             )
 
             self.fitted_models_[uid] = {
@@ -691,6 +703,11 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         if not hasattr(self, "fitted_models_") or not self.fitted_models_:
             raise RuntimeError(
                 "The model must be fitted with .fit() before making predictions."
+            )
+        if self.exog_cols_ and X_df is None:
+            raise ValueError(
+                f"The model was fitted with exogenous features {self.exog_cols_}. "
+                "You must provide 'X_df' covering the forecast horizon."
             )
 
         preds_list = []
