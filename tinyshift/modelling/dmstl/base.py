@@ -151,7 +151,12 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             ],
             ignore_index=True,
         )
-        return StatsForecast(models=models, freq=self.freq_).fit(frame)
+        return StatsForecast(models=models, freq=self.freq_).fit(
+            frame,
+            id_col=self.id_col_,
+            time_col=self.time_col_,
+            target_col=self.target_col_,
+        )
 
     def _fit_statsforecast(
         self, models: Any, values: np.ndarray, dates: pd.Series, uid: Union[str, int]
