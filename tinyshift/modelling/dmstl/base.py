@@ -49,11 +49,11 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         self.residual_model_callable = residual_model_callable
         self.freq = freq
         self.season_length = season_length
-        self.seasonal_detection_params = seasonal_detection_params or {}
+        self.seasonal_detection_params = seasonal_detection_params
         self.trend_model_callable = trend_model_callable
         self.seasonal_model_callable = seasonal_model_callable
         self.nlags = nlags
-        self.pami_params = pami_params or {}
+        self.pami_params = pami_params
         self.log_transform = log_transform
 
     def _get_sku_config(self, config: Any, uid: Union[str, int]) -> Any:
@@ -72,7 +72,9 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         if configured_periods is None:
             raise ValueError(f"No season_length configured for unique_id {uid!r}.")
         if configured_periods == "auto":
-            periods = detect_seasonal_periods(series, **self.seasonal_detection_params)
+            periods = detect_seasonal_periods(
+                series, **(self.seasonal_detection_params or {})
+            )
         elif isinstance(configured_periods, int) and not isinstance(
             configured_periods, bool
         ):
@@ -112,7 +114,9 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         """Calculate PAMI lags for one SKU, regardless of residual strategy."""
         configured_lags = self._get_sku_config(self.nlags, uid)
         if configured_lags == "auto":
-            selected_lag, _, _ = select_pami_lag(residual_part, **self.pami_params)
+            selected_lag, _, _ = select_pami_lag(
+                residual_part, **(self.pami_params or {})
+            )
             if isinstance(selected_lag, int):
                 return [max(selected_lag, 1)]
             return list(selected_lag) or [1]

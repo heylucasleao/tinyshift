@@ -35,7 +35,7 @@ class BaseDTL(BaseEstimator, RegressorMixin):
         self.robust = robust
         self.log_transform = log_transform
         self.nlags = nlags
-        self.pami_params = pami_params or {}
+        self.pami_params = pami_params
 
     def _get_sku_config(self, config: Any, uid: Union[str, int]) -> Any:
         return config.get(uid) if isinstance(config, dict) else config
@@ -62,7 +62,7 @@ class BaseDTL(BaseEstimator, RegressorMixin):
     def _get_residual_lags(self, uid, residual_part: np.ndarray) -> List[int]:
         config = self._get_sku_config(self.nlags, uid)
         if config == "auto":
-            selected, _, _ = select_pami_lag(residual_part, **self.pami_params)
+            selected, _, _ = select_pami_lag(residual_part, **(self.pami_params or {}))
             if isinstance(selected, int):
                 return [selected] if selected > 0 else [1]
             return selected or [1]
