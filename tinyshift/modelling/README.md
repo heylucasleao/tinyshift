@@ -87,10 +87,15 @@ X_scaled = scaler.fit_transform(
 
 ---
 
-### 4. Decomposed Trend-Local Wrapper (`dtl.py`)
+### 4. Decomposed Trend-Local Wrappers (`dtl/`)
 
 #### **`DTLWrapper`** - LOWESS Trend + Residual ML Forecasting
-Wrapper for non-seasonal panel forecasting. It extracts a robust LOWESS trend, forecasts that component with StatsForecast, and models the residual component with `MLForecast`.
+Facade for non-seasonal panel forecasting. It extracts a robust LOWESS trend
+for each `unique_id`, forecasts that component with StatsForecast, and selects
+the residual strategy with `mode`:
+
+- `mode="local"`: one residual `MLForecast` model per `unique_id`. The factory and lag configuration may be global or per series.
+- `mode="global"`: one residual `MLForecast` model for the complete residual panel. The factory must be a single callable and receives the sorted union of the lags resolved per series.
 
 ```python
 from tinyshift.modelling import DTLWrapper
@@ -105,6 +110,7 @@ def residual_model_callable(nlags, freq):
     )
 
 wrapper = DTLWrapper(
+    mode="global",
     residual_model_callable=residual_model_callable,
     freq="D",
     nlags="auto",
@@ -122,7 +128,10 @@ predictions = wrapper.predict(h=14)
 - When a smooth robust trend should be forecast separately from residual dynamics
 - To combine LOWESS decomposition with machine-learning residual forecasts
 
-### 5. Decomposed Forecasting Wrapper (`dmstl.py`)
+Only `DTLWrapper` is part of the public DTL API. Select the local or global
+residual strategy with `mode` when creating the wrapper.
+
+### 5. Decomposed Forecasting Wrappers (`dmstl/`)
 
 #### **`DMSTLWrapper`** - MSTL-Based Trend/Seasonality + Residual ML Modeling
 Wrapper that decomposes a panel time series using MSTL, fits statistical models for trend and seasonality, and models residual structure with `MLForecast`.
