@@ -1,3 +1,8 @@
+# Copyright (c) 2024-2025 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
+
 import copy
 from functools import partial
 from typing import Any, Callable, Dict, List, Literal, Optional, Union
