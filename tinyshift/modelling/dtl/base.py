@@ -49,10 +49,10 @@ class BaseDTL(BaseEstimator, RegressorMixin):
     def _get_residual_lags(self, uid, residual_part: np.ndarray) -> List[int]:
         config = self._get_sku_config(self.nlags, uid)
         if config == "auto":
-            selected, _, _ = select_pami_lag(
-                residual_part, **self.pami_params, return_mode="value_only"
-            )
-            return [selected] if selected > 0 else [1]
+            selected, _, _ = select_pami_lag(residual_part, **self.pami_params)
+            if isinstance(selected, int):
+                return [selected] if selected > 0 else [1]
+            return selected or [1]
         if isinstance(config, int) and not isinstance(config, bool):
             if config < 1:
                 raise ValueError("nlags must be positive")
