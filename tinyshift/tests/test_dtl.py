@@ -98,3 +98,43 @@ class TestDTLWrapper:
 
         assert calls == [([1, 2, 3], "MS")]
         assert len(wrapper.residual_mlforecast_.frame) == 4
+
+    def test_fit_sorts_each_series_before_modeling(self, monkeypatch):
+        captured_dates = []
+
+        def fake_detrend(frame, **kwargs):
+            return pd.DataFrame(
+                {
+                    "trend": frame["y"].to_numpy(),
+                    "detrended": [0.0] * len(frame),
+                },
+                index=frame.index,
+            )
+
+        monkeypatch.setattr("tinyshift.modelling.dtl.base.detrend", fake_detrend)
+        wrapper = DTLLocalWrapper(
+            residual_model_callable=lambda nlags, freq: None,
+            freq="MS",
+            trend_model_callable=lambda: object(),
+            nlags=1,
+        )
+        wrapper._fit_statsforecast = (
+            lambda model, values, dates, uid: captured_dates.append(list(dates))
+        )
+        wrapper._fit_residuals = (
+            lambda residuals, prediction_intervals, static_features: None
+        )
+
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["series-a"] * 3,
+                "ds": pd.to_datetime(["2024-03-01", "2024-01-01", "2024-02-01"]),
+                "y": [3.0, 1.0, 2.0],
+            }
+        )
+
+        wrapper.fit(frame)
+
+        assert captured_dates == [
+            list(pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"]))
+        ]
