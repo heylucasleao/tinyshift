@@ -122,6 +122,11 @@ class BaseDTL(BaseEstimator, RegressorMixin):
             for key, bucket in trend_groups.items()
         }
 
+    def _make_residual_frame(self, group, residual_part):
+        frame = group[[self.id_col_, self.time_col_] + self.exog_cols_].copy()
+        frame[self.target_col_] = residual_part
+        return frame
+
     def _fit_residuals(self, residuals, prediction_intervals, static_features):
         raise NotImplementedError
 
@@ -180,9 +185,7 @@ class BaseDTL(BaseEstimator, RegressorMixin):
             self._register_trend_row(
                 trend_groups, uid_trend_key, trend_factory, uid, trend, group[time_col]
             )
-            frame = group[[id_col, time_col] + self.exog_cols_].copy()
-            frame[target_col] = residual
-            residuals.append((uid, frame, lags))
+            residuals.append((uid, self._make_residual_frame(group, residual), lags))
 
         trend_fitted = self._fit_trend_panels(trend_groups)
         for uid, key in uid_trend_key.items():
