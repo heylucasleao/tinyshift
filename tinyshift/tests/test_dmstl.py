@@ -1,223 +1,107 @@
-# Copyright (c) 2024-2026 Lucas Leão
-# tinyshift - A small toolbox for mlops
-# Licensed under the MIT License
+from unittest.mock import Mock
 
-from functools import partial
 import numpy as np
 import pandas as pd
 import pytest
 
-import tinyshift.utils.imports as imports_utils
-from tinyshift.modelling.dmstl import DMSTLWrapper
+from tinyshift.modelling import DMSTLWrapper
+from tinyshift.modelling.dmstl.global_ import DMSTLGlobalWrapper
+from tinyshift.modelling.dmstl.local_ import DMSTLLocalWrapper
 
 
 class TestDMSTLWrapper:
-    def test_process_components_and_model_columns(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
-
-        wrapper = DMSTLWrapper(
-            season_length=[7],
-            log_transform=False,
+    def test_mode_selects_local_or_global_strategy(self):
+        assert isinstance(
+            DMSTLWrapper(mode="local")._make_delegate(), DMSTLLocalWrapper
         )
-        wrapper.id_col_ = "unique_id"
-        wrapper.time_col_ = "ds"
-
-        components_df = pd.DataFrame(
-            {
-                "trend": [1.0, 2.0, 3.0, 4.0],
-                "seasonal_7": [0.1, 0.2, 0.1, 0.2],
-                "seasonal_30": [1.0, 2.0, 1.0, 2.0],
-                "resid": [0.0, 0.0, 0.0, 0.0],
-            }
+        assert isinstance(
+            DMSTLWrapper(mode="global")._make_delegate(), DMSTLGlobalWrapper
         )
 
-        trend, seasonal, residual = wrapper._process_components(components_df)
-        cols = wrapper._get_model_cols(
-            pd.DataFrame(
-                {
-                    "unique_id": [1],
-                    "ds": [pd.Timestamp("2024-01-01")],
-                    "y": [10.0],
-                    "model_a": [11.0],
-                }
-            )
-        )
+    def test_invalid_mode_is_rejected(self):
+        with pytest.raises(ValueError, match="mode"):
+            DMSTLWrapper(mode="invalid")._make_delegate()
 
-        assert trend.shape == (4,)
-        assert seasonal.shape == (4,)
-        assert residual.shape == (4,)
-        assert cols == ["y", "model_a"]
+    def test_global_requires_one_residual_factory(self):
+        wrapper = DMSTLGlobalWrapper(freq="D")
 
-        _, seasonal_parts, _ = wrapper._process_components(
-            components_df, split_seasonal=True
-        )
-        assert len(seasonal_parts) == 2
-        np.testing.assert_array_equal(seasonal_parts[0], [0.1, 0.2, 0.1, 0.2])
-        np.testing.assert_array_equal(seasonal_parts[1], [1.0, 2.0, 1.0, 2.0])
+        with pytest.raises(ValueError, match="one callable"):
+            wrapper._fit_residuals([], None, None)
 
-    def test_seasonal_config_resolves_per_uid_season_length(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
+    def test_local_uses_one_residual_model_per_uid(self):
+        models = []
 
-        wrapper = DMSTLWrapper(
-            season_length={"sku-a": [7, 30]},
-        )
+        def factory(nlags, freq):
+            model = Mock()
+            model.fit.return_value = model
+            models.append((nlags, freq, model))
+            return model
 
-        class SeasonalNaive:
-            def __init__(self, season_length):
-                self.season_length = season_length
-
-        season_lengths, seasonal_models = wrapper._get_seasonal_config(
-            "sku-a", np.arange(32, dtype=float), SeasonalNaive
-        )
-
-        assert season_lengths == [7, 30]
-        assert [model.season_length for model in seasonal_models] == [7, 30]
-
-    def test_seasonal_config_uses_detected_periods_for_auto(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
-        monkeypatch.setattr(
-            "tinyshift.modelling.dmstl.detect_seasonal_periods",
-            lambda series, **kwargs: [8, 16],
-        )
-
-        wrapper = DMSTLWrapper(
-            season_length="auto",
-        )
-
-        class SeasonalNaive:
-            def __init__(self, season_length):
-                self.season_length = season_length
-
-        season_lengths, seasonal_models = wrapper._get_seasonal_config(
-            "sku-a", np.arange(32, dtype=float), SeasonalNaive
-        )
-
-        assert season_lengths == [8, 16]
-        assert [model.season_length for model in seasonal_models] == [8, 16]
-
-    def test_seasonal_config_accepts_model_factory(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
-
-        from statsforecast.models import AutoETS
-
-        wrapper = DMSTLWrapper(
-            season_length=[7, 30],
-            seasonal_model_callable=lambda period: AutoETS(
-                season_length=period,
-                model="ZNM",
-                alias=f"AutoETS-{period}",
-            ),
-        )
-
-        season_lengths, seasonal_models = wrapper._get_seasonal_config(
-            "sku-a", np.arange(32, dtype=float), AutoETS
-        )
-
-        assert season_lengths == [7, 30]
-        assert [model.season_length for model in seasonal_models] == [7, 30]
-        assert [model.model for model in seasonal_models] == ["ZNM", "ZNM"]
-
-    def test_seasonal_config_rejects_model_instance(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
-
-        from statsforecast.models import AutoETS
-
-        wrapper = DMSTLWrapper(
-            season_length=[7, 30],
+        wrapper = DMSTLLocalWrapper(
+            residual_model_callable=factory,
             freq="D",
-            seasonal_model_callable=AutoETS(model="ZNA"),
         )
-
-        with pytest.raises(TypeError, match="seasonal_model_callable"):
-            wrapper._get_seasonal_config("sku-a", np.arange(32, dtype=float), AutoETS)
-
-    def test_trend_model_callable_creates_model_per_uid(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
-
-        from statsforecast.models import AutoETS
-
-        wrapper = DMSTLWrapper(
-            season_length=7,
-            trend_model_callable=lambda: AutoETS(model="ZZN"),
-        )
-
-        assert wrapper.trend_model_callable().model == "ZZN"
-
-        default_callable = partial(AutoETS, model="ZZN")
-        resolved_model = wrapper._get_trend_config("sku-a", default_callable)
-        assert resolved_model.model == "ZZN"
-        assert resolved_model is not default_callable()
-
-    def test_trend_model_callable_rejects_model_instance(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
-
-        from statsforecast.models import AutoETS
-
-        wrapper = DMSTLWrapper(
-            season_length=7,
-            freq="D",
-            trend_model_callable=AutoETS(model="ZZN"),
-        )
-
-        with pytest.raises(TypeError, match="trend_model_callable"):
-            wrapper.fit(pd.DataFrame({"unique_id": ["sku-a"], "ds": [1], "y": [1.0]}))
-
-    def test_residual_lags_use_nlags_configuration(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
-        select_calls = []
-
-        def fake_select_pami_lag(values, **kwargs):
-            select_calls.append((values, kwargs))
-            return 3, 0.2, np.array([0.5, 0.3, 0.2])
-
-        monkeypatch.setattr(
-            "tinyshift.modelling.dmstl.select_pami_lag", fake_select_pami_lag
-        )
-
-        wrapper = DMSTLWrapper(
-            nlags={"sku-a": "auto", "sku-b": 2},
-            pami_params={"max_tau": 10},
-        )
-
-        assert wrapper._get_residual_lags("sku-b", np.arange(8)) == [1, 2]
-        assert wrapper._get_residual_lags("sku-a", np.arange(8)) == [3]
-        assert len(select_calls) == 1
-        assert select_calls[0][1] == {"max_tau": 10}
-
-    def test_residual_model_receives_static_features(self, monkeypatch):
-        monkeypatch.setattr(imports_utils, "check_extra", lambda extra_name: None)
-        fit_arguments = {}
-
-        class ResidualModel:
-            def fit(self, *args, **kwargs):
-                fit_arguments.update(kwargs)
-                return self
-
-        wrapper = DMSTLWrapper(
-            residual_model_callable=lambda nlags, freq: ResidualModel(),
-            freq="D",
-            nlags=1,
-        )
-        wrapper.freq_ = wrapper.freq
         wrapper.id_col_ = "unique_id"
         wrapper.time_col_ = "ds"
         wrapper.target_col_ = "y"
-        wrapper.exog_cols_ = ["store_id"]
+        wrapper.freq_ = "D"
+        wrapper.fitted_models_ = {"a": {}, "b": {}}
 
-        group = pd.DataFrame(
+        frame = pd.DataFrame(
             {
-                "unique_id": ["sku-a"] * 4,
-                "ds": pd.date_range("2024-01-01", periods=4, freq="D"),
-                "y": [1.0, 2.0, 3.0, 4.0],
-                "store_id": [1] * 4,
+                "unique_id": ["a", "a"],
+                "ds": pd.date_range("2024-01-01", periods=2),
+                "y": [0.1, 0.2],
             }
         )
-
-        wrapper._fit_mlforecast(
-            group,
-            np.zeros(4),
-            "sku-a",
-            static_features=["store_id"],
+        wrapper._fit_residuals(
+            [("a", frame, [1]), ("b", frame.assign(unique_id="b"), [1, 2])],
+            None,
+            None,
         )
 
-        assert fit_arguments["static_features"] == ["store_id"]
+        assert [item[0] for item in models] == [[1], [1, 2]]
+        assert all("residual" in wrapper.fitted_models_[uid] for uid in ("a", "b"))
+
+    def test_global_uses_union_of_residual_lags_and_one_model(self):
+        factory_calls = []
+
+        class ResidualModel:
+            def fit(self, frame, **kwargs):
+                self.frame = frame
+                return self
+
+        def factory(nlags, freq):
+            factory_calls.append((nlags, freq))
+            return ResidualModel()
+
+        wrapper = DMSTLGlobalWrapper(
+            residual_model_callable=factory,
+            freq="D",
+        )
+        wrapper.id_col_ = "unique_id"
+        wrapper.time_col_ = "ds"
+        wrapper.target_col_ = "y"
+        wrapper.freq_ = "D"
+
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["a", "a"],
+                "ds": pd.date_range("2024-01-01", periods=2),
+                "y": [0.1, 0.2],
+            }
+        )
+        wrapper._fit_residuals(
+            [("a", frame, [1, 3]), ("b", frame.assign(unique_id="b"), [2, 3])],
+            None,
+            None,
+        )
+
+        assert factory_calls == [([1, 2, 3], "D")]
+        assert len(wrapper.residual_mlforecast_.frame) == 4
+
+    def test_stabilization_rejects_unknown_method(self):
+        wrapper = DMSTLLocalWrapper()
+
+        with pytest.raises(ValueError, match="stabilization_method"):
+            wrapper._stabilize(np.array([1.0]), "unknown", 0.5)
