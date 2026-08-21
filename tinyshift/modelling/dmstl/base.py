@@ -64,13 +64,14 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             column for column in frame if column not in (self.id_col_, self.time_col_)
         ]
 
-    def _resolve_seasonal_periods(
+    def _get_raw_seasonal_periods(
         self, uid: Union[str, int], series: np.ndarray
     ) -> List[int]:
-        """Resolve and validate the seasonal periods configured for one SKU."""
+        """Retrieve or detect raw seasonal periods for one SKU."""
         configured_periods = self._get_sku_config(self.season_length, uid)
         if configured_periods is None:
             raise ValueError(f"No season_length configured for unique_id {uid!r}.")
+
         if configured_periods == "auto":
             periods = detect_seasonal_periods(
                 series, **(self.seasonal_detection_params or {})
@@ -82,12 +83,19 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
                     f"or a dictionary mapping in 'season_length' "
                     f"(e.g., season_length={{{uid!r}: 7}} or season_length={{{uid!r}: [7, 30]}})."
                 )
-        elif isinstance(configured_periods, int) and not isinstance(
+            return periods
+
+        if isinstance(configured_periods, int) and not isinstance(
             configured_periods, bool
         ):
-            periods = [configured_periods]
-        else:
-            periods = list(configured_periods)
+            return [configured_periods]
+
+        return list(configured_periods)
+
+    def _validate_seasonal_periods_format(
+        self, uid: Union[str, int], periods: List[int]
+    ) -> List[int]:
+        """Validate that seasonal periods are integers strictly greater than one."""
         if not periods or any(
             not isinstance(period, int) or isinstance(period, bool) or period <= 1
             for period in periods
@@ -96,6 +104,31 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
                 f"season_length for unique_id {uid!r} must contain integer periods greater than one."
             )
         return sorted(set(periods))
+
+    def _validate_series_length_for_mstl(
+        self, uid: Union[str, int], series: np.ndarray, periods: List[int]
+    ) -> None:
+        """Validate that the series length satisfies MSTL minimum requirement."""
+        max_p = max(periods)
+
+        # For multiple seasonalities, MSTL requires a larger sample size to separate overlapping components
+        min_required = 2 * sum(periods) if len(periods) > 1 else 2 * max_p
+
+        if len(series) < min_required:
+            raise ValueError(
+                f"Series for unique_id {uid!r} has length {len(series)}, which is too short "
+                f"for seasonal period {max_p} (MSTL requires at least {2 * max_p} observations). "
+                f"Adjust your train window / step_size or set a smaller period for this SKU."
+            )
+
+    def _resolve_seasonal_periods(
+        self, uid: Union[str, int], series: np.ndarray
+    ) -> List[int]:
+        """Resolve and validate the seasonal periods configured for one SKU."""
+        raw_periods = self._get_raw_seasonal_periods(uid, series)
+        periods = self._validate_seasonal_periods_format(uid, raw_periods)
+        self._validate_series_length_for_mstl(uid, series, periods)
+        return periods
 
     def _resolve_seasonal_factory(
         self, uid: Union[str, int], default_factory: Callable[[int], Any]
