@@ -75,6 +75,13 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             periods = detect_seasonal_periods(
                 series, **(self.seasonal_detection_params or {})
             )
+            if not periods:
+                raise ValueError(
+                    f"Could not automatically detect seasonal periods for unique_id {uid!r}. "
+                    f"Consider passing an explicit 'fallback' in 'seasonal_detection_params' "
+                    f"or a dictionary mapping in 'season_length' "
+                    f"(e.g., season_length={{{uid!r}: 7}} or season_length={{{uid!r}: [7, 30]}})."
+                )
         elif isinstance(configured_periods, int) and not isinstance(
             configured_periods, bool
         ):
@@ -117,9 +124,23 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             selected_lag, _, _ = select_pami_lag(
                 residual_part, **(self.pami_params or {})
             )
+
+            if selected_lag is None or (
+                isinstance(selected_lag, (list, tuple, np.ndarray))
+                and len(selected_lag) == 0
+            ):
+                raise ValueError(
+                    f"Could not automatically select residual lag via PAMI for unique_id {uid!r}. "
+                    f"Consider specifying explicit lags or a dictionary mapping in 'nlags' "
+                    f"(e.g., nlags={{{uid!r}: 1}} or nlags={{{uid!r}: [1, 2, 3]}}), "
+                    f"or adjusting 'pami_params'."
+                )
+
             if isinstance(selected_lag, int):
                 return [max(selected_lag, 1)]
+
             return list(selected_lag) or [1]
+
         if isinstance(configured_lags, int) and configured_lags > 0:
             return list(range(1, configured_lags + 1))
         if isinstance(configured_lags, list) and configured_lags:
