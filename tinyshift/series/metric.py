@@ -619,14 +619,15 @@ def tail_risk(
     models: List[str],
     id_col: str = "unique_id",
     target_col: str = "y",
-    cost_understock: Union[str, float] = 1.0,
-    cost_overstock: Union[str, float] = 1.0,
-    confidence_level: float = 0.95,
+    cost_understock: Union[str, float] = "cu",
+    cost_overstock: Union[str, float] = "co",
+    alpha: float = 0.05,
 ) -> pd.DataFrame:
-    """Calculate financial tail-risk metrics (VaR and CVaR) for multiple models.
+    """Calculate financial risk and tail-risk metrics for multiple models.
 
-    Computes Value at Risk (VaR) and Conditional Value at Risk (CVaR)
-    on item-time level losses using a vectorized approach.
+    Computes Expected Cost, Standard Deviation, Value at Risk (VaR),
+    Conditional Value at Risk (CVaR), and Worst Scenario on item-time
+    level losses using a vectorized approach.
 
     Parameters
     ----------
@@ -638,23 +639,20 @@ def tail_risk(
         Column name identifying unique series or group identifiers.
     target_col : str, default="y"
         Column name containing actual target values.
-    cost_understock : Union[str, float], default=1.0
+    cost_understock : Union[str, float], default="cu"
         The unit cost of understocking (c_u). Can be a scalar or a column name.
-    cost_overstock : Union[str, float], default=1.0
+    cost_overstock : Union[str, float], default="co"
         The unit cost of overstocking (c_o). Can be a scalar or a column name.
-    confidence_level : float, default=0.95
-        The statistical confidence level used to define the tail cutoff percentile.
+    alpha : float, default=0.05
+        The significance level used to define the tail cutoff percentile.
+        The corresponding VaR quantile is evaluated at (1 - alpha).
 
     Returns
     -------
     pd.DataFrame
-        A DataFrame structured with `id_col`, `metric` label ('var' or 'cvar'),
-        and columns for each evaluated model containing their respective risk values.
-
-    Notes
-    -----
-    - VaR (Value at Risk) indicates the loss threshold at the specified confidence percentile.
-    - CVaR (Conditional Value at Risk) measures the expected average loss strictly exceeding VaR.
+        A DataFrame structured with `id_col`, `metric` label ('expected_cost',
+        'std_dev', 'var', 'cvar', 'worst_scenario'), and columns for each
+        evaluated model containing their respective values.
     """
     if not models:
         raise ValueError("The 'models' list cannot be empty.")
@@ -687,14 +685,21 @@ def tail_risk(
     losses_matrix = (understock * cu_arr) + (overstock * co_arr)
     loss_df = pd.DataFrame(losses_matrix, columns=models, index=df[id_col])
 
+    ec_results = []
+    std_results = []
     var_results = []
     cvar_results = []
+    worst_results = []
 
     grouped = loss_df.groupby(level=0, observed=True)
 
     for item_id, group in grouped:
+        ec_row = {id_col: item_id}
+        std_row = {id_col: item_id}
         var_row = {id_col: item_id}
         cvar_row = {id_col: item_id}
+        worst_row = {id_col: item_id}
+
         arr_group = group.to_numpy()
 
         for m_idx, model in enumerate(models):
@@ -702,25 +707,49 @@ def tail_risk(
             clean_losses = model_losses[~np.isnan(model_losses)]
 
             if clean_losses.size == 0:
+                ec_row[model] = np.nan
+                std_row[model] = np.nan
                 var_row[model] = np.nan
                 cvar_row[model] = np.nan
+                worst_row[model] = np.nan
                 continue
 
-            var_val = np.percentile(clean_losses, confidence_level * 100)
-            var_row[model] = var_val
+            ec_val = clean_losses.mean()
+            std_val = clean_losses.std(ddof=1) if clean_losses.size > 1 else 0.0
+
+            var_quantile = 1.0 - alpha
+            var_val = np.quantile(clean_losses, var_quantile, method="higher")
 
             tail_mask = clean_losses >= var_val
             cvar_val = clean_losses[tail_mask].mean() if tail_mask.any() else var_val
-            cvar_row[model] = cvar_val
+            worst_val = clean_losses.max()
 
+            ec_row[model] = round(float(ec_val), 2)
+            std_row[model] = round(float(std_val), 2)
+            var_row[model] = round(float(var_val), 2)
+            cvar_row[model] = round(float(cvar_val), 2)
+            worst_row[model] = round(float(worst_val), 2)
+
+        ec_results.append(ec_row)
+        std_results.append(std_row)
         var_results.append(var_row)
         cvar_results.append(cvar_row)
+        worst_results.append(worst_row)
+
+    df_ec = pd.DataFrame(ec_results)
+    df_ec.insert(1, "metric", "expected_cost")
+
+    df_std = pd.DataFrame(std_results)
+    df_std.insert(1, "metric", "std_dev")
 
     df_var = pd.DataFrame(var_results)
-    df_var.insert(1, "metric", "var")
+    df_var.insert(1, "metric", f"var{round(var_quantile * 100)}")
 
     df_cvar = pd.DataFrame(cvar_results)
-    df_cvar.insert(1, "metric", "cvar")
+    df_cvar.insert(1, "metric", f"cvar{round(var_quantile * 100)}")
 
-    res = pd.concat([df_var, df_cvar], ignore_index=True)
+    df_worst = pd.DataFrame(worst_results)
+    df_worst.insert(1, "metric", "worst_scenario")
+
+    res = pd.concat([df_ec, df_std, df_var, df_cvar, df_worst], ignore_index=True)
     return res
