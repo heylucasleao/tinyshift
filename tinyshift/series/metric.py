@@ -612,3 +612,115 @@ def economic_loss(
 
     res.insert(1, "metric", "economic_loss")
     return res
+
+
+def tail_risk(
+    df: pd.DataFrame,
+    models: List[str],
+    id_col: str = "unique_id",
+    target_col: str = "y",
+    cost_understock: Union[str, float] = 1.0,
+    cost_overstock: Union[str, float] = 1.0,
+    confidence_level: float = 0.95,
+) -> pd.DataFrame:
+    """Calculate financial tail-risk metrics (VaR and CVaR) for multiple models.
+
+    Computes Value at Risk (VaR) and Conditional Value at Risk (CVaR)
+    on item-time level losses using a vectorized approach.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Evaluation DataFrame containing ground-truth values and model forecasts.
+    models : List[str]
+        List of column names corresponding to the forecasting models to evaluate.
+    id_col : str, default="unique_id"
+        Column name identifying unique series or group identifiers.
+    target_col : str, default="y"
+        Column name containing actual target values.
+    cost_understock : Union[str, float], default=1.0
+        The unit cost of understocking (c_u). Can be a scalar or a column name.
+    cost_overstock : Union[str, float], default=1.0
+        The unit cost of overstocking (c_o). Can be a scalar or a column name.
+    confidence_level : float, default=0.95
+        The statistical confidence level used to define the tail cutoff percentile.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame structured with `id_col`, `metric` label ('var' or 'cvar'),
+        and columns for each evaluated model containing their respective risk values.
+
+    Notes
+    -----
+    - VaR (Value at Risk) indicates the loss threshold at the specified confidence percentile.
+    - CVaR (Conditional Value at Risk) measures the expected average loss strictly exceeding VaR.
+    """
+    if not models:
+        raise ValueError("The 'models' list cannot be empty.")
+    if not all(model in df.columns for model in models):
+        missing_models = [model for model in models if model not in df.columns]
+        raise ValueError(
+            f"The following model columns are missing from the DataFrame: {missing_models}"
+        )
+
+    y_true = df[target_col].to_numpy()
+
+    c_u = (
+        df[cost_understock].to_numpy()
+        if isinstance(cost_understock, str) and cost_understock in df.columns
+        else cost_understock
+    )
+    c_o = (
+        df[cost_overstock].to_numpy()
+        if isinstance(cost_overstock, str) and cost_overstock in df.columns
+        else cost_overstock
+    )
+
+    preds = df[models].to_numpy()
+    understock = np.maximum(0, y_true[:, None] - preds)
+    overstock = np.maximum(0, preds - y_true[:, None])
+
+    cu_arr = c_u[:, None] if isinstance(c_u, np.ndarray) else c_u
+    co_arr = c_o[:, None] if isinstance(c_o, np.ndarray) else c_o
+
+    losses_matrix = (understock * cu_arr) + (overstock * co_arr)
+    loss_df = pd.DataFrame(losses_matrix, columns=models, index=df[id_col])
+
+    var_results = []
+    cvar_results = []
+
+    grouped = loss_df.groupby(level=0, observed=True)
+
+    for item_id, group in grouped:
+        var_row = {id_col: item_id}
+        cvar_row = {id_col: item_id}
+        arr_group = group.to_numpy()
+
+        for m_idx, model in enumerate(models):
+            model_losses = arr_group[:, m_idx]
+            clean_losses = model_losses[~np.isnan(model_losses)]
+
+            if clean_losses.size == 0:
+                var_row[model] = np.nan
+                cvar_row[model] = np.nan
+                continue
+
+            var_val = np.percentile(clean_losses, confidence_level * 100)
+            var_row[model] = var_val
+
+            tail_mask = clean_losses >= var_val
+            cvar_val = clean_losses[tail_mask].mean() if tail_mask.any() else var_val
+            cvar_row[model] = cvar_val
+
+        var_results.append(var_row)
+        cvar_results.append(cvar_row)
+
+    df_var = pd.DataFrame(var_results)
+    df_var.insert(1, "metric", "var")
+
+    df_cvar = pd.DataFrame(cvar_results)
+    df_cvar.insert(1, "metric", "cvar")
+
+    res = pd.concat([df_var, df_cvar], ignore_index=True)
+    return res
