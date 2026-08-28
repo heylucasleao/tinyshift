@@ -7,11 +7,12 @@ import numpy as np
 import pandas as pd
 from scipy.stats import nbinom
 from scipy.optimize import minimize
-from mlforecast import MLForecast
 from typing import Dict, Union, Any, Tuple
+from tinyshift.utils.imports import requires_extra
+from sklearn.base import BaseEstimator, RegressorMixin
 
 
-class TwoStageForecasterWrapper:
+class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     """Two-stage probabilistic forecasting wrapper using MLForecast and Negative Binomial distribution.
 
     This model isolates the conditional expectation (lambda_t) using standard MLForecast regressors
@@ -43,10 +44,8 @@ class TwoStageForecasterWrapper:
         An un-fitted or fitted MLForecast instance configured with a single underlying regressor.
     """
 
-    def __init__(self, fcst: MLForecast):
+    def __init__(self, fcst: Any):
         self.fcst = fcst
-        self.r_dict = {}
-        self.r_fallback = 1.0
 
     @property
     def model(self):
@@ -251,6 +250,7 @@ class TwoStageForecasterWrapper:
                 f"or dict mapping IDs or (ID, Time) tuples to values. Received: {type(cost_input)}"
             )
 
+    @requires_extra("series")
     def fit(
         self,
         df_train: pd.DataFrame,
@@ -290,6 +290,7 @@ class TwoStageForecasterWrapper:
         self : TwoStageForecasterWrapper
             Fitted instance of the TwoStageForecasterWrapper class.
         """
+
         self.id_col = id_col
         self.time_col = time_col
         self.target_col = target_col
@@ -327,17 +328,18 @@ class TwoStageForecasterWrapper:
         df_prep["lambda_t"] = self.model.predict(X_train)
 
         # Fit dispersion parameter per series via MLE
-        self.r_dict = {}
+        self.r_dict_ = {}
         for uid, group in df_prep.groupby(id_col):
             y_obs = group[target_col].values
             lambdas = group["lambda_t"].values
-            self.r_dict[uid] = self._estimate_r(y_obs, lambdas)
+            self.r_dict_[uid] = self._estimate_r(y_obs, lambdas)
 
         # Fallback value for unseen series during inference
-        self.r_fallback = float(np.median(list(self.r_dict.values())))
+        self.r_fallback_ = float(np.median(list(self.r_dict_.values())))
 
         return self
 
+    @requires_extra("series")
     def predict(
         self,
         h: int,
@@ -374,7 +376,7 @@ class TwoStageForecasterWrapper:
         model_key = next(iter(self.fcst.models_.keys()))
         df_pred = df_pred.rename(columns={model_key: "lambda_t"})
         df_pred["r_dispersion"] = (
-            df_pred[self.id_col].map(self.r_dict).fillna(self.r_fallback)
+            df_pred[self.id_col].map(self.r_dict_).fillna(self.r_fallback_)
         )
 
         for q in sorted(quantiles):
@@ -383,6 +385,7 @@ class TwoStageForecasterWrapper:
 
         return df_pred
 
+    @requires_extra("series")
     def optimize(
         self,
         h: int,
@@ -437,6 +440,7 @@ class TwoStageForecasterWrapper:
 
         return df_out
 
+    @requires_extra("series")
     def pmf(
         self,
         h: int,
@@ -478,6 +482,7 @@ class TwoStageForecasterWrapper:
 
         return df_out
 
+    @requires_extra("series")
     def marginal_cost(
         self,
         h: int,
