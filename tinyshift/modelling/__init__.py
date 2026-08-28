@@ -8,5 +8,5 @@ from .residualizer import FeatureResidualizer
 from .scaler import RobustGaussianScaler
 from .dtl import DTLWrapper
 from .dmstl import DMSTLWrapper
-from .twostep import TwoStepForecasterWrapper, TwoStepForecasterEvaluator
+from .twostage import TwoStageForecasterWrapper, TwoStageForecasterEvaluator
 from .ts_features import *

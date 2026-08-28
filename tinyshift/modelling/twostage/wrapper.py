@@ -11,8 +11,8 @@ from mlforecast import MLForecast
 from typing import Dict, Union, Any, Tuple
 
 
-class TwoStepForecasterWrapper:
-    """Two-step probabilistic forecasting wrapper using MLForecast and Negative Binomial distribution.
+class TwoStageForecasterWrapper:
+    """Two-stage probabilistic forecasting wrapper using MLForecast and Negative Binomial distribution.
 
     This model isolates the conditional expectation (lambda_t) using standard MLForecast regressors
     and fits a per-series dispersion parameter (r) via Maximum Likelihood Estimation (MLE).
@@ -259,7 +259,7 @@ class TwoStepForecasterWrapper:
         target_col: str = "y",
         static_features: list = None,
         gamma: float = None,
-    ) -> "TwoStepForecasterWrapper":
+    ) -> "TwoStageForecasterWrapper":
         """Fits the underlying MLForecast model and optimizes per-series dispersion parameters.
 
         Process
