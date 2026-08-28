@@ -67,7 +67,10 @@ class ISSMForecastWrapper:
         return next(iter(self.fcst.models_.values()))
 
     def _nbinom_log_likelihood(
-        self, params: list, y: np.ndarray, lambda_t: np.ndarray
+        self,
+        params: list,
+        y: np.ndarray,
+        lambda_t: np.ndarray,
     ) -> float:
         """Computes the negative log-likelihood of the Negative Binomial distribution.
 
@@ -104,7 +107,11 @@ class ISSMForecastWrapper:
 
         return -np.sum(log_pdf)
 
-    def _estimate_r(self, y_obs: np.ndarray, lambdas: np.ndarray) -> float:
+    def _estimate_r(
+        self,
+        y_obs: np.ndarray,
+        lambdas: np.ndarray,
+    ) -> float:
         """Internal helper to estimate the dispersion parameter (r) via Maximum Likelihood Estimation.
 
         Process
@@ -135,7 +142,10 @@ class ISSMForecastWrapper:
         return float(res.x[0])
 
     def _compute_time_decay_weights(
-        self, df: pd.DataFrame, time_col: str = "ds", gamma: float = 0.5
+        self,
+        df: pd.DataFrame,
+        time_col: str = "ds",
+        gamma: float = 0.5,
     ) -> np.ndarray:
         """Generates an exponential time-decay weight vector based on date recency.
 
@@ -168,7 +178,10 @@ class ISSMForecastWrapper:
         return weights
 
     @staticmethod
-    def _compute_quantile(df: pd.DataFrame, target_q: float) -> np.ndarray:
+    def _compute_quantile(
+        df: pd.DataFrame,
+        target_q: float,
+    ) -> np.ndarray:
         """Computes discrete integer quantile projections for a target probability.
 
         Parameters
@@ -186,7 +199,11 @@ class ISSMForecastWrapper:
         p_param = df["r_dispersion"] / (df["r_dispersion"] + df["lambda_t"])
         return np.ceil(nbinom.ppf(target_q, df["r_dispersion"], p_param)).astype(int)
 
-    def _compute_critical_quantile(self, cu: np.ndarray, co: np.ndarray) -> np.ndarray:
+    def _compute_critical_quantile(
+        self,
+        cu: np.ndarray,
+        co: np.ndarray,
+    ) -> np.ndarray:
         """Computes the critical quantile q_star = c_u / (c_u + c_o) in-place safely."""
         denom = cu + co
         out = np.empty_like(denom)
@@ -399,9 +416,7 @@ class ISSMForecastWrapper:
         critical_fractile = self._compute_critical_quantile(cu=cu_arr, co=co_arr)
 
         df_out["critical_fractile"] = critical_fractile
-        df_out["optimal_reorder_qty"] = self._compute_quantile(
-            df_out, target_q=critical_fractile
-        )
+        df_out["y_optimal"] = self._compute_quantile(df_out, target_q=critical_fractile)
 
         return df_out
 
