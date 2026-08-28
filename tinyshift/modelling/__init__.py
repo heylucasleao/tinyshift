@@ -8,5 +8,5 @@ from .residualizer import FeatureResidualizer
 from .scaler import RobustGaussianScaler
 from .dtl import DTLWrapper
 from .dmstl import DMSTLWrapper
-from .issm import ISSMForecastWrapper
+from .issm.issm import ISSMForecastWrapper
 from .ts_features import *
