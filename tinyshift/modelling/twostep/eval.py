@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 
-class ISSMForecastEvaluator:
+class TwoStepForecasterEvaluator:
     """Evaluator utility for probabilistic quantile forecasts."""
 
     @staticmethod

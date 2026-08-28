@@ -11,8 +11,8 @@ from mlforecast import MLForecast
 from typing import Dict, Union, Any, Tuple
 
 
-class ISSMForecastWrapper:
-    """Intermittent State-Space Model (ISSM) wrapper using MLForecast and Negative Binomial distribution.
+class TwoStepForecasterWrapper:
+    """Two-step probabilistic forecasting wrapper using MLForecast and Negative Binomial distribution.
 
     This model isolates the conditional expectation (lambda_t) using standard MLForecast regressors
     and fits a per-series dispersion parameter (r) via Maximum Likelihood Estimation (MLE).
@@ -23,7 +23,8 @@ class ISSMForecastWrapper:
     - **Intermittent Demand (Zero-Inflated)**: Highly recommended. Handles frequent zeros efficiently.
     - **Erratic / Lumpy Demand**: Highly recommended. Captures high variance (variance > mean) via 'r'.
     - **Smooth / Low-Variance Demand**: Supported. As r increases, it naturally converges to a Poisson regime.
-    - **Continuous / High-Volume Demand**: Not recommended.
+    - **Continuous / High-Volume Demand**: Not recommended. High-volume series with high r values will automatically fall back
+      or converge toward a Poisson regime (bounded by r = 50).
 
     References & Architecture
     -------------------------

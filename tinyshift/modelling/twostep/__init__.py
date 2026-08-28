@@ -3,5 +3,5 @@
 # Licensed under the MIT License
 
 
-from .eval import ISSMForecastEvaluator
-from .issm import ISSMForecastWrapper
+from .eval import TwoStepForecasterEvaluator
+from .twostep import TwoStepForecasterWrapper
