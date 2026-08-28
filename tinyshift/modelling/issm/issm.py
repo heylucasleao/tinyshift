@@ -385,8 +385,12 @@ class ISSMForecastWrapper:
     def optimize(
         self,
         h: int,
-        underage_cost: Union[str, float, int, Dict[Union[str, Tuple[str, Any]], float]],
-        overage_cost: Union[str, float, int, Dict[Union[str, Tuple[str, Any]], float]],
+        underage_cost: Union[
+            str, float, int, Dict[Union[str, Tuple[str, Any]], float]
+        ] = "cu",
+        overage_cost: Union[
+            str, float, int, Dict[Union[str, Tuple[str, Any]], float]
+        ] = "co",
         X_df: pd.DataFrame = None,
         ratio_col: str = "critical_ratio",
         output_col: str = "y_optimal",
@@ -432,7 +436,12 @@ class ISSMForecastWrapper:
 
         return df_out
 
-    def pmf(self, h: int, max_k: int = 10, X_df: pd.DataFrame = None) -> pd.DataFrame:
+    def pmf(
+        self,
+        h: int,
+        max_k: int = 10,
+        X_df: pd.DataFrame = None,
+    ) -> pd.DataFrame:
         """Generates exact discrete probabilities P(Y = k) for k = 0, 1, ..., max_k over horizon h.
 
         Parameters
@@ -465,5 +474,84 @@ class ISSMForecastWrapper:
             df_out[f"P(Y={k})"] = pmf_matrix[:, k]
 
         df_out[f"P(Y>{max_k})"] = 1.0 - pmf_matrix.sum(axis=1)
+
+        return df_out
+
+    def marginal_cost(
+        self,
+        h: int,
+        underage_cost: Union[
+            str, float, int, Dict[Union[str, Tuple[str, Any]], float]
+        ] = "cu",
+        overage_cost: Union[
+            str, float, int, Dict[Union[str, Tuple[str, Any]], float]
+        ] = "co",
+        max_k: int = 10,
+        X_df: pd.DataFrame = None,
+    ) -> pd.DataFrame:
+        """Calculates the expected marginal cost for each additional inventory unit k (from 0 to max_k).
+
+        Process
+        -------
+        1. Extracts underage and overage cost arrays using the internal cost extraction utility.
+        2. Leverages the internal `pmf` method to obtain exact discrete probabilities P(Y = k).
+        3. Computes the cumulative distribution function (CDF) to derive P(Y < k) and P(Y >= k).
+        4. Applies the discrete Newsvendor marginal cost derivative:
+           MC(k) = c_o * P(Y >= k) - c_u * P(Y < k)
+
+        Parameters
+        ----------
+        h : int
+            Forecast horizon.
+        underage_cost : str, float, int, or dict
+            Unit cost of unfulfilled demand (shortage/stockout cost). Can be a scalar,
+            column name, or dictionary mapping IDs or (ID, Time) tuples.
+        overage_cost : str, float, int, or dict
+            Unit cost of holding excess inventory (holding cost). Accepts same formats as underage_cost.
+        max_k : int, default=10
+            Maximum number of units to evaluate individual marginal costs for.
+        X_df : pandas.DataFrame, optional
+            Exogenous features for the forecast horizon.
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame containing id_col, time_col, lambda_t, r_dispersion, and expected marginal costs `MC(k=0)` through `MC(k=max_k)`.
+
+        Notes
+        -----
+        - Positive values represent an expected net monetary gain (the benefit of avoiding a stockout outweighs the holding risk).
+        - Negative values represent an expected net monetary loss or cost increase (the risk of overstocking outweighs the shortage benefit).
+        """
+        n_rows = len(X_df) if X_df is not None else len(self.fcst.predict(h=h))
+        cu_arr = self._extract_cost_array(
+            X_df,
+            underage_cost,
+            self.id_col,
+            self.time_col,
+            n_rows,
+        )
+        co_arr = self._extract_cost_array(
+            X_df,
+            overage_cost,
+            self.id_col,
+            self.time_col,
+            n_rows,
+        )
+
+        df_pmf = self.pmf(h=h, max_k=max_k, X_df=X_df)
+
+        k_range = np.arange(0, max_k + 1)
+        df_out = df_pmf[[self.id_col, self.time_col, "lambda_t", "r_dispersion"]].copy()
+
+        pmf_cols = [f"P(Y={k})" for k in k_range]
+        pmf_matrix = df_pmf[pmf_cols].to_numpy()
+        cdf_matrix = np.cumsum(pmf_matrix, axis=1)
+
+        for i, k in enumerate(k_range):
+            p_less_than_k = cdf_matrix[:, i - 1] if i > 0 else np.zeros(n_rows)
+            p_greater_equal_k = 1.0 - p_less_than_k
+
+            df_out[f"MC(k={k})"] = co_arr * p_greater_equal_k - cu_arr * p_less_than_k
 
         return df_out
