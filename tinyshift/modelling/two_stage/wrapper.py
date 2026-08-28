@@ -15,9 +15,10 @@ from sklearn.base import BaseEstimator, RegressorMixin
 class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     """Two-stage probabilistic forecasting wrapper using MLForecast and Negative Binomial distribution.
 
-    This model isolates the conditional expectation (lambda_t) using standard MLForecast regressors
-    and fits a per-series dispersion parameter (r) via Maximum Likelihood Estimation (MLE).
-    It projects inventory quantiles via the inverse CDF (PPF) of the Negative Binomial distribution.
+    This model decouples conditional expectation from dispersion:
+        1. Employs `MLForecast` regressors (e.g., LightGBM) with optional exponential time-decay weighting to forecast conditional expectation (lambda_t).
+        2. Calibrates a per-series dispersion parameter (r) via Maximum Likelihood Estimation (MLE) on out-of-sample temporal cross-validation residuals.
+        3. Projects discrete inventory quantiles, exact probability mass functions (PMF), and Newsvendor optimal stock levels via the inverse CDF (PPF) of the Negative Binomial distribution.
 
     Demand Regime Applicability
     ---------------------------
@@ -27,16 +28,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     - **Continuous / High-Volume Demand**: Not recommended. High-volume series with high r values will automatically fall back
       or converge toward a Poisson regime (bounded by r = 50).
 
-    References & Architecture
-    -------------------------
-    - **Theoretical Framework**: Inspired by Lokad's white-boxed ISSM approach for intermittent
-      demand and zero-inflated sales (M5 Forecasting Competition, 2020).
-      Paper reference: "A white-boxed ISSM approach to estimate uncertainty distributions of Walmart sales".
-    - **Implementation Variant**: Unlike the pure state-space formulation (which uses ETS(A,N,M) state updates
-      and Monte Carlo simulation), this wrapper decouples expectation from dispersion:
-        1. Employs `MLForecast` regressors (e.g., LightGBM) to forecast conditional expectation (lambda_t).
-        2. Fits a per-series dispersion parameter (r) via Negative Binomial MLE on in-sample residuals.
-        3. Derives discrete inventory quantiles via inverse CDF (PPF) projection.
+    Architecture & Key Features
+    ---------------------------
+    - **Decoupled Two-Stage Design**: Separates point expectation forecasting from variance and tail modeling.
+    - **Out-of-Sample Dispersion Calibration**: Optimizes per-series dispersion (r) using cross-validation residuals, backed by a robust global median fallback for cold-start series.
+    - **Time-Decay Recency Weighting**: Supports exponential time-decay scaling (`gamma`) to prioritize recent historical dynamics during base model fitting.
+    - **Inventory Optimization**: Built-in native support for Newsvendor critical fractile calculations and discrete marginal cost evaluation.
 
     Parameters
     ----------
@@ -326,7 +323,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         h: int = 14,
         n_windows: int = 10,
         step_size: Optional[int] = None,
-        refit: Union[bool, int] = False,
+        refit: Union[bool, int] = True,
     ) -> "TwoStageForecasterWrapper":
         """Fits the underlying MLForecast model and optimizes per-series dispersion parameters.
 
