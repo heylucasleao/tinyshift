@@ -3,5 +3,5 @@
 # Licensed under the MIT License
 
 
-from .eval import TwoStageForecasterEvaluator
+from .eval import FirstStageForecasterEvaluator, TwoStageForecasterEvaluator
 from .wrapper import TwoStageForecasterWrapper

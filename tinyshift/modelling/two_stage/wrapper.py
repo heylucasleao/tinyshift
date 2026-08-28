@@ -344,7 +344,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self,
         h: int,
         X_df: pd.DataFrame = None,
-        quantiles: list = [0.50, 0.67, 0.95, 0.99],
+        quantiles: list = [0.05, 0.50, 0.95],
     ) -> pd.DataFrame:
         """Generates out-of-sample probabilistic forecast quantiles using the Negative Binomial CDF.
 
@@ -361,7 +361,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             Forecast horizon.
         X_df : pandas.DataFrame, optional
             Exogenous features for the forecast horizon.
-        quantiles : list of float, default=[0.50, 0.67, 0.95, 0.99]
+        quantiles : list of float, default=[0.05, 0.50, 0.95]
             Target quantile values.
 
         Returns
