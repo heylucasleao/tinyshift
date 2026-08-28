@@ -259,7 +259,7 @@ class TwoStepForecasterWrapper:
         target_col: str = "y",
         static_features: list = None,
         gamma: float = None,
-    ) -> "ISSMForecastWrapper":
+    ) -> "TwoStepForecasterWrapper":
         """Fits the underlying MLForecast model and optimizes per-series dispersion parameters.
 
         Process
