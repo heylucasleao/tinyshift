@@ -535,8 +535,8 @@ def economic_loss(
     models: List[str],
     id_col: str = "unique_id",
     target_col: str = "y",
-    cost_understock: Union[str, float] = "cu",
-    cost_overstock: Union[str, float] = "co",
+    underage_cost: Union[str, float] = "cu",
+    overage_cost: Union[str, float] = "co",
 ) -> pd.DataFrame:
     """Calculate Total Economic Loss (financial cost in currency) for multiple models.
 
@@ -555,9 +555,9 @@ def economic_loss(
         Column name identifying unique series or group identifiers.
     target_col : str, default="y"
         Column name containing actual target values.
-    cost_understock : str or float, default="cu"
+    underage_cost : str or float, default="cu"
         Column name or fixed scalar value representing the unit cost of stockout.
-    cost_overstock : str or float, default="co"
+    overage_cost : str or float, default="co"
         Column name or fixed scalar value representing the unit cost of excess.
 
     Returns
@@ -595,14 +595,14 @@ def economic_loss(
         )
 
     cu = (
-        df[cost_understock]
-        if isinstance(cost_understock, str) and cost_understock in df.columns
-        else cost_understock
+        df[underage_cost]
+        if isinstance(underage_cost, str) and underage_cost in df.columns
+        else underage_cost
     )
     co = (
-        df[cost_overstock]
-        if isinstance(cost_overstock, str) and cost_overstock in df.columns
-        else cost_overstock
+        df[overage_cost]
+        if isinstance(overage_cost, str) and overage_cost in df.columns
+        else overage_cost
     )
 
     understock = df[models].rsub(df[target_col], axis=0).clip(lower=0)
@@ -619,8 +619,8 @@ def tail_risk(
     models: List[str],
     id_col: str = "unique_id",
     target_col: str = "y",
-    cost_understock: Union[str, float] = "cu",
-    cost_overstock: Union[str, float] = "co",
+    underage_cost: Union[str, float] = "cu",
+    overage_cost: Union[str, float] = "co",
     alpha: float = 0.05,
 ) -> pd.DataFrame:
     """Calculate financial risk and tail-risk metrics for multiple models.
@@ -639,9 +639,9 @@ def tail_risk(
         Column name identifying unique series or group identifiers.
     target_col : str, default="y"
         Column name containing actual target values.
-    cost_understock : Union[str, float], default="cu"
+    underage_cost : Union[str, float], default="cu"
         The unit cost of understocking (c_u). Can be a scalar or a column name.
-    cost_overstock : Union[str, float], default="co"
+    overage_cost : Union[str, float], default="co"
         The unit cost of overstocking (c_o). Can be a scalar or a column name.
     alpha : float, default=0.05
         The significance level used to define the tail cutoff percentile.
@@ -665,14 +665,14 @@ def tail_risk(
     y_true = df[target_col].to_numpy()
 
     c_u = (
-        df[cost_understock].to_numpy()
-        if isinstance(cost_understock, str) and cost_understock in df.columns
-        else cost_understock
+        df[underage_cost].to_numpy()
+        if isinstance(underage_cost, str) and underage_cost in df.columns
+        else underage_cost
     )
     c_o = (
-        df[cost_overstock].to_numpy()
-        if isinstance(cost_overstock, str) and cost_overstock in df.columns
-        else cost_overstock
+        df[overage_cost].to_numpy()
+        if isinstance(overage_cost, str) and overage_cost in df.columns
+        else overage_cost
     )
 
     preds = df[models].to_numpy()

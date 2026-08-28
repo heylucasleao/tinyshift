@@ -380,8 +380,8 @@ class ISSMForecastWrapper:
     def optimize(
         self,
         h: int,
-        stockout_cost: Union[str, float, int, Dict[Union[str, Tuple[str, Any]], float]],
-        holding_cost: Union[str, float, int, Dict[Union[str, Tuple[str, Any]], float]],
+        underage_cost: Union[str, float, int, Dict[Union[str, Tuple[str, Any]], float]],
+        overage_cost: Union[str, float, int, Dict[Union[str, Tuple[str, Any]], float]],
         X_df: pd.DataFrame = None,
     ) -> pd.DataFrame:
         """Generates forecasts for horizon h and injects the optimal reorder quantity via Critical Fractile.
@@ -390,11 +390,11 @@ class ISSMForecastWrapper:
         ----------
         h : int
             Forecast horizon.
-        stockout_cost : str, float, int, or dict
+        underage_cost : str, float, int, or dict
             Unit cost of unfulfilled demand (shortage/stockout cost). Can be a scalar,
             column name, or dictionary mapping IDs or (ID, Time) tuples.
-        holding_cost : str, float, int, or dict
-            Unit cost of holding excess inventory (holding cost). Accepts same formats as stockout_cost.
+        overage_cost : str, float, int, or dict
+            Unit cost of holding excess inventory (holding cost). Accepts same formats as underage_cost.
         X_df : pd.DataFrame, optional
             Exogenous features for the forecast horizon.
 
@@ -407,10 +407,10 @@ class ISSMForecastWrapper:
         n_rows = len(df_out)
 
         cu_arr = self._extract_cost_array(
-            df_out, stockout_cost, self.id_col, self.time_col, n_rows
+            df_out, underage_cost, self.id_col, self.time_col, n_rows
         )
         co_arr = self._extract_cost_array(
-            df_out, holding_cost, self.id_col, self.time_col, n_rows
+            df_out, overage_cost, self.id_col, self.time_col, n_rows
         )
 
         critical_fractile = self._compute_critical_quantile(cu=cu_arr, co=co_arr)
