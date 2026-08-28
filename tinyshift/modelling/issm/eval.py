@@ -2,7 +2,6 @@
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-
 import numpy as np
 import pandas as pd
 
@@ -45,7 +44,7 @@ class ISSMForecastEvaluator:
         Returns
         -------
         pandas.DataFrame
-            Summary dataframe containing Pinball Loss, Target Coverage, and Empirical Coverage.
+            Summary dataframe containing Pinball Loss, Target Coverage, Empirical Coverage and Coverage Gap.
         """
         results = {}
 
@@ -55,7 +54,9 @@ class ISSMForecastEvaluator:
             )
 
         for q in sorted(quantiles):
-            col_q = f"q_{int(q * 100)}"
+            q_int = int(round(q * 100))
+            col_q = f"q_{q_int}"
+
             if col_q not in df_res.columns:
                 continue
 
@@ -65,12 +66,14 @@ class ISSMForecastEvaluator:
                 quantile=q,
             )
 
-            empirical_coverage = (df_res[target_col] <= df_res[col_q]).mean()
+            empirical_coverage = float((df_res[target_col] <= df_res[col_q]).mean())
+            coverage_gap = empirical_coverage - q
 
             results[col_q] = {
                 "Pinball Loss": round(loss, 4),
-                "Target Coverage": f"{int(q * 100)}%",
-                "Empirical Coverage": f"{empirical_coverage * 100:.1f}%",
+                "Target Coverage": q,
+                "Empirical Coverage": round(empirical_coverage, 4),
+                "Coverage Gap": round(coverage_gap, 4),
             }
 
         return pd.DataFrame(results).T
