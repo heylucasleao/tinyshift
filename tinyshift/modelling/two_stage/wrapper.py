@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import nbinom
 from scipy.optimize import minimize
-from typing import Dict, Union, Any, Tuple, Optional
+from typing import Dict, Union, Any, Tuple, Optional, List
 from tinyshift.utils.imports import requires_extra
 from sklearn.base import BaseEstimator, RegressorMixin
 
@@ -250,6 +250,70 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
                 f"or dict mapping IDs or (ID, Time) tuples to values. Received: {type(cost_input)}"
             )
 
+    def _calibrate_dispersion_cv(
+        self,
+        df: pd.DataFrame,
+        h: int,
+        n_windows: int,
+        step_size: Optional[int],
+        refit: Union[bool, int],
+        fit_kwargs: Dict[str, Any],
+    ) -> Tuple[Dict[Any, float], float]:
+        """Perform temporal cross-validation and calibrate the dispersion parameter (r) via OOF residuals.
+
+        Returns
+        -------
+        Tuple[Dict[Any, float], float]
+            Dictionary mapping each series ID to its optimized r, and the global r_fallback.
+        """
+        cv_df = self.fcst.cross_validation(
+            df=df,
+            h=h,
+            n_windows=n_windows,
+            step_size=step_size,
+            refit=refit,
+            id_col=self.id_col,
+            time_col=self.time_col,
+            target_col=self.target_col,
+            static_features=self.static_features,
+            **fit_kwargs,
+        )
+        model_name = next(iter(self.fcst.models.keys()))
+
+        r_dict = {}
+        for uid, group in cv_df.groupby(self.id_col):
+            y_obs = group[self.target_col].to_numpy()
+            lambdas_oof = np.maximum(group[model_name].to_numpy(), 1e-6)
+            r_dict[uid] = self._estimate_r(y_obs, lambdas_oof)
+
+        valid_r = [v for v in r_dict.values() if np.isfinite(v)]
+        r_fallback = float(np.median(valid_r)) if valid_r else 1.0
+
+        return r_dict, r_fallback
+
+    def _fit_base_forecaster(
+        self,
+        df: pd.DataFrame,
+        fit_kwargs: Dict[str, Any],
+    ) -> List[str]:
+        """Fit the main estimator and extract the generated temporal features.
+
+        Returns
+        -------
+        List[str]
+            Ordered list of exogenous features/lags used by MLForecast.
+        """
+        self.fcst.fit(
+            df=df,
+            id_col=self.id_col,
+            time_col=self.time_col,
+            target_col=self.target_col,
+            static_features=self.static_features,
+            **fit_kwargs,
+        )
+
+        return self.fcst.ts.features_order_
+
     @requires_extra("series")
     def fit(
         self,
@@ -260,7 +324,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         static_features: list = None,
         gamma: float = None,
         h: int = 14,
-        n_windows: int = 3,
+        n_windows: int = 10,
         step_size: Optional[int] = None,
         refit: Union[bool, int] = False,
     ) -> "TwoStageForecasterWrapper":
@@ -298,7 +362,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.id_col = id_col
         self.time_col = time_col
         self.target_col = target_col
-        static_features = static_features or []
+        self.static_features = static_features or []
 
         df_fit = df_train.copy()
 
@@ -310,39 +374,14 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             df_fit["_temp_weight"] = weights_array
             fit_kwargs["weight_col"] = "_temp_weight"
 
-        cv_df = self.fcst.cross_validation(
+        self.r_dict_, self.r_fallback_ = self._calibrate_dispersion_cv(
+            df_fit, h, n_windows, step_size, refit, fit_kwargs
+        )
+
+        self.exog_cols_ = self._fit_base_forecaster(
             df=df_fit,
-            h=h,
-            n_windows=n_windows,
-            step_size=step_size,
-            refit=refit,
-            id_col=id_col,
-            time_col=time_col,
-            target_col=target_col,
-            static_features=static_features,
-            **fit_kwargs,
+            fit_kwargs=fit_kwargs,
         )
-
-        model_name = next(iter(self.fcst.models.keys()))
-
-        self.r_dict_ = {}
-        for uid, group in cv_df.groupby(id_col):
-            y_obs = group[target_col].to_numpy()
-            lambdas_oof = np.maximum(group[model_name].to_numpy(), 1e-6)
-            self.r_dict_[uid] = self._estimate_r(y_obs, lambdas_oof)
-
-        self.r_fallback_ = float(np.median(list(self.r_dict_.values())))
-
-        self.fcst.fit(
-            df_fit,
-            id_col=id_col,
-            time_col=time_col,
-            target_col=target_col,
-            static_features=static_features,
-            **fit_kwargs,
-        )
-
-        self.exog_cols_ = self.fcst.ts.features_order_
 
         return self
 
