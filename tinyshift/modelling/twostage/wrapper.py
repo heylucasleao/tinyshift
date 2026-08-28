@@ -67,7 +67,7 @@ class TwoStageForecasterWrapper:
 
         if len(self.fcst.models_) > 1:
             raise ValueError(
-                f"ISSMForecast supports exactly 1 model, but found: {list(self.fcst.models_.keys())}"
+                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(self.fcst.models_.keys())}"
             )
 
         return next(iter(self.fcst.models_.values()))
@@ -287,8 +287,8 @@ class TwoStageForecasterWrapper:
 
         Returns
         -------
-        self : ISSMForecastWrapper
-            Fitted instance of the ISSMForecastWrapper class.
+        self : TwoStageForecasterWrapper
+            Fitted instance of the TwoStageForecasterWrapper class.
         """
         self.id_col = id_col
         self.time_col = time_col
