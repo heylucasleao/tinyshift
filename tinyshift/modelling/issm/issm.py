@@ -540,18 +540,21 @@ class ISSMForecastWrapper:
         )
 
         df_pmf = self.pmf(h=h, max_k=max_k, X_df=X_df)
-
-        k_range = np.arange(0, max_k + 1)
         df_out = df_pmf[[self.id_col, self.time_col, "lambda_t", "r_dispersion"]].copy()
 
+        k_range = np.arange(0, max_k + 1)
         pmf_cols = [f"P(Y={k})" for k in k_range]
         pmf_matrix = df_pmf[pmf_cols].to_numpy()
         cdf_matrix = np.cumsum(pmf_matrix, axis=1)
 
-        for i, k in enumerate(k_range):
-            p_less_than_k = cdf_matrix[:, i - 1] if i > 0 else np.zeros(n_rows)
-            p_greater_equal_k = 1.0 - p_less_than_k
+        p_less_matrix = np.hstack([np.zeros((n_rows, 1)), cdf_matrix[:, :-1]])
+        p_greater_equal_matrix = 1.0 - p_less_matrix
 
-            df_out[f"MC(k={k})"] = co_arr * p_greater_equal_k - cu_arr * p_less_than_k
+        mc_matrix = (
+            co_arr[:, None] * p_greater_equal_matrix - cu_arr[:, None] * p_less_matrix
+        )
+
+        for i, k in enumerate(k_range):
+            df_out[f"MC(k={k})"] = mc_matrix[:, i]
 
         return df_out
