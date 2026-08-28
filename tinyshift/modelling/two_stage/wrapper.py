@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import nbinom
 from scipy.optimize import minimize
-from typing import Dict, Union, Any, Tuple
+from typing import Dict, Union, Any, Tuple, Optional
 from tinyshift.utils.imports import requires_extra
 from sklearn.base import BaseEstimator, RegressorMixin
 
@@ -259,6 +259,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         target_col: str = "y",
         static_features: list = None,
         gamma: float = None,
+        h: int = 14,
+        n_windows: int = 3,
+        step_size: Optional[int] = None,
+        refit: Union[bool, int] = False,
     ) -> "TwoStageForecasterWrapper":
         """Fits the underlying MLForecast model and optimizes per-series dispersion parameters.
 
@@ -306,6 +310,29 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             df_fit["_temp_weight"] = weights_array
             fit_kwargs["weight_col"] = "_temp_weight"
 
+        cv_df = self.fcst.cross_validation(
+            df=df_fit,
+            h=h,
+            n_windows=n_windows,
+            step_size=step_size,
+            refit=refit,
+            id_col=id_col,
+            time_col=time_col,
+            target_col=target_col,
+            static_features=static_features,
+            **fit_kwargs,
+        )
+
+        model_name = next(iter(self.fcst.models.keys()))
+
+        self.r_dict_ = {}
+        for uid, group in cv_df.groupby(id_col):
+            y_obs = group[target_col].to_numpy()
+            lambdas_oof = np.maximum(group[model_name].to_numpy(), 1e-6)
+            self.r_dict_[uid] = self._estimate_r(y_obs, lambdas_oof)
+
+        self.r_fallback_ = float(np.median(list(self.r_dict_.values())))
+
         self.fcst.fit(
             df_fit,
             id_col=id_col,
@@ -315,27 +342,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             **fit_kwargs,
         )
 
-        df_prep = self.fcst.preprocess(
-            df_train,
-            id_col=id_col,
-            time_col=time_col,
-            target_col=target_col,
-            static_features=static_features,
-        )
-
         self.exog_cols_ = self.fcst.ts.features_order_
-        X_train = df_prep[self.exog_cols_]
-        df_prep["lambda_t"] = self.model.predict(X_train)
-
-        # Fit dispersion parameter per series via MLE
-        self.r_dict_ = {}
-        for uid, group in df_prep.groupby(id_col):
-            y_obs = group[target_col].values
-            lambdas = group["lambda_t"].values
-            self.r_dict_[uid] = self._estimate_r(y_obs, lambdas)
-
-        # Fallback value for unseen series during inference
-        self.r_fallback_ = float(np.median(list(self.r_dict_.values())))
 
         return self
 
@@ -556,7 +563,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         p_greater_equal_matrix = 1.0 - p_less_matrix
 
         mc_matrix = (
-            co_arr[:, None] * p_greater_equal_matrix - cu_arr[:, None] * p_less_matrix
+            cu_arr[:, None] * p_greater_equal_matrix - co_arr[:, None] * p_less_matrix
         )
 
         df_out = df_pmf[[self.id_col, self.time_col, "lambda_t", "r_dispersion"]].copy()
