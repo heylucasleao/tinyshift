@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import nbinom
 from scipy.optimize import minimize
-from typing import Dict, Union, Any, Tuple
+from typing import Dict, Union, Any, Tuple, Optional, List
 from tinyshift.utils.imports import requires_extra
 from sklearn.base import BaseEstimator, RegressorMixin
 
@@ -15,9 +15,10 @@ from sklearn.base import BaseEstimator, RegressorMixin
 class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     """Two-stage probabilistic forecasting wrapper using MLForecast and Negative Binomial distribution.
 
-    This model isolates the conditional expectation (lambda_t) using standard MLForecast regressors
-    and fits a per-series dispersion parameter (r) via Maximum Likelihood Estimation (MLE).
-    It projects inventory quantiles via the inverse CDF (PPF) of the Negative Binomial distribution.
+    This model decouples conditional expectation from dispersion:
+        1. Employs `MLForecast` regressors (e.g., LightGBM) with optional exponential time-decay weighting to forecast conditional expectation (lambda_t).
+        2. Calibrates a per-series dispersion parameter (r) via Maximum Likelihood Estimation (MLE) on out-of-sample temporal cross-validation residuals.
+        3. Projects discrete inventory quantiles, exact probability mass functions (PMF), and Newsvendor optimal stock levels via the inverse CDF (PPF) of the Negative Binomial distribution.
 
     Demand Regime Applicability
     ---------------------------
@@ -27,16 +28,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     - **Continuous / High-Volume Demand**: Not recommended. High-volume series with high r values will automatically fall back
       or converge toward a Poisson regime (bounded by r = 50).
 
-    References & Architecture
-    -------------------------
-    - **Theoretical Framework**: Inspired by Lokad's white-boxed ISSM approach for intermittent
-      demand and zero-inflated sales (M5 Forecasting Competition, 2020).
-      Paper reference: "A white-boxed ISSM approach to estimate uncertainty distributions of Walmart sales".
-    - **Implementation Variant**: Unlike the pure state-space formulation (which uses ETS(A,N,M) state updates
-      and Monte Carlo simulation), this wrapper decouples expectation from dispersion:
-        1. Employs `MLForecast` regressors (e.g., LightGBM) to forecast conditional expectation (lambda_t).
-        2. Fits a per-series dispersion parameter (r) via Negative Binomial MLE on in-sample residuals.
-        3. Derives discrete inventory quantiles via inverse CDF (PPF) projection.
+    Architecture & Key Features
+    ---------------------------
+    - **Decoupled Two-Stage Design**: Separates point expectation forecasting from variance and tail modeling.
+    - **Out-of-Sample Dispersion Calibration**: Optimizes per-series dispersion (r) using cross-validation residuals, backed by a robust global median fallback for cold-start series.
+    - **Time-Decay Recency Weighting**: Supports exponential time-decay scaling (`gamma`) to prioritize recent historical dynamics during base model fitting.
+    - **Inventory Optimization**: Built-in native support for Newsvendor critical fractile calculations and discrete marginal cost evaluation.
 
     Parameters
     ----------
@@ -48,28 +45,35 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.fcst = fcst
 
     @property
-    def model(self):
-        """Extracts and validates the underlying trained estimator from the MLForecast container.
+    def model_name(self) -> str:
+        """Extracts the name/key of the underlying model from MLForecast."""
+        models_dict = getattr(self.fcst, "models_", None)
+        if not models_dict:
+            models_dict = getattr(self.fcst, "models", None)
 
-        Returns
-        -------
-        object
-            The single regression estimator stored inside MLForecast.
+        if not models_dict:
+            raise ValueError("The MLForecast object has no models configured.")
 
-        Raises
-        ------
-        ValueError
-            If MLForecast has not been fitted or contains multiple estimators.
-        """
-        if not hasattr(self.fcst, "models_") or not self.fcst.models_:
-            raise ValueError("The MLForecast object has not been fitted yet.")
-
-        if len(self.fcst.models_) > 1:
+        if len(models_dict) > 1:
             raise ValueError(
-                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(self.fcst.models_.keys())}"
+                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(models_dict.keys())}"
             )
 
-        return next(iter(self.fcst.models_.values()))
+        return next(iter(models_dict.keys()))
+
+    @property
+    def model(self):
+        """Extracts and validates the underlying trained estimator from the MLForecast container."""
+        models_dict = getattr(self.fcst, "models_", None)
+        if not models_dict:
+            raise ValueError("The MLForecast object has not been fitted yet.")
+
+        if len(models_dict) > 1:
+            raise ValueError(
+                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(models_dict.keys())}"
+            )
+
+        return next(iter(models_dict.values()))
 
     def _nbinom_log_likelihood(
         self,
@@ -250,6 +254,69 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
                 f"or dict mapping IDs or (ID, Time) tuples to values. Received: {type(cost_input)}"
             )
 
+    def _calibrate_dispersion_cv(
+        self,
+        df: pd.DataFrame,
+        h: int,
+        n_windows: int,
+        step_size: Optional[int],
+        refit: Union[bool, int],
+        fit_kwargs: Dict[str, Any],
+    ) -> Tuple[Dict[Any, float], float]:
+        """Perform temporal cross-validation and calibrate the dispersion parameter (r) via OOF residuals.
+
+        Returns
+        -------
+        Tuple[Dict[Any, float], float]
+            Dictionary mapping each series ID to its optimized r, and the global r_fallback.
+        """
+        cv_df = self.fcst.cross_validation(
+            df=df,
+            h=h,
+            n_windows=n_windows,
+            step_size=step_size,
+            refit=refit,
+            id_col=self.id_col,
+            time_col=self.time_col,
+            target_col=self.target_col,
+            static_features=self.static_features,
+            **fit_kwargs,
+        )
+
+        r_dict = {}
+        for uid, group in cv_df.groupby(self.id_col):
+            y_obs = group[self.target_col].to_numpy()
+            lambdas_oof = np.maximum(group[self.model_name].to_numpy(), 1e-6)
+            r_dict[uid] = self._estimate_r(y_obs, lambdas_oof)
+
+        valid_r = [v for v in r_dict.values() if np.isfinite(v)]
+        r_fallback = float(np.median(valid_r)) if valid_r else 1.0
+
+        return r_dict, r_fallback
+
+    def _fit_base_forecaster(
+        self,
+        df: pd.DataFrame,
+        fit_kwargs: Dict[str, Any],
+    ) -> List[str]:
+        """Fit the main estimator and extract the generated temporal features.
+
+        Returns
+        -------
+        List[str]
+            Ordered list of exogenous features/lags used by MLForecast.
+        """
+        self.fcst.fit(
+            df=df,
+            id_col=self.id_col,
+            time_col=self.time_col,
+            target_col=self.target_col,
+            static_features=self.static_features,
+            **fit_kwargs,
+        )
+
+        return self.fcst.ts.features_order_
+
     @requires_extra("series")
     def fit(
         self,
@@ -259,6 +326,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         target_col: str = "y",
         static_features: list = None,
         gamma: float = None,
+        h: int = 14,
+        n_windows: int = 10,
+        step_size: Optional[int] = None,
+        refit: Union[bool, int] = True,
     ) -> "TwoStageForecasterWrapper":
         """Fits the underlying MLForecast model and optimizes per-series dispersion parameters.
 
@@ -294,7 +365,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.id_col = id_col
         self.time_col = time_col
         self.target_col = target_col
-        static_features = static_features or []
+        self.static_features = static_features or []
 
         df_fit = df_train.copy()
 
@@ -306,36 +377,14 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             df_fit["_temp_weight"] = weights_array
             fit_kwargs["weight_col"] = "_temp_weight"
 
-        self.fcst.fit(
-            df_fit,
-            id_col=id_col,
-            time_col=time_col,
-            target_col=target_col,
-            static_features=static_features,
-            **fit_kwargs,
+        self.r_dict_, self.r_fallback_ = self._calibrate_dispersion_cv(
+            df_fit, h, n_windows, step_size, refit, fit_kwargs
         )
 
-        df_prep = self.fcst.preprocess(
-            df_train,
-            id_col=id_col,
-            time_col=time_col,
-            target_col=target_col,
-            static_features=static_features,
+        self.exog_cols_ = self._fit_base_forecaster(
+            df=df_fit,
+            fit_kwargs=fit_kwargs,
         )
-
-        self.exog_cols_ = self.fcst.ts.features_order_
-        X_train = df_prep[self.exog_cols_]
-        df_prep["lambda_t"] = self.model.predict(X_train)
-
-        # Fit dispersion parameter per series via MLE
-        self.r_dict_ = {}
-        for uid, group in df_prep.groupby(id_col):
-            y_obs = group[target_col].values
-            lambdas = group["lambda_t"].values
-            self.r_dict_[uid] = self._estimate_r(y_obs, lambdas)
-
-        # Fallback value for unseen series during inference
-        self.r_fallback_ = float(np.median(list(self.r_dict_.values())))
 
         return self
 
@@ -344,7 +393,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self,
         h: int,
         X_df: pd.DataFrame = None,
-        quantiles: list = [0.50, 0.67, 0.95, 0.99],
+        quantiles: list = [0.05, 0.50, 0.95],
     ) -> pd.DataFrame:
         """Generates out-of-sample probabilistic forecast quantiles using the Negative Binomial CDF.
 
@@ -361,7 +410,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             Forecast horizon.
         X_df : pandas.DataFrame, optional
             Exogenous features for the forecast horizon.
-        quantiles : list of float, default=[0.50, 0.67, 0.95, 0.99]
+        quantiles : list of float, default=[0.05, 0.50, 0.95]
             Target quantile values.
 
         Returns
@@ -373,8 +422,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         df_pred = self.fcst.predict(h=h, X_df=X_df)
 
-        model_key = next(iter(self.fcst.models_.keys()))
-        df_pred = df_pred.rename(columns={model_key: "lambda_t"})
+        df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
         df_pred["r_dispersion"] = (
             df_pred[self.id_col].map(self.r_dict_).fillna(self.r_fallback_)
         )
@@ -423,8 +471,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             DataFrame containing the predictions, critical ratio, and optimal reorder quantity.
         """
         excluded = {underage_cost, overage_cost}
-        pred_cols = [c for c in X_df.columns if c not in excluded]
-        n_rows = len(X_df)
+        pred_cols = (
+            [c for c in X_df.columns if c not in excluded] if X_df is not None else None
+        )
+        n_rows = len(X_df) if X_df is not None else h
         cu_arr = self._extract_cost_array(
             X_df, underage_cost, self.id_col, self.time_col, n_rows
         )
@@ -556,7 +606,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         p_greater_equal_matrix = 1.0 - p_less_matrix
 
         mc_matrix = (
-            co_arr[:, None] * p_greater_equal_matrix - cu_arr[:, None] * p_less_matrix
+            cu_arr[:, None] * p_greater_equal_matrix - co_arr[:, None] * p_less_matrix
         )
 
         df_out = df_pmf[[self.id_col, self.time_col, "lambda_t", "r_dispersion"]].copy()
