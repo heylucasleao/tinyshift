@@ -3,11 +3,11 @@
 # Licensed under the MIT License
 
 
-from typing import Dict, Union, Any, Tuple, Optional, List
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import minimize_scalar
 from scipy.stats import nbinom
 from sklearn.base import BaseEstimator, RegressorMixin
 
@@ -127,9 +127,9 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         Process
         -------
-        Uses L-BFGS-B optimization to minimize `_nbinom_log_likelihood` over the observed target
-        series and in-sample predictions. Parameter r is bounded between 1e-3 and 50.0 to prevent
-        collapse into thin-tailed distributions (Poisson) and ensure tail coverage.
+        Uses bounded scalar optimization to minimize `_nbinom_log_likelihood` over the observed
+        target series and in-sample predictions. Parameter r is bounded between 1e-3 and 50.0 to
+        prevent collapse into thin-tailed distributions (Poisson) and ensure tail coverage.
 
         Parameters
         ----------
@@ -143,21 +143,18 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         float
             Optimized per-series dispersion parameter r.
         """
-        res = minimize(
-            self._nbinom_log_likelihood,
-            x0=[1.0],
-            method="L-BFGS-B",
-            args=(y_obs, lambdas),
-            bounds=[(1e-3, 50.0)],
+        res = minimize_scalar(
+            lambda r: self._nbinom_log_likelihood([r], y_obs, lambdas),
+            bounds=(1e-3, 50.0),
+            method="bounded",
         )
         if (
             not res.success
             or not np.isfinite(res.fun)
-            or len(res.x) != 1
-            or not np.isfinite(res.x[0])
+            or not np.isfinite(res.x)
         ):
             raise RuntimeError(f"Dispersion optimization failed: {res.message}")
-        return float(res.x[0])
+        return float(res.x)
 
     def _compute_time_decay_weights(
         self,

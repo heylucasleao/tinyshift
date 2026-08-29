@@ -88,11 +88,13 @@ def test_estimate_r_raises_when_optimizer_fails(monkeypatch):
     class FailedResult:
         success = False
         message = "did not converge"
-        x = np.array([1.0])
+        x = 1.0
         fun = np.inf
 
     monkeypatch.setattr(
-        two_stage_wrapper_module, "minimize", lambda *args, **kwargs: FailedResult()
+        two_stage_wrapper_module,
+        "minimize_scalar",
+        lambda *args, **kwargs: FailedResult(),
     )
     wrapper = TwoStageForecasterWrapper(fcst=None)
 
