@@ -45,30 +45,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.fcst = fcst
 
     @property
-    def model(self):
-        """Extracts and validates the underlying trained estimator from the MLForecast container.
-
-        Returns
-        -------
-        object
-            The single regression estimator stored inside MLForecast.
-
-        Raises
-        ------
-        ValueError
-            If MLForecast has not been fitted or contains multiple estimators.
-        """
-        if not hasattr(self.fcst, "models_") or not self.fcst.models_:
-            raise ValueError("The MLForecast object has not been fitted yet.")
-
-        if len(self.fcst.models_) > 1:
-            raise ValueError(
-                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(self.fcst.models_.keys())}"
-            )
-
-        return next(iter(self.fcst.models_.values()))
-
-    @property
     def model_name(self) -> str:
         """Extracts the name/key of the underlying model from MLForecast."""
         models_dict = getattr(self.fcst, "models_", None)
@@ -80,10 +56,24 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         if len(models_dict) > 1:
             raise ValueError(
-                f"TwoStageForecasterWrapper supports only 1 model, but found multiple models: {list(models_dict.keys())}"
+                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(models_dict.keys())}"
             )
 
         return next(iter(models_dict.keys()))
+
+    @property
+    def model(self):
+        """Extracts and validates the underlying trained estimator from the MLForecast container."""
+        models_dict = getattr(self.fcst, "models_", None)
+        if not models_dict:
+            raise ValueError("The MLForecast object has not been fitted yet.")
+
+        if len(models_dict) > 1:
+            raise ValueError(
+                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(models_dict.keys())}"
+            )
+
+        return next(iter(models_dict.values()))
 
     def _nbinom_log_likelihood(
         self,

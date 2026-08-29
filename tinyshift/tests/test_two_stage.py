@@ -10,10 +10,10 @@ from tinyshift.modelling import TwoStageForecasterWrapper
 def sample_train_data():
     """Generates a pure pandas DataFrame for testing without extra exogenous columns."""
     np.random.seed(42)
-    dates = pd.date_range(start="2023-01-01", periods=100, freq="D")
+    dates = pd.date_range(start="2023-01-01", periods=200, freq="D")
     data = []
     for uid in ["A", "B"]:
-        y_vals = np.random.poisson(lam=3, size=100)
+        y_vals = np.random.poisson(lam=3, size=200)
         for ds, y in zip(dates, y_vals):
             data.append({"unique_id": uid, "ds": ds, "y": float(y)})
     return pd.DataFrame(data)
@@ -166,11 +166,9 @@ def test_fit_and_predict_with_x_df(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=fcst)
     wrapper.fit(sample_train_data)
 
-    # Se o teste exige passar um X_df explícito com colunas exógenas:
     future_df = fcst.make_future_dataframe(h=2)
-    future_df["exog_feat"] = 1.0  # Adicionando uma feature exógena válida
+    future_df["exog_feat"] = 1.0
 
-    # Caso o seu wrapper exija exógenas se X_df for fornecido:
     pred_df = wrapper.predict(h=2, X_df=future_df, quantiles=[0.5])
     assert isinstance(pred_df, pd.DataFrame)
     assert len(pred_df) == 4
@@ -186,7 +184,7 @@ def test_optimize_with_costs(sample_train_data_with_costs):
     future_df = fcst.make_future_dataframe(h=2)
     future_df["cu"] = 10.0
     future_df["co"] = 2.0
-    future_df["exog_feat"] = 1.0  # Evita o erro de exógenas ausentes no MLForecast
+    future_df["exog_feat"] = 1.0
 
     opt_df = wrapper.optimize(
         h=2, underage_cost="cu", overage_cost="co", X_df=future_df
@@ -205,9 +203,7 @@ def test_pmf_and_marginal_cost(sample_train_data):
 
     max_k = 4
     future_df = fcst.make_future_dataframe(h=2)
-    future_df["exog_feat"] = (
-        1.0  # Garante que X_df contenha exógenas para satisfazer o MLForecast
-    )
+    future_df["exog_feat"] = 1.0
 
     pmf_df = wrapper.pmf(h=2, max_k=max_k, X_df=future_df)
     assert isinstance(pmf_df, pd.DataFrame)
