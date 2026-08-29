@@ -255,8 +255,8 @@ def test_optimize_with_cost_dicts(sample_train_data):
     assert np.allclose(opt_df["critical_ratio"], expected)
 
 
-def test_pmf_and_marginal_cost(sample_train_data):
-    """Tests PMF and marginal cost calculations with proper exog features in X_df."""
+def test_pmf_and_marginal_benefit(sample_train_data):
+    """Tests PMF and marginal benefit calculations with proper exog features in X_df."""
     base_model = LinearRegression()
     fcst = MLForecast(models=[base_model], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst)
@@ -272,11 +272,11 @@ def test_pmf_and_marginal_cost(sample_train_data):
 
     future_df["cu"] = 10.0
     future_df["co"] = 2.0
-    mc_df = wrapper.marginal_cost(
+    mb_df = wrapper.marginal_benefit(
         h=2, underage_cost="cu", overage_cost="co", max_k=max_k, X_df=future_df
     )
-    assert isinstance(mc_df, pd.DataFrame)
-    assert f"MC(k={max_k})" in mc_df.columns
+    assert isinstance(mb_df, pd.DataFrame)
+    assert f"MB(k={max_k})" in mb_df.columns
     pmf_values = pmf_df[[f"P(Y={k})" for k in range(max_k + 1)]].to_numpy()
     probability_below_k = np.hstack(
         [np.zeros((len(pmf_df), 1)), np.cumsum(pmf_values, axis=1)[:, :-1]]
@@ -284,8 +284,8 @@ def test_pmf_and_marginal_cost(sample_train_data):
     expected_marginal_benefit = 10.0 * (1.0 - probability_below_k) - (
         2.0 * probability_below_k
     )
-    actual_marginal_benefit = mc_df[
-        [f"MC(k={k})" for k in range(max_k + 1)]
+    actual_marginal_benefit = mb_df[
+        [f"MB(k={k})" for k in range(max_k + 1)]
     ].to_numpy()
     assert np.allclose(actual_marginal_benefit, expected_marginal_benefit)
 

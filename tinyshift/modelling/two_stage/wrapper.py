@@ -35,7 +35,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     - **Decoupled Two-Stage Design**: Separates point expectation forecasting from variance and tail modeling.
     - **Out-of-Sample Dispersion Calibration**: Optimizes per-series dispersion (r) using cross-validation residuals, backed by a robust global median fallback for cold-start series.
     - **Time-Decay Recency Weighting**: Supports exponential time-decay scaling (`gamma`) to prioritize recent historical dynamics during base model fitting.
-    - **Inventory Optimization**: Built-in native support for Newsvendor critical fractile calculations and discrete marginal cost evaluation.
+    - **Inventory Optimization**: Built-in native support for Newsvendor critical fractile calculations and discrete marginal benefit evaluation.
 
     Parameters
     ----------
@@ -562,7 +562,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         return df_out
 
     @requires_extra("series")
-    def marginal_cost(
+    def marginal_benefit(
         self,
         h: int,
         underage_cost: Union[
@@ -574,7 +574,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         max_k: int = 10,
         X_df: pd.DataFrame = None,
     ) -> pd.DataFrame:
-        """Calculates the expected marginal cost for each additional inventory unit k (from 0 to max_k).
+        """Calculates the expected marginal net benefit of each additional inventory unit k.
 
         Process
         -------
@@ -594,14 +594,14 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         overage_cost : str, float, int, or dict
             Unit cost of holding excess inventory (holding cost). Accepts same formats as underage_cost.
         max_k : int, default=10
-            Maximum number of units to evaluate individual marginal costs for.
+            Maximum number of units to evaluate individual marginal benefits for.
         X_df : pandas.DataFrame, optional
             Exogenous features for the forecast horizon.
 
         Returns
         -------
         pandas.DataFrame
-            DataFrame containing id_col, time_col, lambda_t, r_dispersion, and expected marginal costs `MC(k=0)` through `MC(k=max_k)`.
+            DataFrame containing id_col, time_col, lambda_t, r_dispersion, and expected marginal benefits `MB(k=0)` through `MB(k=max_k)`.
 
         Notes
         -----
@@ -643,13 +643,13 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         p_less_matrix = np.hstack([np.zeros((n_rows, 1)), cdf_matrix[:, :-1]])
         p_greater_equal_matrix = 1.0 - p_less_matrix
 
-        mc_matrix = (
+        mb_matrix = (
             cu_arr[:, None] * p_greater_equal_matrix - co_arr[:, None] * p_less_matrix
         )
 
         df_out = df_pmf[[self.id_col, self.time_col, "lambda_t", "r_dispersion"]].copy()
 
         for i, k in enumerate(k_range):
-            df_out[f"MC(k={k})"] = mc_matrix[:, i]
+            df_out[f"MB(k={k})"] = mb_matrix[:, i]
 
         return df_out
