@@ -86,8 +86,8 @@ loss = economic_loss(
     models=["forecast"],
     id_col="unique_id",
     target_col="y",
-    cost_understock="cu",
-    cost_overstock="co",
+    underage_cost="cu",
+    overage_cost="co",
 )
 ```
 
@@ -96,12 +96,12 @@ loss = economic_loss(
 ```text
 understock = max(y - forecast, 0)
 overstock = max(forecast - y, 0)
-loss = understock * cost_understock + overstock * cost_overstock
+loss = understock * underage_cost + overstock * overage_cost
 ```
 
 The result is aggregated by `unique_id` and returns the `economic_loss` metric
 label. Costs can also be provided as fixed scalar values, such as
-`cost_understock=3.0` and `cost_overstock=1.0`.
+`underage_cost=3.0` and `overage_cost=1.0`.
 
 ### 4. Diagnostics & Decomposition
 

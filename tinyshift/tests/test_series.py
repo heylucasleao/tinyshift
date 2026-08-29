@@ -54,8 +54,8 @@ def test_economic_loss_aggregates_understock_and_overstock_by_id():
     result = economic_loss(
         df,
         models=["model"],
-        cost_understock="cu",
-        cost_overstock="co",
+        underage_cost="cu",
+        overage_cost="co",
     )
 
     assert list(result.columns) == ["unique_id", "metric", "model"]
@@ -77,8 +77,8 @@ def test_economic_loss_accepts_scalar_costs():
     result = economic_loss(
         df,
         models=["model_a", "model_b"],
-        cost_understock=3.0,
-        cost_overstock=1.0,
+        underage_cost=3.0,
+        overage_cost=1.0,
     )
 
     assert result.loc[0, "model_a"] == pytest.approx(8.0)
