@@ -102,6 +102,12 @@ def test_estimate_r_raises_when_optimizer_fails(monkeypatch):
         wrapper._estimate_r(np.array([1.0]), np.array([1.0]))
 
 
+def test_estimate_r_rejects_non_finite_lambdas():
+    wrapper = TwoStageForecasterWrapper(fcst=None)
+    with pytest.raises(ValueError, match="lambda values must be finite"):
+        wrapper._estimate_r(np.array([1.0]), np.array([np.nan]))
+
+
 def test_compute_time_decay_weights(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=None)
     weights = wrapper._compute_time_decay_weights(
@@ -184,6 +190,48 @@ def test_extract_cost_array(sample_train_data):
         )
 
 
+@pytest.mark.parametrize(
+    ("invalid_y", "message"),
+    [
+        (-1.0, "non-negative"),
+        (1.5, "integer counts"),
+        (np.nan, "finite"),
+        (np.inf, "finite"),
+        ("invalid", "numeric counts"),
+    ],
+)
+def test_fit_rejects_invalid_target(sample_train_data, invalid_y, message):
+    df = sample_train_data.copy()
+    if isinstance(invalid_y, str):
+        df["y"] = df["y"].astype(object)
+    df.loc[df.index[0], "y"] = invalid_y
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst)
+
+    with pytest.raises(ValueError, match=message):
+        wrapper.fit(df)
+
+
+@pytest.mark.parametrize(
+    ("df", "message"),
+    [
+        (pd.DataFrame(columns=["unique_id", "ds", "y"]), "cannot be empty"),
+        (
+            pd.DataFrame(
+                {"unique_id": ["A"], "ds": [pd.Timestamp("2023-01-01")]}
+            ),
+            "was not found",
+        ),
+    ],
+)
+def test_fit_rejects_missing_or_empty_target(df, message):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst)
+
+    with pytest.raises(ValueError, match=message):
+        wrapper.fit(df)
+
+
 def test_fit_and_predict_without_x_df(sample_train_data):
     """Tests fitting and predicting without passing X_df (relies on mlforecast future generation)."""
     base_model = LinearRegression()
@@ -211,6 +259,18 @@ def test_fit_and_predict_with_x_df(sample_train_data):
     pred_df = wrapper.predict(h=2, X_df=future_df, quantiles=[0.5])
     assert isinstance(pred_df, pd.DataFrame)
     assert len(pred_df) == 4
+
+
+def test_predict_floors_negative_lambdas(sample_train_data, monkeypatch):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    raw_predictions = fcst.make_future_dataframe(h=1)
+    raw_predictions[wrapper.model_name] = -1.0
+    monkeypatch.setattr(fcst, "predict", lambda **kwargs: raw_predictions.copy())
+
+    pred_df = wrapper.predict(h=1, quantiles=[])
+
+    assert np.all(pred_df["lambda_t"] == 1e-6)
 
 
 def test_optimize_with_costs(sample_train_data_with_costs):

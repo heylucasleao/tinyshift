@@ -46,6 +46,28 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     def __init__(self, fcst: Any):
         self.fcst = fcst
 
+    @staticmethod
+    def _validate_target(df: pd.DataFrame, target_col: str) -> None:
+        """Validate that the target is a non-empty sequence of count values."""
+        if target_col not in df.columns:
+            raise ValueError(f"Target column {target_col!r} was not found.")
+
+        try:
+            y = df[target_col].to_numpy(dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Target values must be numeric counts.") from exc
+
+        if y.size == 0:
+            raise ValueError("Training data cannot be empty.")
+        if not np.all(np.isfinite(y)):
+            raise ValueError("Target values must be finite.")
+        if np.any(y < 0):
+            raise ValueError("Target values must be non-negative.")
+        if np.any(y != np.floor(y)):
+            raise ValueError(
+                "Target values must be integer counts for the Negative Binomial model."
+            )
+
     @property
     def model_name(self) -> str:
         """Extracts the name/key of the underlying model from MLForecast."""
@@ -90,7 +112,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         1. Ensures parameter r remains positive.
         2. Converts (lambda_t, r) to the success probability parameter `p = r / (r + lambda_t)`.
         3. Computes the log probability mass function (logpmf) for discrete counts.
-        4. Replaces NaNs and negative infinities using a lower bound floor (-1e2).
+        4. Replaces negative infinities using a lower-bound floor (-1e2).
 
         Parameters
         ----------
@@ -107,14 +129,14 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             Negative log-likelihood value to be minimized.
         """
         r = params[0]
-        if r <= 0:
+        if not np.isfinite(r) or r <= 0:
             return 1e10
 
         lambda_t = np.maximum(lambda_t, 1e-6)
         p = r / (r + lambda_t)
 
         log_pdf = nbinom.logpmf(y, r, p)
-        log_pdf = np.nan_to_num(log_pdf, neginf=-1e2)
+        log_pdf = np.where(np.isneginf(log_pdf), -1e2, log_pdf)
 
         return -np.sum(log_pdf)
 
@@ -143,6 +165,9 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         float
             Optimized per-series dispersion parameter r.
         """
+        if not np.all(np.isfinite(lambdas)):
+            raise ValueError("Predicted lambda values must be finite.")
+
         res = minimize_scalar(
             lambda r: self._nbinom_log_likelihood([r], y_obs, lambdas),
             bounds=(1e-3, 50.0),
@@ -303,11 +328,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         r_dict = {}
         for uid, group in cv_df.groupby(self.id_col):
             y_obs = group[self.target_col].to_numpy()
-            lambdas_oof = np.maximum(group[self.model_name].to_numpy(), 1e-6)
+            lambdas_oof = group[self.model_name].to_numpy()
             r_dict[uid] = self._estimate_r(y_obs, lambdas_oof)
 
-        valid_r = [v for v in r_dict.values() if np.isfinite(v)]
-        r_fallback = float(np.median(valid_r)) if valid_r else 1.0
+        if not r_dict:
+            raise RuntimeError("Dispersion calibration produced no series.")
+        r_fallback = float(np.median(list(r_dict.values())))
 
         return r_dict, r_fallback
 
@@ -352,11 +378,11 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         Process
         -------
-        1. Fits the MLForecast pipeline on the training dataset (with optional time-decay weights).
-        2. Preprocesses the data to generate feature matrices.
-        3. Generates in-sample point predictions (lambda_t).
-        4. Iterates over each unique ID and executes `_estimate_r` via MLE.
-        5. Computes `r_fallback` as the global median of estimated 'r' values for cold-start prediction.
+        1. Runs temporal cross-validation to generate out-of-fold point predictions (lambda_t).
+        2. Iterates over each unique ID and executes `_estimate_r` via MLE.
+        3. Computes `r_fallback` as the global median of estimated 'r' values for cold-start prediction.
+        4. Fits the MLForecast pipeline on the complete training dataset, optionally using
+           time-decay weights.
 
         Parameters
         ----------
@@ -384,6 +410,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.target_col = target_col
         self.static_features = static_features or []
 
+        self._validate_target(df_train, target_col)
         df_fit = df_train.copy()
 
         fit_kwargs = {}
@@ -440,6 +467,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         df_pred = self.fcst.predict(h=h, X_df=X_df)
 
         df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
+        lambda_t = df_pred["lambda_t"].to_numpy(dtype=float)
+        if not np.all(np.isfinite(lambda_t)):
+            raise ValueError("Predicted lambda values must be finite.")
+        df_pred["lambda_t"] = np.maximum(lambda_t, 1e-6)
         df_pred["r_dispersion"] = (
             df_pred[self.id_col].map(self.r_dict_).fillna(self.r_fallback_)
         )
