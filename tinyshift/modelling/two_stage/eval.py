@@ -11,6 +11,9 @@ class FirstStageForecasterEvaluator:
 
     Notes on Metrics & Interpretation
     -------------------------------
+    - **WAPE**: Total absolute error divided by total observed demand. Lower is better.
+    - **Score**: Composite operational loss defined as WAPE + |PBias|. Lower is better.
+    - **Forecast Instability**: Relative change between consecutive forecasts. Lower is better.
     - **PBias (Percentage Bias)**: Measures the percentage global volume deviation ($\frac{\sum \hat{\lambda} - \sum y}{\sum y} \times 100$).
       * *Interpretation*: Should be close to 0%. A negative bias indicates overall under-forecasting (risk of stockouts),
         while a positive bias indicates over-forecasting (excess holding costs).
@@ -18,8 +21,9 @@ class FirstStageForecasterEvaluator:
       * *Interpretation*: Measures the model's tendency to "smear" or leak intermittent demand into non-active periods,
         creating false expectations of activity.
     - **Peak Demand Deviation (%)**: Percentage error of predicted values relative to true values restricted to periods of positive/peak demand ($y > 0$).
-      * *Interpretation*: Tracks the model's smoothing bias on high-demand days. Negative values indicate that the model
-        under-forecasts peaks, which directly starves the upper tail of the second-stage quantile distributions.
+      * *Interpretation*: Tracks the model's smoothing bias on positive-demand days. Negative values indicate that the model
+        under-forecasts realized peaks. Since this conditions on the observed target, it is an operational diagnostic rather
+        than a direct test of conditional-mean calibration.
     """
 
     @classmethod
@@ -28,17 +32,38 @@ class FirstStageForecasterEvaluator:
         df_res: pd.DataFrame,
         target_col: str = "y",
         lambda_col: str = "lambda_t",
+        id_col: str = "unique_id",
+        time_col: str = "ds",
     ) -> pd.DataFrame:
-        """Gera métricas de calibração amigáveis e interpretáveis para o usuário final."""
-        y_true = df_res[target_col].values
-        y_pred = df_res[lambda_col].values
+        """Evaluate the operational quality of out-of-sample mean forecasts.
+
+        Notes
+        -----
+        Input predictions should come from temporal cross-validation or a held-
+        out period. Evaluating fitted values would give optimistic results.
+        """
+        required = [target_col, lambda_col, id_col, time_col]
+        missing = [col for col in required if col not in df_res.columns]
+        if missing:
+            raise KeyError(f"Columns not found in the input DataFrame: {missing}")
+
+        valid = df_res[required].dropna().copy()
+        if valid.empty:
+            raise ValueError("No valid target/prediction pairs were found.")
+
+        y_true = valid[target_col].to_numpy(dtype=float)
+        y_pred = valid[lambda_col].to_numpy(dtype=float)
+        cls._validate_mean_inputs(y_true, y_pred, lambda_col)
 
         total_true = np.sum(y_true)
         total_pred = np.sum(y_pred)
-
-        pbias = (
-            ((total_pred - total_true) / total_true) * 100 if total_true > 0 else 0.0
-        )
+        total_abs_error = np.sum(np.abs(y_pred - y_true))
+        if total_true > 0:
+            wape = total_abs_error / total_true * 100
+            pbias = (total_pred - total_true) / total_true * 100
+        else:
+            wape = 0.0 if total_abs_error == 0 else np.nan
+            pbias = 0.0 if total_pred == 0 else np.nan
 
         zero_mask = y_true == 0
         pos_mask = y_true > 0
@@ -53,14 +78,110 @@ class FirstStageForecasterEvaluator:
         )
 
         report = {
-            "Metrics": {
-                "PBias": round(pbias, 2),
-                "False Demand on Zero-Days (Avg Pred)": round(false_alarm_zeros, 4),
-                "Peak Demand Deviation (%)": round(peak_underestimation, 2),
-            }
+            "WAPE": wape,
+            "PBias": pbias,
+            "Score": wape + abs(pbias),
+            "Forecast Instability": cls._forecast_instability(
+                valid, lambda_col=lambda_col, id_col=id_col, time_col=time_col
+            ),
+            "False Demand on Zero-Days (Avg Pred)": false_alarm_zeros,
+            "Peak Demand Deviation (%)": peak_underestimation,
         }
-        return pd.DataFrame(report)
 
+        precision = {
+            "PBias": 2,
+            "Peak Demand Deviation (%)": 2,
+        }
+        return pd.DataFrame(
+            {
+                "Metrics": {
+                    name: round(value, precision.get(name, 4))
+                    for name, value in report.items()
+                }
+            }
+        )
+
+    @staticmethod
+    def _validate_mean_inputs(
+        y_true: np.ndarray, y_pred: np.ndarray, prediction_name: str
+    ) -> None:
+        if not np.all(np.isfinite(y_true)) or not np.all(np.isfinite(y_pred)):
+            raise ValueError("Target and prediction values must be finite.")
+        if np.any(y_true < 0):
+            raise ValueError("Target values must be non-negative.")
+        if np.any(y_pred <= 0):
+            raise ValueError(
+                f"Conditional mean column '{prediction_name}' must be strictly positive."
+            )
+
+    @staticmethod
+    def _forecast_instability(
+        df_res: pd.DataFrame,
+        lambda_col: str,
+        id_col: str,
+        time_col: str,
+    ) -> float:
+        ordered = df_res.sort_values([id_col, time_col])
+        previous = ordered.groupby(id_col, observed=True)[lambda_col].shift(1)
+        current = ordered[lambda_col]
+        paired = previous.notna()
+        if not paired.any():
+            return np.nan
+
+        prev_values = previous[paired].to_numpy(dtype=float)
+        curr_values = current[paired].to_numpy(dtype=float)
+        average_volume = 0.5 * (prev_values.sum() + curr_values.sum())
+        if average_volume == 0:
+            return 0.0
+        revisions = prev_values - curr_values
+        return float(
+            (np.abs(revisions).sum() + abs(revisions.sum()))
+            / average_volume
+            * 100
+        )
+
+    @classmethod
+    def calibration_table(
+        cls,
+        df_res: pd.DataFrame,
+        target_col: str = "y",
+        lambda_col: str = "lambda_t",
+        n_bins: int = 10,
+    ) -> pd.DataFrame:
+        """Compare observed and predicted means across quantile-based bins."""
+        if not isinstance(n_bins, int) or n_bins < 2:
+            raise ValueError("n_bins must be an integer greater than or equal to 2.")
+        missing = [c for c in (target_col, lambda_col) if c not in df_res.columns]
+        if missing:
+            raise KeyError(f"Columns not found in the input DataFrame: {missing}")
+
+        valid = df_res[[target_col, lambda_col]].dropna().copy()
+        if valid.empty:
+            raise ValueError("No valid target/prediction pairs were found.")
+        cls._validate_mean_inputs(
+            valid[target_col].to_numpy(dtype=float),
+            valid[lambda_col].to_numpy(dtype=float),
+            lambda_col,
+        )
+        if valid[lambda_col].nunique() == 1:
+            valid["Calibration Bin"] = "all"
+        else:
+            valid["Calibration Bin"] = pd.qcut(
+                valid[lambda_col], q=n_bins, duplicates="drop"
+            )
+        result = (
+            valid.groupby("Calibration Bin", observed=True)
+            .agg(
+                Count=(target_col, "size"),
+                Mean_Prediction=(lambda_col, "mean"),
+                Mean_Observed=(target_col, "mean"),
+            )
+            .reset_index()
+        )
+        result["Mean_Residual"] = (
+            result["Mean_Observed"] - result["Mean_Prediction"]
+        )
+        return result
 
 class TwoStageForecasterEvaluator:
     r"""Evaluator utility for probabilistic quantile forecasts.
@@ -127,7 +248,7 @@ class TwoStageForecasterEvaluator:
             if not np.isfinite(q) or not 0 < q < 1:
                 raise ValueError("Quantiles must be finite and strictly between 0 and 1.")
 
-            q_int = int(round(q * 100))
+            q_int = round(q * 100)
             col_q = f"q_{q_int}"
 
             if col_q not in df_res.columns:

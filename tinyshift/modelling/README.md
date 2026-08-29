@@ -192,7 +192,7 @@ additional inventory unit. Targets must be non-negative integer counts.
 ```python
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
-from tinyshift.modelling import TwoStageForecasterWrapper
+from tinyshift.modelling import FirstStageForecasterEvaluator, TwoStageForecasterWrapper
 
 fcst = MLForecast(
     models=[RandomForestRegressor(random_state=42)],
@@ -209,6 +209,16 @@ model.fit(
     h=14,
     n_windows=5,
     gamma=0.01,
+)
+
+# Evaluate held-out or rolling-origin first-stage predictions
+first_stage_summary = FirstStageForecasterEvaluator.evaluate(
+    backtest_df,
+    id_col="unique_id",
+    time_col="ds",
+)
+calibration = FirstStageForecasterEvaluator.calibration_table(
+    backtest_df, n_bins=10
 )
 
 # Point-distribution parameters and discrete demand quantiles
