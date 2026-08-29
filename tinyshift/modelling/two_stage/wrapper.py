@@ -68,6 +68,23 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         return next(iter(self.fcst.models_.values()))
 
+    @property
+    def model_name(self) -> str:
+        """Extracts the name/key of the underlying model from MLForecast."""
+        models_dict = getattr(self.fcst, "models_", None)
+        if not models_dict:
+            models_dict = getattr(self.fcst, "models", None)
+
+        if not models_dict:
+            raise ValueError("The MLForecast object has no models configured.")
+
+        if len(models_dict) > 1:
+            raise ValueError(
+                f"TwoStageForecasterWrapper supports only 1 model, but found multiple models: {list(models_dict.keys())}"
+            )
+
+        return next(iter(models_dict.keys()))
+
     def _nbinom_log_likelihood(
         self,
         params: list,
@@ -275,12 +292,11 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             static_features=self.static_features,
             **fit_kwargs,
         )
-        model_name = next(iter(self.fcst.models.keys()))
 
         r_dict = {}
         for uid, group in cv_df.groupby(self.id_col):
             y_obs = group[self.target_col].to_numpy()
-            lambdas_oof = np.maximum(group[model_name].to_numpy(), 1e-6)
+            lambdas_oof = np.maximum(group[self.model_name].to_numpy(), 1e-6)
             r_dict[uid] = self._estimate_r(y_obs, lambdas_oof)
 
         valid_r = [v for v in r_dict.values() if np.isfinite(v)]
@@ -416,8 +432,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         df_pred = self.fcst.predict(h=h, X_df=X_df)
 
-        model_key = next(iter(self.fcst.models_.keys()))
-        df_pred = df_pred.rename(columns={model_key: "lambda_t"})
+        df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
         df_pred["r_dispersion"] = (
             df_pred[self.id_col].map(self.r_dict_).fillna(self.r_fallback_)
         )
@@ -466,8 +481,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             DataFrame containing the predictions, critical ratio, and optimal reorder quantity.
         """
         excluded = {underage_cost, overage_cost}
-        pred_cols = [c for c in X_df.columns if c not in excluded]
-        n_rows = len(X_df)
+        pred_cols = (
+            [c for c in X_df.columns if c not in excluded] if X_df is not None else None
+        )
+        n_rows = len(X_df) if X_df is not None else h
         cu_arr = self._extract_cost_array(
             X_df, underage_cost, self.id_col, self.time_col, n_rows
         )
