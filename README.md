@@ -14,6 +14,7 @@ For enterprise-grade solutions, consider [Nannyml](https://github.com/NannyML/na
 - **Classification Model Evaluation**: Calibration curves, confusion matrices, score distributions, and production confidence analysis
 - **Time Series Analysis**: Seasonality decomposition, trend analysis, forecasting diagnostics, and forecast stabilization
 - **Decomposed Forecasting**: DTL-based non-seasonal and DMSTL-based multi-seasonal forecasting for panel and long-horizon series
+- **Probabilistic Demand Forecasting**: Two-stage count forecasts, calibrated demand quantiles, and inventory optimization
 - **Forecast Stability**: Metrics and interpolation methods for stable forecasting
 
 ## Technologies Used
@@ -341,6 +342,7 @@ The `tinyshift.modelling` package contains preprocessing and forecasting wrapper
 - `RobustGaussianScaler` — robust scaling with winsorization and power transforms
 - `DTLWrapper` — decomposed LOWESS trend plus ML residual forecasting for non-seasonal data
 - `DMSTLWrapper` — decomposed MSTL forecasting wrapper for panel/multi-seasonal data
+- `TwoStageForecasterWrapper` — Negative Binomial demand quantiles and inventory optimization on top of `MLForecast`
 - `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
 
 Use `tinyshift.modelling` when you need preprocessors and decomposition-aware forecasting tools that complement the core `tinyshift.series` diagnostics and stability metrics.
@@ -377,7 +379,7 @@ confidence_interval = bootstrap_bca_interval(
 )
 ```
 
-### 9. Decomposed Forecasting with DTL and DMSTL
+### 10. Decomposed Forecasting with DTL and DMSTL
 
 TinyShift includes decomposed forecasting wrappers for non-seasonal and multi-seasonal panel data. `DTLWrapper` extracts a robust LOWESS trend and models residuals with `MLForecast`:
 
@@ -434,6 +436,48 @@ model.fit(df, id_col="unique_id", time_col="ds", target_col="y")
 preds = model.predict(h=14, stabilization_method="hfi", w_s=0.2)
 print(preds.head())
 ```
+
+### 11. Two-Stage Probabilistic Demand Forecasting
+
+`TwoStageForecasterWrapper` separates the point forecast from uncertainty
+calibration. An `MLForecast` model estimates expected demand (`lambda_t`), while
+temporal cross-validation fits a per-series Negative Binomial dispersion
+parameter. The result supports discrete demand quantiles and inventory decisions
+for intermittent, erratic, and lumpy count data.
+
+```python
+from mlforecast import MLForecast
+from sklearn.ensemble import RandomForestRegressor
+from tinyshift.modelling import TwoStageForecasterWrapper
+
+fcst = MLForecast(
+    models=[RandomForestRegressor(random_state=42)],
+    freq="D",
+    lags=[1, 7, 14],
+)
+
+model = TwoStageForecasterWrapper(fcst)
+model.fit(
+    df_train,
+    id_col="unique_id",
+    time_col="ds",
+    target_col="y",
+    h=14,
+    n_windows=5,
+)
+
+# Discrete median and upper-tail demand forecasts
+preds = model.predict(h=14, quantiles=(0.50, 0.95))
+
+# Newsvendor-optimal inventory using shortage and holding costs
+stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
+
+# Exact probabilities P(Y=k), including the remaining upper tail
+probabilities = model.pmf(h=14, max_k=10)
+```
+
+The target must contain non-negative integer counts. Install the `series` extra
+to use this wrapper: `pip install "tinyshift[series]"`.
 
 ## 📁 Project Structure
 
@@ -523,4 +567,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - Inspired by [Nannyml](https://github.com/NannyML/nannyml)
-
