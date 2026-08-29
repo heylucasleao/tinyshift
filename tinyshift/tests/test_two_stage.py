@@ -1,9 +1,15 @@
-import pytest
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+import pytest
 from mlforecast import MLForecast
-from tinyshift.modelling import TwoStageForecasterWrapper
+from sklearn.linear_model import LinearRegression
+
+import tinyshift.modelling.two_stage.wrapper as two_stage_wrapper_module
+from tinyshift.modelling import (
+    FirstStageForecasterEvaluator,
+    TwoStageForecasterEvaluator,
+    TwoStageForecasterWrapper,
+)
 
 
 @pytest.fixture
@@ -78,6 +84,22 @@ def test_estimate_r():
     assert 1e-3 <= r_est <= 50.0
 
 
+def test_estimate_r_raises_when_optimizer_fails(monkeypatch):
+    class FailedResult:
+        success = False
+        message = "did not converge"
+        x = np.array([1.0])
+        fun = np.inf
+
+    monkeypatch.setattr(
+        two_stage_wrapper_module, "minimize", lambda *args, **kwargs: FailedResult()
+    )
+    wrapper = TwoStageForecasterWrapper(fcst=None)
+
+    with pytest.raises(RuntimeError, match="Dispersion optimization failed"):
+        wrapper._estimate_r(np.array([1.0]), np.array([1.0]))
+
+
 def test_compute_time_decay_weights(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=None)
     weights = wrapper._compute_time_decay_weights(
@@ -97,6 +119,13 @@ def test_compute_quantile():
     assert np.issubdtype(quantiles.dtype, np.integer)
 
 
+@pytest.mark.parametrize("quantile", [-0.1, 0.0, 1.0, 1.1])
+def test_compute_quantile_rejects_invalid_probability(quantile):
+    df = pd.DataFrame({"r_dispersion": [2.0], "lambda_t": [3.0]})
+    with pytest.raises(ValueError, match="strictly between 0 and 1"):
+        TwoStageForecasterWrapper._compute_quantile(df, target_q=quantile)
+
+
 def test_compute_critical_quantile():
     wrapper = TwoStageForecasterWrapper(fcst=None)
     cu = np.array([10.0, 5.0, 0.0])
@@ -107,6 +136,14 @@ def test_compute_critical_quantile():
     assert q_star[0] == pytest.approx(10.0 / 12.0)
     assert q_star[1] == pytest.approx(5.0 / 10.0)
     assert q_star[2] == 0.5
+
+
+def test_compute_critical_quantile_rejects_negative_costs():
+    wrapper = TwoStageForecasterWrapper(fcst=None)
+    with pytest.raises(ValueError, match="non-negative"):
+        wrapper._compute_critical_quantile(
+            cu=np.array([-1.0]), co=np.array([2.0])
+        )
 
 
 def test_extract_cost_array(sample_train_data):
@@ -194,6 +231,30 @@ def test_optimize_with_costs(sample_train_data_with_costs):
     assert "y_optimal" in opt_df.columns
 
 
+def test_optimize_with_scalar_costs_without_x_df(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    opt_df = wrapper.optimize(h=2, underage_cost=10.0, overage_cost=2.0)
+
+    assert len(opt_df) == 4
+    assert np.allclose(opt_df["critical_ratio"], 10.0 / 12.0)
+
+
+def test_optimize_with_cost_dicts(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    opt_df = wrapper.optimize(
+        h=2,
+        underage_cost={"A": 10.0, "B": 6.0},
+        overage_cost={"A": 2.0, "B": 4.0},
+    )
+
+    expected = opt_df["unique_id"].map({"A": 10.0 / 12.0, "B": 6.0 / 10.0})
+    assert np.allclose(opt_df["critical_ratio"], expected)
+
+
 def test_pmf_and_marginal_cost(sample_train_data):
     """Tests PMF and marginal cost calculations with proper exog features in X_df."""
     base_model = LinearRegression()
@@ -216,3 +277,44 @@ def test_pmf_and_marginal_cost(sample_train_data):
     )
     assert isinstance(mc_df, pd.DataFrame)
     assert f"MC(k={max_k})" in mc_df.columns
+    pmf_values = pmf_df[[f"P(Y={k})" for k in range(max_k + 1)]].to_numpy()
+    probability_below_k = np.hstack(
+        [np.zeros((len(pmf_df), 1)), np.cumsum(pmf_values, axis=1)[:, :-1]]
+    )
+    expected_marginal_benefit = 10.0 * (1.0 - probability_below_k) - (
+        2.0 * probability_below_k
+    )
+    actual_marginal_benefit = mc_df[
+        [f"MC(k={k})" for k in range(max_k + 1)]
+    ].to_numpy()
+    assert np.allclose(actual_marginal_benefit, expected_marginal_benefit)
+
+
+def test_pmf_rejects_negative_max_k(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    with pytest.raises(ValueError, match="non-negative integer"):
+        wrapper.pmf(h=1, max_k=-1)
+
+
+def test_first_stage_evaluator_metrics():
+    df = pd.DataFrame({"y": [0.0, 2.0, 4.0], "lambda_t": [1.0, 1.0, 5.0]})
+    result = FirstStageForecasterEvaluator.evaluate(df)
+
+    assert result.loc["PBias", "Metrics"] == pytest.approx(16.67)
+    assert result.loc["False Demand on Zero-Days (Avg Pred)", "Metrics"] == 1.0
+    assert result.loc["Peak Demand Deviation (%)", "Metrics"] == 0.0
+
+
+def test_two_stage_evaluator_ignores_nan_pairs_for_loss_and_coverage():
+    df = pd.DataFrame({"y": [1.0, 2.0, np.nan], "q_50": [1.0, 3.0, 0.0]})
+    result = TwoStageForecasterEvaluator.evaluate(df, quantiles=[0.5])
+
+    assert result.loc["q_50", "Pinball Loss"] == pytest.approx(0.25)
+    assert result.loc["q_50", "Empirical Coverage"] == 1.0
+
+
+def test_two_stage_evaluator_rejects_invalid_quantile():
+    df = pd.DataFrame({"y": [1.0], "q_100": [1.0]})
+    with pytest.raises(ValueError, match="strictly between 0 and 1"):
+        TwoStageForecasterEvaluator.evaluate(df, quantiles=[1.0])

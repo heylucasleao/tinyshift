@@ -3,13 +3,15 @@
 # Licensed under the MIT License
 
 
+from typing import Dict, Union, Any, Tuple, Optional, List
+
 import numpy as np
 import pandas as pd
-from scipy.stats import nbinom
 from scipy.optimize import minimize
-from typing import Dict, Union, Any, Tuple, Optional, List
-from tinyshift.utils.imports import requires_extra
+from scipy.stats import nbinom
 from sklearn.base import BaseEstimator, RegressorMixin
+
+from tinyshift.utils.imports import requires_extra
 
 
 class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
@@ -148,6 +150,13 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             args=(y_obs, lambdas),
             bounds=[(1e-3, 50.0)],
         )
+        if (
+            not res.success
+            or not np.isfinite(res.fun)
+            or len(res.x) != 1
+            or not np.isfinite(res.x[0])
+        ):
+            raise RuntimeError(f"Dispersion optimization failed: {res.message}")
         return float(res.x[0])
 
     def _compute_time_decay_weights(
@@ -205,6 +214,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         numpy.ndarray
             Integer vector representing the discrete inventory quantiles.
         """
+        target_q_array = np.asarray(target_q)
+        if np.any(~np.isfinite(target_q_array)) or np.any(
+            (target_q_array <= 0) | (target_q_array >= 1)
+        ):
+            raise ValueError("Quantiles must be finite and strictly between 0 and 1.")
+
         p_param = df["r_dispersion"] / (df["r_dispersion"] + df["lambda_t"])
         return np.ceil(nbinom.ppf(target_q, df["r_dispersion"], p_param)).astype(int)
 
@@ -214,6 +229,11 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         co: np.ndarray,
     ) -> np.ndarray:
         """Computes the critical quantile q_star = c_u / (c_u + c_o) in-place safely."""
+        if np.any(~np.isfinite(cu)) or np.any(~np.isfinite(co)):
+            raise ValueError("Costs must be finite.")
+        if np.any(cu < 0) or np.any(co < 0):
+            raise ValueError("Costs must be non-negative.")
+
         denom = cu + co
         out = np.empty_like(denom)
         zero_mask = denom == 0
@@ -393,7 +413,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self,
         h: int,
         X_df: pd.DataFrame = None,
-        quantiles: list = [0.05, 0.50, 0.95],
+        quantiles: tuple = (0.05, 0.50, 0.95),
     ) -> pd.DataFrame:
         """Generates out-of-sample probabilistic forecast quantiles using the Negative Binomial CDF.
 
@@ -470,20 +490,26 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         pd.DataFrame
             DataFrame containing the predictions, critical ratio, and optimal reorder quantity.
         """
-        excluded = {underage_cost, overage_cost}
+        excluded = {
+            cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
+        }
         pred_cols = (
             [c for c in X_df.columns if c not in excluded] if X_df is not None else None
         )
-        n_rows = len(X_df) if X_df is not None else h
+        pred_x_df = X_df[pred_cols] if X_df is not None else None
+        df_out = self.predict(h=h, X_df=pred_x_df, quantiles=[])
+
+        cost_df = X_df if X_df is not None else df_out
+        n_rows = len(df_out)
+        if len(cost_df) != n_rows:
+            raise ValueError("Cost inputs must have one row per forecast row.")
         cu_arr = self._extract_cost_array(
-            X_df, underage_cost, self.id_col, self.time_col, n_rows
+            cost_df, underage_cost, self.id_col, self.time_col, n_rows
         )
         co_arr = self._extract_cost_array(
-            X_df, overage_cost, self.id_col, self.time_col, n_rows
+            cost_df, overage_cost, self.id_col, self.time_col, n_rows
         )
         critical_fractile = self._compute_critical_quantile(cu=cu_arr, co=co_arr)
-
-        df_out = self.predict(h=h, X_df=X_df[pred_cols], quantiles=[])
 
         df_out[ratio_col] = critical_fractile
         df_out[output_col] = self._compute_quantile(df_out, target_q=critical_fractile)
@@ -513,6 +539,9 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         pandas.DataFrame
             DataFrame containing id_col, time_col, lambda_t, r_dispersion, P(Y=0)...P(Y=max_k), and P(Y>max_k).
         """
+
+        if not isinstance(max_k, (int, np.integer)) or max_k < 0:
+            raise ValueError("max_k must be a non-negative integer.")
 
         df_out = self.predict(h=h, X_df=X_df, quantiles=[])
 
@@ -552,8 +581,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         1. Extracts underage and overage cost arrays using the internal cost extraction utility.
         2. Leverages the internal `pmf` method to obtain exact discrete probabilities P(Y = k).
         3. Computes the cumulative distribution function (CDF) to derive P(Y < k) and P(Y >= k).
-        4. Applies the discrete Newsvendor marginal cost derivative:
-           MC(k) = c_o * P(Y >= k) - c_u * P(Y < k)
+        4. Computes the marginal net benefit of stocking unit k:
+           MC(k) = c_u * P(Y >= k) - c_o * P(Y < k)
 
         Parameters
         ----------
@@ -579,24 +608,33 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         - Positive values represent an expected net monetary gain (the benefit of avoiding a stockout outweighs the holding risk).
         - Negative values represent an expected net monetary loss or cost increase (the risk of overstocking outweighs the shortage benefit).
         """
-        n_rows = len(X_df) if X_df is not None else len(self.fcst.predict(h=h))
+        excluded = {
+            cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
+        }
+        pred_cols = (
+            [c for c in X_df.columns if c not in excluded] if X_df is not None else None
+        )
+        pred_x_df = X_df[pred_cols] if X_df is not None else None
+        df_pmf = self.pmf(h=h, max_k=max_k, X_df=pred_x_df)
+
+        cost_df = X_df if X_df is not None else df_pmf
+        n_rows = len(df_pmf)
+        if len(cost_df) != n_rows:
+            raise ValueError("Cost inputs must have one row per forecast row.")
         cu_arr = self._extract_cost_array(
-            X_df,
+            cost_df,
             underage_cost,
             self.id_col,
             self.time_col,
             n_rows,
         )
         co_arr = self._extract_cost_array(
-            X_df,
+            cost_df,
             overage_cost,
             self.id_col,
             self.time_col,
             n_rows,
         )
-
-        df_pmf = self.pmf(h=h, max_k=max_k, X_df=X_df)
-
         k_range = np.arange(0, max_k + 1)
         pmf_cols = [f"P(Y={k})" for k in k_range]
         pmf_matrix = df_pmf[pmf_cols].to_numpy()
