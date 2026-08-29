@@ -175,7 +175,64 @@ strategy with `mode="local"` or `mode="global"` when creating the wrapper.
 
 ---
 
-### 6. Time Series Feature Engineering (`ts_features.py`)
+### 6. Two-Stage Probabilistic Forecasting (`two_stage/`)
+
+#### **`TwoStageForecasterWrapper`** - Demand Forecasting + Inventory Optimization
+
+Wraps a single-model `MLForecast` instance in a two-stage probabilistic workflow:
+
+1. The base regressor forecasts the conditional mean demand (`lambda_t`).
+2. Temporal cross-validation calibrates a Negative Binomial dispersion parameter
+   (`r_dispersion`) for each series, with a global median fallback for new series.
+
+The fitted distribution can produce discrete demand quantiles, exact probability
+masses, Newsvendor-optimal stock levels, and the marginal benefit of each
+additional inventory unit. Targets must be non-negative integer counts.
+
+```python
+from mlforecast import MLForecast
+from sklearn.ensemble import RandomForestRegressor
+from tinyshift.modelling import TwoStageForecasterWrapper
+
+fcst = MLForecast(
+    models=[RandomForestRegressor(random_state=42)],
+    freq="D",
+    lags=[1, 7, 14],
+)
+
+model = TwoStageForecasterWrapper(fcst)
+model.fit(
+    df_train,
+    id_col="unique_id",
+    time_col="ds",
+    target_col="y",
+    h=14,
+    n_windows=5,
+    gamma=0.01,
+)
+
+# Point-distribution parameters and discrete demand quantiles
+predictions = model.predict(h=14, quantiles=(0.50, 0.95))
+
+# Newsvendor inventory level for fixed shortage and holding costs
+stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
+
+# Exact probabilities from P(Y=0) through P(Y=10), plus P(Y>10)
+probabilities = model.pmf(h=14, max_k=10)
+```
+
+Use `FirstStageForecasterEvaluator` to inspect bias, false demand on zero-demand
+days, and peak-demand deviation. Use `TwoStageForecasterEvaluator` to evaluate
+quantile pinball loss and empirical coverage on out-of-sample predictions.
+
+**When to use:**
+- For intermittent, erratic, or lumpy count demand
+- When forecast uncertainty must be converted into inventory decisions
+- When demand variance exceeds its mean and a Poisson model is too restrictive
+
+---
+
+### 7. Time Series Feature Engineering (`ts_features.py`)
 
 #### **`relative_strength_index`**
 Computes the Relative Strength Index (RSI) for a univariate series.
@@ -219,6 +276,9 @@ The `tinyshift.modelling` package exports:
 - `RobustGaussianScaler`
 - `DTLWrapper`
 - `DMSTLWrapper`
+- `TwoStageForecasterWrapper`
+- `FirstStageForecasterEvaluator`
+- `TwoStageForecasterEvaluator`
 - `relative_strength_index`
 - `standardize_returns`
 - `fourier_seasonality`
@@ -228,6 +288,7 @@ The `tinyshift.modelling` package exports:
 
 ## Notes
 
-- `DTLWrapper` and `DMSTLWrapper` depend on `statsmodels`, `statsforecast`, and `mlforecast`.
+- `DTLWrapper`, `DMSTLWrapper`, and `TwoStageForecasterWrapper` require the `series` extra.
+- `TwoStageForecasterWrapper` is designed for non-negative integer count targets; it is not recommended for continuous or high-volume demand.
 - `fourier_seasonality` expects a pandas DataFrame with a datetime column.
 - `ts_features` functions are lightweight feature engineering helpers for time-series forecasting.
