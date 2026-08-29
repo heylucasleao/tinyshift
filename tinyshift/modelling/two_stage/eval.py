@@ -7,7 +7,7 @@ import pandas as pd
 
 
 class FirstStageForecasterEvaluator:
-    """Evaluator utility for the first stage conditional expectation (lambda_t).
+    r"""Evaluator utility for the first stage conditional expectation (lambda_t).
 
     Notes on Metrics & Interpretation
     -------------------------------
@@ -63,7 +63,7 @@ class FirstStageForecasterEvaluator:
 
 
 class TwoStageForecasterEvaluator:
-    """Evaluator utility for probabilistic quantile forecasts.
+    r"""Evaluator utility for probabilistic quantile forecasts.
 
     Notes on Metrics & Interpretation
     -------------------------------
@@ -98,7 +98,7 @@ class TwoStageForecasterEvaluator:
         cls,
         df_res: pd.DataFrame,
         target_col: str = "y",
-        quantiles: list = [0.50, 0.67, 0.95, 0.99],
+        quantiles: tuple = (0.50, 0.67, 0.95, 0.99),
     ) -> pd.DataFrame:
         """Evaluates empirical coverage and quantile loss over out-of-sample backtest predictions.
 
@@ -124,6 +124,9 @@ class TwoStageForecasterEvaluator:
             )
 
         for q in sorted(quantiles):
+            if not np.isfinite(q) or not 0 < q < 1:
+                raise ValueError("Quantiles must be finite and strictly between 0 and 1.")
+
             q_int = int(round(q * 100))
             col_q = f"q_{q_int}"
 
@@ -136,7 +139,8 @@ class TwoStageForecasterEvaluator:
                 quantile=q,
             )
 
-            empirical_coverage = float((df_res[target_col] <= df_res[col_q]).mean())
+            valid = df_res[[target_col, col_q]].dropna()
+            empirical_coverage = float((valid[target_col] <= valid[col_q]).mean())
             coverage_gap = empirical_coverage - q
 
             results[col_q] = {
