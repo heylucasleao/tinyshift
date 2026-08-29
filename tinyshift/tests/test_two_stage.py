@@ -360,12 +360,63 @@ def test_pmf_rejects_negative_max_k(sample_train_data):
 
 
 def test_first_stage_evaluator_metrics():
-    df = pd.DataFrame({"y": [0.0, 2.0, 4.0], "lambda_t": [1.0, 1.0, 5.0]})
+    df = pd.DataFrame(
+        {
+            "unique_id": ["a", "a", "a"],
+            "ds": pd.date_range("2024-01-01", periods=3),
+            "y": [0.0, 2.0, 4.0],
+            "lambda_t": [1.0, 1.0, 5.0],
+        }
+    )
     result = FirstStageForecasterEvaluator.evaluate(df)
 
+    assert result.loc["WAPE", "Metrics"] == pytest.approx(50.0)
     assert result.loc["PBias", "Metrics"] == pytest.approx(16.67)
+    assert result.loc["Score", "Metrics"] == pytest.approx(66.6667)
+    assert result.loc["Forecast Instability", "Metrics"] == pytest.approx(200.0)
     assert result.loc["False Demand on Zero-Days (Avg Pred)", "Metrics"] == 1.0
     assert result.loc["Peak Demand Deviation (%)", "Metrics"] == 0.0
+
+
+def test_first_stage_forecast_instability_does_not_cross_series():
+    df = pd.DataFrame(
+        {
+            "unique_id": ["a", "a", "b", "b"],
+            "ds": [1, 2, 1, 2],
+            "y": [1.0, 1.0, 10.0, 10.0],
+            "lambda_t": [1.0, 1.0, 10.0, 10.0],
+        }
+    )
+    result = FirstStageForecasterEvaluator.evaluate(df)
+
+    assert result.loc["Forecast Instability", "Metrics"] == pytest.approx(0.0)
+
+
+def test_first_stage_calibration_table():
+    df = pd.DataFrame(
+        {
+            "h": [1, 1, 2, 2],
+            "y": [0.0, 2.0, 4.0, 6.0],
+            "lambda_t": [0.5, 1.5, 4.5, 5.5],
+        }
+    )
+    calibration = FirstStageForecasterEvaluator.calibration_table(df, n_bins=2)
+    assert calibration["Count"].sum() == len(df)
+    assert len(calibration) == 2
+    assert calibration.iloc[0]["Mean_Residual"] == pytest.approx(0.0)
+
+
+def test_first_stage_evaluator_rejects_non_positive_mean():
+    df = pd.DataFrame(
+        {
+            "unique_id": ["a", "a"],
+            "ds": [1, 2],
+            "y": [0.0, 1.0],
+            "lambda_t": [0.0, 1.0],
+        }
+    )
+    with pytest.raises(ValueError, match="strictly positive"):
+        FirstStageForecasterEvaluator.evaluate(df)
 
 
 def test_two_stage_evaluator_ignores_nan_pairs_for_loss_and_coverage():
