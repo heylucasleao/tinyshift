@@ -4,7 +4,7 @@ import pytest
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
 
-import tinyshift.modelling.two_stage.wrapper as two_stage_wrapper_module
+import tinyshift.modelling.tsf.wrapper as tsf_wrapper_module
 from tinyshift.modelling import (
     FirstStageForecasterEvaluator,
     TwoStageForecasterEvaluator,
@@ -92,7 +92,7 @@ def test_estimate_r_raises_when_optimizer_fails(monkeypatch):
         fun = np.inf
 
     monkeypatch.setattr(
-        two_stage_wrapper_module,
+        tsf_wrapper_module,
         "minimize_scalar",
         lambda *args, **kwargs: FailedResult(),
     )
@@ -419,7 +419,7 @@ def test_first_stage_evaluator_rejects_non_positive_mean():
         FirstStageForecasterEvaluator.evaluate(df)
 
 
-def test_two_stage_evaluator_ignores_nan_pairs_for_loss_and_coverage():
+def test_tsf_evaluator_ignores_nan_pairs_for_loss_and_coverage():
     df = pd.DataFrame({"y": [1.0, 2.0, np.nan], "q_50": [1.0, 3.0, 0.0]})
     result = TwoStageForecasterEvaluator.evaluate(df, quantiles=[0.5])
 
@@ -427,7 +427,7 @@ def test_two_stage_evaluator_ignores_nan_pairs_for_loss_and_coverage():
     assert result.loc["q_50", "Empirical Coverage"] == 1.0
 
 
-def test_two_stage_evaluator_rejects_invalid_quantile():
+def test_tsf_evaluator_rejects_invalid_quantile():
     df = pd.DataFrame({"y": [1.0], "q_100": [1.0]})
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
         TwoStageForecasterEvaluator.evaluate(df, quantiles=[1.0])
