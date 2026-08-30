@@ -370,6 +370,19 @@ def test_optimize_with_scalar_costs_without_x_df(sample_train_data):
     assert np.allclose(opt_df["critical_ratio"], 10.0 / 12.0)
 
 
+def test_optimize_accepts_x_df_with_only_cost_columns(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    costs = pd.DataFrame({"cu": [10.0] * 4, "co": [2.0] * 4})
+
+    result = wrapper.optimize(
+        h=2, underage_cost="cu", overage_cost="co", X_df=costs
+    )
+
+    assert len(result) == len(costs)
+    assert np.allclose(result["critical_ratio"], 10.0 / 12.0)
+
+
 def test_optimize_with_cost_dicts(sample_train_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)

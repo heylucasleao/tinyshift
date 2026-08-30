@@ -577,10 +577,15 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         excluded = {
             cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
         }
-        pred_cols = (
-            [c for c in X_df.columns if c not in excluded] if X_df is not None else None
-        )
-        pred_x_df = X_df[pred_cols] if X_df is not None else None
+        pred_x_df = None
+        if X_df is not None:
+            prediction_columns = [c for c in X_df.columns if c not in excluded]
+            exogenous_columns = set(prediction_columns) - {
+                self.id_col,
+                self.time_col,
+            }
+            if exogenous_columns:
+                pred_x_df = X_df[prediction_columns]
         df_out, distribution = self.predict_distribution(h=h, X_df=pred_x_df)
 
         cost_df = X_df if X_df is not None else df_out
