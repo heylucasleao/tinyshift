@@ -14,7 +14,7 @@ For enterprise-grade solutions, consider [Nannyml](https://github.com/NannyML/na
 - **Classification Model Evaluation**: Calibration curves, confusion matrices, score distributions, and production confidence analysis
 - **Time Series Analysis**: Seasonality decomposition, trend analysis, forecasting diagnostics, and forecast stabilization
 - **Decomposed Forecasting**: DTL-based non-seasonal and DMSTL-based multi-seasonal forecasting for panel and long-horizon series
-- **Probabilistic Demand Forecasting**: Two-stage count forecasts, calibrated demand quantiles, and inventory optimization
+- **Probabilistic Demand Forecasting**: Two-stage discrete or continuous forecasts, calibrated distributions, forecast evaluation, and inventory optimization
 - **Forecast Stability**: Metrics and interpolation methods for stable forecasting
 
 ## Technologies Used
@@ -342,7 +342,7 @@ The `tinyshift.modelling` package contains preprocessing and forecasting wrapper
 - `RobustGaussianScaler` — robust scaling with winsorization and power transforms
 - `DTLWrapper` — decomposed LOWESS trend plus ML residual forecasting for non-seasonal data
 - `DMSTLWrapper` — decomposed MSTL forecasting wrapper for panel/multi-seasonal data
-- `TwoStageForecasterWrapper` — Negative Binomial demand quantiles and inventory optimization on top of `MLForecast`
+- `TwoStageForecasterWrapper` — configurable Negative Binomial or Gamma predictive distributions and inventory optimization on top of `MLForecast`
 - `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
 
 Use `tinyshift.modelling` when you need preprocessors and decomposition-aware forecasting tools that complement the core `tinyshift.series` diagnostics and stability metrics.
@@ -440,15 +440,20 @@ print(preds.head())
 ### 11. Two-Stage Probabilistic Demand Forecasting
 
 `TwoStageForecasterWrapper` separates the point forecast from uncertainty
-calibration. An `MLForecast` model estimates expected demand (`lambda_t`), while
-temporal cross-validation fits a per-series Negative Binomial dispersion
-parameter. The result supports discrete demand quantiles and inventory decisions
-for intermittent, erratic, and lumpy count data.
+calibration. An `MLForecast` model estimates the conditional mean (`lambda_t`),
+while temporal cross-validation fits a per-series distribution parameter. The
+default Negative Binomial family supports discrete demand and inventory
+decisions; `GammaFamily` supports strictly positive continuous targets.
 
 ```python
+import pandas as pd
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
-from tinyshift.modelling import TwoStageForecasterWrapper
+from tinyshift.modelling import (
+    FirstStageForecasterEvaluator,
+    TwoStageForecasterEvaluator,
+    TwoStageForecasterWrapper,
+)
 
 fcst = MLForecast(
     models=[RandomForestRegressor(random_state=42)],
@@ -474,10 +479,65 @@ stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
 
 # Exact probabilities P(Y=k), including the remaining upper tail
 probabilities = model.pmf(h=14, max_k=10)
+
+# Expected value of stocking each additional discrete inventory unit
+marginal_value = model.marginal_benefit(
+    h=14,
+    underage_cost=10.0,
+    overage_cost=2.0,
+    max_k=10,
+)
+
+# Direct access to the aligned distributions
+forecast, distribution = model.predict_distribution(h=14)
+probability_below_five = distribution.cdf(5)
+median = distribution.ppf(0.50)
+
+# Cost columns may be supplied without exogenous forecast features.
+costs = pd.DataFrame({"cu": [10.0] * len(forecast), "co": [2.0] * len(forecast)})
+stock_plan = model.optimize(
+    h=14,
+    underage_cost="cu",
+    overage_cost="co",
+    X_df=costs,
+)
+
+# Continuous alternative; cdf/ppf/interval/sample share the same interface.
+from tinyshift.modelling import GammaFamily
+
+continuous_model = TwoStageForecasterWrapper(fcst, distribution=GammaFamily())
 ```
 
-The target must contain non-negative integer counts. Install the `series` extra
-to use this wrapper: `pip install "tinyshift[series]"`.
+Evaluate only held-out or rolling-origin predictions after joining their actual
+targets. The first-stage evaluator covers conditional-mean diagnostics and its
+calibration table; the two-stage evaluator covers pinball loss and empirical
+quantile coverage:
+
+```python
+mean_metrics = FirstStageForecasterEvaluator.evaluate(backtest_df)
+calibration = FirstStageForecasterEvaluator.calibration_table(
+    backtest_df, n_bins=10
+)
+probabilistic_metrics = TwoStageForecasterEvaluator.evaluate(
+    backtest_df, quantiles=(0.05, 0.50, 0.95)
+)
+```
+
+Persist the fitted wrapper so its base forecaster, selected family, and calibrated
+per-series dispersion parameters remain together:
+
+```python
+import joblib
+
+joblib.dump(model, "two_stage_forecaster.joblib")
+restored_model = joblib.load("two_stage_forecaster.joblib")
+```
+
+Only load joblib files from trusted sources.
+
+Negative Binomial targets must contain non-negative integer counts; Gamma targets
+must be strictly positive. Install the `series` extra to use this wrapper:
+`pip install "tinyshift[series]"`.
 
 ## 📁 Project Structure
 

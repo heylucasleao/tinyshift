@@ -3,6 +3,7 @@
 # Licensed under the MIT License
 
 
+from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -13,27 +14,33 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.utils.imports import requires_extra
 
+from .distribution import DiscretePredictiveDistribution, PredictiveDistribution
+from .family import DistributionFamily, NegativeBinomialFamily
+
 
 class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
-    """Two-stage probabilistic forecasting wrapper using MLForecast and Negative Binomial distribution.
+    """Two-stage probabilistic forecasting wrapper using MLForecast.
 
     This model decouples conditional expectation from dispersion:
         1. Employs `MLForecast` regressors (e.g., LightGBM) with optional exponential time-decay weighting to forecast conditional expectation (lambda_t).
-        2. Calibrates a per-series dispersion parameter (r) via Maximum Likelihood Estimation (MLE) on out-of-sample temporal cross-validation residuals.
-        3. Projects discrete inventory quantiles, exact probability mass functions (PMF), and Newsvendor optimal stock levels via the inverse CDF (PPF) of the Negative Binomial distribution.
+        2. Calibrates a per-series distribution parameter via maximum likelihood
+           on out-of-sample temporal cross-validation predictions.
+        3. Exposes a row-aligned predictive distribution and projects arbitrary
+           quantiles or Newsvendor-optimal levels through its inverse CDF.
 
-    Demand Regime Applicability
-    ---------------------------
+    Default Negative Binomial Applicability
+    ---------------------------------------
     - **Intermittent Demand (Zero-Inflated)**: Highly recommended. Handles frequent zeros efficiently.
     - **Erratic / Lumpy Demand**: Highly recommended. Captures high variance (variance > mean) via 'r'.
     - **Smooth / Low-Variance Demand**: Supported. As r increases, it naturally converges to a Poisson regime.
-    - **Continuous / High-Volume Demand**: Not recommended. High-volume series with high r values will automatically fall back
-      or converge toward a Poisson regime (bounded by r = 50).
+    - **Continuous / High-Volume Demand**: Select an explicit continuous family,
+      such as :class:`GammaFamily`, instead of the default.
 
     Architecture & Key Features
     ---------------------------
     - **Decoupled Two-Stage Design**: Separates point expectation forecasting from variance and tail modeling.
-    - **Out-of-Sample Dispersion Calibration**: Optimizes per-series dispersion (r) using cross-validation residuals, backed by a robust global median fallback for cold-start series.
+    - **Out-of-Sample Dispersion Calibration**: Optimizes a family-specific
+      parameter per series, backed by a global median fallback for cold starts.
     - **Time-Decay Recency Weighting**: Supports exponential time-decay scaling (`gamma`) to prioritize recent historical dynamics during base model fitting.
     - **Inventory Optimization**: Built-in native support for Newsvendor critical fractile calculations and discrete marginal benefit evaluation.
 
@@ -41,32 +48,71 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     ----------
     fcst : MLForecast
         An un-fitted or fitted MLForecast instance configured with a single underlying regressor.
+    distribution : DistributionFamily, optional
+        Conditional distribution family for the second stage. Defaults to
+        :class:`NegativeBinomialFamily`; use :class:`GammaFamily` for strictly
+        positive continuous targets.
     """
 
-    def __init__(self, fcst: Any):
+    def __init__(
+        self,
+        fcst: Any,
+        distribution: Optional[DistributionFamily] = None,
+    ):
         self.fcst = fcst
+        self.distribution = distribution
 
     @staticmethod
-    def _validate_target(df: pd.DataFrame, target_col: str) -> None:
-        """Validate that the target is a non-empty sequence of count values."""
+    def _validate_fit_parameters(
+        h: int,
+        n_windows: int,
+        step_size: Optional[int],
+        gamma: Optional[float],
+    ) -> None:
+        """Validate temporal calibration and recency-weighting parameters."""
+        if (
+            isinstance(h, (bool, np.bool_))
+            or not isinstance(h, (int, np.integer))
+            or h < 1
+        ):
+            raise ValueError("h must be a positive integer.")
+        if (
+            isinstance(n_windows, (bool, np.bool_))
+            or not isinstance(n_windows, (int, np.integer))
+            or n_windows < 1
+        ):
+            raise ValueError("n_windows must be a positive integer.")
+        if step_size is not None and (
+            isinstance(step_size, (bool, np.bool_))
+            or not isinstance(step_size, (int, np.integer))
+            or step_size < 1
+        ):
+            raise ValueError("step_size must be None or a positive integer.")
+        if gamma is not None and (
+            isinstance(gamma, (bool, np.bool_)) or not np.isfinite(gamma) or gamma < 0
+        ):
+            raise ValueError("gamma must be a finite, non-negative number.")
+
+    @staticmethod
+    def _validate_training_target(
+        df: pd.DataFrame,
+        target_col: str,
+        distribution_family: DistributionFamily,
+        numeric_label: str,
+    ) -> np.ndarray:
+        """Extract and validate the target against the selected family."""
         if target_col not in df.columns:
             raise ValueError(f"Target column {target_col!r} was not found.")
 
         try:
-            y = df[target_col].to_numpy(dtype=float)
+            target = df[target_col].to_numpy(dtype=float)
         except (TypeError, ValueError) as exc:
-            raise ValueError("Target values must be numeric counts.") from exc
+            raise ValueError(f"Target values must be {numeric_label}.") from exc
 
-        if y.size == 0:
+        if target.size == 0:
             raise ValueError("Training data cannot be empty.")
-        if not np.all(np.isfinite(y)):
-            raise ValueError("Target values must be finite.")
-        if np.any(y < 0):
-            raise ValueError("Target values must be non-negative.")
-        if np.any(y != np.floor(y)):
-            raise ValueError(
-                "Target values must be integer counts for the Negative Binomial model."
-            )
+        distribution_family.validate_target(target)
+        return target
 
     @property
     def model_name(self) -> str:
@@ -173,11 +219,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             bounds=(1e-3, 50.0),
             method="bounded",
         )
-        if (
-            not res.success
-            or not np.isfinite(res.fun)
-            or not np.isfinite(res.x)
-        ):
+        if not res.success or not np.isfinite(res.fun) or not np.isfinite(res.x):
             raise RuntimeError(f"Dispersion optimization failed: {res.message}")
         return float(res.x)
 
@@ -263,6 +305,44 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         np.divide(cu, denom, out=out, where=~zero_mask)
         return out
 
+    @staticmethod
+    def _resolve_marginal_units(
+        max_k: Optional[int], units: Optional[Iterable[int]]
+    ) -> np.ndarray:
+        """Validate the marginal-benefit unit selection and return its grid."""
+        if max_k is not None and units is not None:
+            raise ValueError("Provide either max_k or units, not both.")
+        if units is None:
+            max_k = 10 if max_k is None else max_k
+            if (
+                isinstance(max_k, (bool, np.bool_))
+                or not isinstance(max_k, (int, np.integer))
+                or max_k < 0
+            ):
+                raise ValueError("max_k must be a non-negative integer.")
+            return np.arange(0, max_k + 1)
+
+        if isinstance(units, (str, bytes)):
+            raise ValueError("units must be a non-empty iterable of integers.")
+        try:
+            unit_values = list(units)
+        except TypeError as exc:
+            raise ValueError(
+                "units must be a non-empty iterable of integers."
+            ) from exc
+        if not unit_values or any(
+            isinstance(unit, (bool, np.bool_))
+            or not isinstance(unit, (int, np.integer))
+            or unit < 0
+            for unit in unit_values
+        ):
+            raise ValueError(
+                "units must be a non-empty iterable of non-negative integers."
+            )
+        if len(set(unit_values)) != len(unit_values):
+            raise ValueError("units must not contain duplicates.")
+        return np.asarray(unit_values, dtype=int)
+
     def _extract_cost_array(
         self,
         df: pd.DataFrame,
@@ -296,6 +376,63 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
                 f"or dict mapping IDs or (ID, Time) tuples to values. Received: {type(cost_input)}"
             )
 
+    def _align_cost_frame(
+        self,
+        forecast_df: pd.DataFrame,
+        X_df: Optional[pd.DataFrame],
+    ) -> pd.DataFrame:
+        """Align decision inputs with forecast rows by key or positional order.
+
+        When ID and time columns are available, a one-to-one merge makes the
+        alignment explicit and independent of input row order. A frame without
+        those keys is treated as already row-aligned.
+        """
+        if X_df is None:
+            return forecast_df
+        if not {self.id_col, self.time_col}.issubset(X_df.columns):
+            return X_df
+        return forecast_df[[self.id_col, self.time_col]].merge(
+            X_df,
+            on=[self.id_col, self.time_col],
+            how="left",
+            sort=False,
+            validate="one_to_one",
+        )
+
+    def _prepare_prediction_frame(
+        self,
+        X_df: Optional[pd.DataFrame],
+        underage_cost: Union[
+            str, float, int, Dict[Union[str, Tuple[str, Any]], float]
+        ],
+        overage_cost: Union[
+            str, float, int, Dict[Union[str, Tuple[str, Any]], float]
+        ],
+    ) -> Optional[pd.DataFrame]:
+        """Remove decision-only cost columns from the prediction frame."""
+        if X_df is None:
+            return None
+
+        cost_columns = {
+            cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
+        }
+        missing_cost_columns = cost_columns - set(X_df.columns)
+        if missing_cost_columns:
+            raise ValueError(
+                f"Cost columns not found in X_df: {sorted(missing_cost_columns)}"
+            )
+
+        prediction_columns = [
+            column for column in X_df.columns if column not in cost_columns
+        ]
+        exogenous_columns = set(prediction_columns) - {
+            self.id_col,
+            self.time_col,
+        }
+        if not exogenous_columns:
+            return None
+        return X_df[prediction_columns]
+
     def _calibrate_dispersion_cv(
         self,
         df: pd.DataFrame,
@@ -325,17 +462,19 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             **fit_kwargs,
         )
 
-        r_dict = {}
+        dispersion_dict = {}
         for uid, group in cv_df.groupby(self.id_col):
             y_obs = group[self.target_col].to_numpy()
             lambdas_oof = group[self.model_name].to_numpy()
-            r_dict[uid] = self._estimate_r(y_obs, lambdas_oof)
+            dispersion_dict[uid] = self.distribution_family_.fit_dispersion(
+                y_obs, lambdas_oof
+            )
 
-        if not r_dict:
+        if not dispersion_dict:
             raise RuntimeError("Dispersion calibration produced no series.")
-        r_fallback = float(np.median(list(r_dict.values())))
+        dispersion_fallback = float(np.median(list(dispersion_dict.values())))
 
-        return r_dict, r_fallback
+        return dispersion_dict, dispersion_fallback
 
     def _fit_base_forecaster(
         self,
@@ -410,7 +549,22 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.target_col = target_col
         self.static_features = static_features or []
 
-        self._validate_target(df_train, target_col)
+        self._validate_fit_parameters(h, n_windows, step_size, gamma)
+
+        self.distribution_family_ = (
+            NegativeBinomialFamily() if self.distribution is None else self.distribution
+        )
+        if not isinstance(self.distribution_family_, DistributionFamily):
+            raise TypeError(
+                "distribution must be a DistributionFamily instance or None."
+            )
+        numeric_label = "numeric counts" if self.distribution is None else "numeric"
+        self._validate_training_target(
+            df_train,
+            target_col,
+            self.distribution_family_,
+            numeric_label,
+        )
         df_fit = df_train.copy()
 
         fit_kwargs = {}
@@ -421,9 +575,15 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             df_fit["_temp_weight"] = weights_array
             fit_kwargs["weight_col"] = "_temp_weight"
 
-        self.r_dict_, self.r_fallback_ = self._calibrate_dispersion_cv(
-            df_fit, h, n_windows, step_size, refit, fit_kwargs
+        self.dispersion_dict_, self.dispersion_fallback_ = (
+            self._calibrate_dispersion_cv(
+                df_fit, h, n_windows, step_size, refit, fit_kwargs
+            )
         )
+        # Backwards-compatible fitted attributes for the default family.
+        if isinstance(self.distribution_family_, NegativeBinomialFamily):
+            self.r_dict_ = self.dispersion_dict_
+            self.r_fallback_ = self.dispersion_fallback_
 
         self.exog_cols_ = self._fit_base_forecaster(
             df=df_fit,
@@ -439,14 +599,15 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         X_df: pd.DataFrame = None,
         quantiles: tuple = (0.05, 0.50, 0.95),
     ) -> pd.DataFrame:
-        """Generates out-of-sample probabilistic forecast quantiles using the Negative Binomial CDF.
+        """Generate out-of-sample quantiles from the configured distribution.
 
         Process
         -------
         1. Executes recursive forecasting via MLForecast to obtain future lambda_t values.
-        2. Maps historical `r` dispersion parameters (or applies `r_fallback` for new series).
-        3. Computes exact integer quantiles using the Negative Binomial Percent Point Function (PPF/Inverse CDF)
-           and applies `np.ceil` to ensure discrete inventory units.
+        2. Maps calibrated per-series distribution parameters, using the global
+           median fallback for unseen series.
+        3. Evaluates the configured distribution's PPF. Results are integer-valued
+           for discrete families and real-valued for continuous families.
 
         Parameters
         ----------
@@ -460,26 +621,53 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         Returns
         -------
         df_pred : pandas.DataFrame
-            DataFrame containing time series identifiers, predicted lambda_t, dispersion parameters,
-            and discrete stock quantile estimates (`q_*`).
+            DataFrame containing identifiers, conditional means, distribution
+            parameters, and quantile estimates (`q_*`).
         """
 
-        df_pred = self.fcst.predict(h=h, X_df=X_df)
+        df_pred, distribution = self.predict_distribution(h=h, X_df=X_df)
 
-        df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
-        lambda_t = df_pred["lambda_t"].to_numpy(dtype=float)
-        if not np.all(np.isfinite(lambda_t)):
-            raise ValueError("Predicted lambda values must be finite.")
-        df_pred["lambda_t"] = np.maximum(lambda_t, 1e-6)
-        df_pred["r_dispersion"] = (
-            df_pred[self.id_col].map(self.r_dict_).fillna(self.r_fallback_)
-        )
-
+        quantile_columns = {}
         for q in sorted(quantiles):
+            if not np.isfinite(q) or not 0.0 < q < 1.0:
+                raise ValueError(
+                    "Quantiles must be finite and strictly between 0 and 1."
+                )
             col_name = f"q_{int(q * 100)}"
-            df_pred[col_name] = self._compute_quantile(df_pred, target_q=q)
+            if col_name in quantile_columns:
+                raise ValueError(
+                    f"Quantiles {quantile_columns[col_name]} and {q} map to the "
+                    f"same output column {col_name!r}."
+                )
+            quantile_columns[col_name] = q
+            df_pred[col_name] = distribution.ppf(q)
 
         return df_pred
+
+    @requires_extra("series")
+    def predict_distribution(
+        self,
+        h: int,
+        X_df: pd.DataFrame = None,
+    ) -> Tuple[pd.DataFrame, PredictiveDistribution]:
+        """Return the forecast frame and its aligned predictive distributions."""
+        df_pred = self.fcst.predict(h=h, X_df=X_df)
+        df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
+        means = df_pred["lambda_t"].to_numpy(dtype=float)
+        if not np.all(np.isfinite(means)):
+            raise ValueError("Predicted mean values must be finite.")
+        means = np.maximum(means, 1e-6)
+        df_pred["lambda_t"] = means
+        parameter_column = self.distribution_family_.parameter_column
+        df_pred[parameter_column] = (
+            df_pred[self.id_col]
+            .map(self.dispersion_dict_)
+            .fillna(self.dispersion_fallback_)
+        )
+        predictive = self.distribution_family_.distribution(
+            means, df_pred[parameter_column].to_numpy(dtype=float)
+        )
+        return df_pred, predictive
 
     @requires_extra("series")
     def optimize(
@@ -518,16 +706,14 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         pd.DataFrame
             DataFrame containing the predictions, critical ratio, and optimal reorder quantity.
         """
-        excluded = {
-            cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
-        }
-        pred_cols = (
-            [c for c in X_df.columns if c not in excluded] if X_df is not None else None
+        pred_x_df = self._prepare_prediction_frame(
+            X_df=X_df,
+            underage_cost=underage_cost,
+            overage_cost=overage_cost,
         )
-        pred_x_df = X_df[pred_cols] if X_df is not None else None
-        df_out = self.predict(h=h, X_df=pred_x_df, quantiles=[])
+        df_out, distribution = self.predict_distribution(h=h, X_df=pred_x_df)
 
-        cost_df = X_df if X_df is not None else df_out
+        cost_df = self._align_cost_frame(df_out, X_df)
         n_rows = len(df_out)
         if len(cost_df) != n_rows:
             raise ValueError("Cost inputs must have one row per forecast row.")
@@ -540,7 +726,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         critical_fractile = self._compute_critical_quantile(cu=cu_arr, co=co_arr)
 
         df_out[ratio_col] = critical_fractile
-        df_out[output_col] = self._compute_quantile(df_out, target_q=critical_fractile)
+        df_out[output_col] = distribution.ppf(critical_fractile)
 
         return df_out
 
@@ -571,16 +757,13 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         if not isinstance(max_k, (int, np.integer)) or max_k < 0:
             raise ValueError("max_k must be a non-negative integer.")
 
-        df_out = self.predict(h=h, X_df=X_df, quantiles=[])
-
-        p_param = df_out["r_dispersion"] / (df_out["r_dispersion"] + df_out["lambda_t"])
-        r_param = df_out["r_dispersion"].values
+        df_out, distribution = self.predict_distribution(h=h, X_df=X_df)
+        if not isinstance(distribution, DiscretePredictiveDistribution):
+            raise TypeError("pmf is available only for discrete distribution families.")
 
         k_range = np.arange(0, max_k + 1)
 
-        pmf_matrix = nbinom.pmf(
-            k_range[None, :], r_param[:, None], p_param.values[:, None]
-        )
+        pmf_matrix = distribution.pmf(k_range)
 
         for k in k_range:
             df_out[f"P(Y={k})"] = pmf_matrix[:, k]
@@ -599,18 +782,18 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         overage_cost: Union[
             str, float, int, Dict[Union[str, Tuple[str, Any]], float]
         ] = "co",
-        max_k: int = 10,
+        max_k: Optional[int] = None,
         X_df: pd.DataFrame = None,
+        units: Optional[Iterable[int]] = None,
     ) -> pd.DataFrame:
         """Calculates the expected marginal net benefit of each additional inventory unit k.
 
         Process
         -------
         1. Extracts underage and overage cost arrays using the internal cost extraction utility.
-        2. Leverages the internal `pmf` method to obtain exact discrete probabilities P(Y = k).
-        3. Computes the cumulative distribution function (CDF) to derive P(Y < k) and P(Y >= k).
-        4. Computes the marginal net benefit of stocking unit k:
-           MC(k) = c_u * P(Y >= k) - c_o * P(Y < k)
+        2. Evaluates the predictive CDF directly to obtain P(Y < k) = F(k - 1).
+        3. Computes the marginal net benefit of stocking unit k:
+           MB(k) = c_u * P(Y >= k) - c_o * P(Y < k)
 
         Parameters
         ----------
@@ -621,32 +804,43 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             column name, or dictionary mapping IDs or (ID, Time) tuples.
         overage_cost : str, float, int, or dict
             Unit cost of holding excess inventory (holding cost). Accepts same formats as underage_cost.
-        max_k : int, default=10
-            Maximum number of units to evaluate individual marginal benefits for.
+        max_k : int, optional
+            Maximum unit to evaluate, producing all units from 0 through `max_k`.
+            Defaults to 10 when `units` is not provided. Cannot be combined with
+            `units`.
         X_df : pandas.DataFrame, optional
             Exogenous features for the forecast horizon.
+        units : iterable of int, optional
+            Exact non-negative units to evaluate, in the supplied order. Useful for
+            sparse or stepped grids such as `[5, 10, 20]` or `range(0, 101, 5)`.
+            Cannot be combined with `max_k`.
 
         Returns
         -------
         pandas.DataFrame
-            DataFrame containing id_col, time_col, lambda_t, r_dispersion, and expected marginal benefits `MB(k=0)` through `MB(k=max_k)`.
+            DataFrame containing id_col, time_col, lambda_t, r_dispersion, and one
+            expected marginal-benefit column for each evaluated unit.
 
         Notes
         -----
         - Positive values represent an expected net monetary gain (the benefit of avoiding a stockout outweighs the holding risk).
         - Negative values represent an expected net monetary loss or cost increase (the risk of overstocking outweighs the shortage benefit).
         """
-        excluded = {
-            cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
-        }
-        pred_cols = (
-            [c for c in X_df.columns if c not in excluded] if X_df is not None else None
-        )
-        pred_x_df = X_df[pred_cols] if X_df is not None else None
-        df_pmf = self.pmf(h=h, max_k=max_k, X_df=pred_x_df)
+        units_array = self._resolve_marginal_units(max_k=max_k, units=units)
 
-        cost_df = X_df if X_df is not None else df_pmf
-        n_rows = len(df_pmf)
+        pred_x_df = self._prepare_prediction_frame(
+            X_df=X_df,
+            underage_cost=underage_cost,
+            overage_cost=overage_cost,
+        )
+        df_pred, distribution = self.predict_distribution(h=h, X_df=pred_x_df)
+        if not isinstance(distribution, DiscretePredictiveDistribution):
+            raise TypeError(
+                "marginal_benefit is available only for discrete distribution families."
+            )
+
+        cost_df = self._align_cost_frame(df_pred, X_df)
+        n_rows = len(df_pred)
         if len(cost_df) != n_rows:
             raise ValueError("Cost inputs must have one row per forecast row.")
         cu_arr = self._extract_cost_array(
@@ -663,21 +857,19 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             self.time_col,
             n_rows,
         )
-        k_range = np.arange(0, max_k + 1)
-        pmf_cols = [f"P(Y={k})" for k in k_range]
-        pmf_matrix = df_pmf[pmf_cols].to_numpy()
-        cdf_matrix = np.cumsum(pmf_matrix, axis=1)
-
-        p_less_matrix = np.hstack([np.zeros((n_rows, 1)), cdf_matrix[:, :-1]])
+        p_less_matrix = np.asarray(distribution.cdf(units_array - 1))
         p_greater_equal_matrix = 1.0 - p_less_matrix
 
         mb_matrix = (
             cu_arr[:, None] * p_greater_equal_matrix - co_arr[:, None] * p_less_matrix
         )
 
-        df_out = df_pmf[[self.id_col, self.time_col, "lambda_t", "r_dispersion"]].copy()
+        parameter_column = self.distribution_family_.parameter_column
+        df_out = df_pred[
+            [self.id_col, self.time_col, "lambda_t", parameter_column]
+        ].copy()
 
-        for i, k in enumerate(k_range):
+        for i, k in enumerate(units_array):
             df_out[f"MB(k={k})"] = mb_matrix[:, i]
 
         return df_out

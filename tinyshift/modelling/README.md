@@ -182,17 +182,25 @@ strategy with `mode="local"` or `mode="global"` when creating the wrapper.
 Wraps a single-model `MLForecast` instance in a two-stage probabilistic workflow:
 
 1. The base regressor forecasts the conditional mean demand (`lambda_t`).
-2. Temporal cross-validation calibrates a Negative Binomial dispersion parameter
-   (`r_dispersion`) for each series, with a global median fallback for new series.
+2. Temporal cross-validation calibrates the selected family's dispersion parameter
+   for each series, with a global median fallback for new series. The default
+   Negative Binomial family uses `r_dispersion`; Gamma uses `shape_dispersion`.
 
-The fitted distribution can produce discrete demand quantiles, exact probability
-masses, Newsvendor-optimal stock levels, and the marginal benefit of each
-additional inventory unit. Targets must be non-negative integer counts.
+The default Negative Binomial family produces discrete demand quantiles, exact
+probability masses, Newsvendor-optimal stock levels, and the marginal benefit of
+each additional inventory unit. Distribution construction is separated from
+forecasting: every family exposes `cdf`, `ppf`, `interval`, and `sample`, while
+only discrete families expose `pmf`.
 
 ```python
+import pandas as pd
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
-from tinyshift.modelling import FirstStageForecasterEvaluator, TwoStageForecasterWrapper
+from tinyshift.modelling import (
+    FirstStageForecasterEvaluator,
+    TwoStageForecasterEvaluator,
+    TwoStageForecasterWrapper,
+)
 
 fcst = MLForecast(
     models=[RandomForestRegressor(random_state=42)],
@@ -220,6 +228,9 @@ first_stage_summary = FirstStageForecasterEvaluator.evaluate(
 calibration = FirstStageForecasterEvaluator.calibration_table(
     backtest_df, n_bins=10
 )
+probabilistic_summary = TwoStageForecasterEvaluator.evaluate(
+    backtest_df, quantiles=(0.05, 0.50, 0.95)
+)
 
 # Point-distribution parameters and discrete demand quantiles
 predictions = model.predict(h=14, quantiles=(0.50, 0.95))
@@ -229,16 +240,73 @@ stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
 
 # Exact probabilities from P(Y=0) through P(Y=10), plus P(Y>10)
 probabilities = model.pmf(h=14, max_k=10)
+
+# Expected marginal value of each additional discrete inventory unit
+marginal_value = model.marginal_benefit(
+    h=14,
+    underage_cost=10.0,
+    overage_cost=2.0,
+    max_k=10,
+)
+
+# Direct CDF and PPF access through row-aligned predictive distributions
+forecast, distribution = model.predict_distribution(h=14)
+probability_below_five = distribution.cdf(5)
+median = distribution.ppf(0.50)
+```
+
+Cost columns used only by the Newsvendor decision do not need to be model
+features. `X_df` may contain only row-aligned cost columns when the underlying
+forecaster does not require future exogenous features:
+
+```python
+costs = pd.DataFrame(
+    {"cu": [10.0] * len(forecast), "co": [2.0] * len(forecast)}
+)
+stock_plan = model.optimize(
+    h=14,
+    underage_cost="cu",
+    overage_cost="co",
+    X_df=costs,
+)
+```
+
+For strictly positive continuous targets, select the Gamma family explicitly:
+
+```python
+from tinyshift.modelling import GammaFamily, TwoStageForecasterWrapper
+
+continuous_model = TwoStageForecasterWrapper(
+    fcst,
+    distribution=GammaFamily(),
+)
+continuous_model.fit(df_train, h=14, n_windows=5)
+
+forecast, distribution = continuous_model.predict_distribution(h=14)
+quantiles = distribution.ppf([0.1, 0.5, 0.9])
 ```
 
 Use `FirstStageForecasterEvaluator` to inspect bias, false demand on zero-demand
 days, and peak-demand deviation. Use `TwoStageForecasterEvaluator` to evaluate
 quantile pinball loss and empirical coverage on out-of-sample predictions.
 
+Persist the fitted wrapper—not only its base regressor—to retain the selected
+family and calibrated per-series dispersion parameters:
+
+```python
+import joblib
+
+joblib.dump(model, "two_stage_forecaster.joblib")
+restored_model = joblib.load("two_stage_forecaster.joblib")
+```
+
+Only load joblib files from trusted sources.
+
 **When to use:**
 - For intermittent, erratic, or lumpy count demand
 - When forecast uncertainty must be converted into inventory decisions
 - When demand variance exceeds its mean and a Poisson model is too restrictive
+- For strictly positive continuous targets when `GammaFamily` is selected
 
 ---
 
@@ -287,6 +355,8 @@ The `tinyshift.modelling` package exports:
 - `DTLWrapper`
 - `DMSTLWrapper`
 - `TwoStageForecasterWrapper`
+- `DistributionFamily`, `NegativeBinomialFamily`, `GammaFamily`
+- `PredictiveDistribution`, `DiscretePredictiveDistribution`
 - `FirstStageForecasterEvaluator`
 - `TwoStageForecasterEvaluator`
 - `relative_strength_index`
@@ -299,6 +369,7 @@ The `tinyshift.modelling` package exports:
 ## Notes
 
 - `DTLWrapper`, `DMSTLWrapper`, and `TwoStageForecasterWrapper` require the `series` extra.
-- `TwoStageForecasterWrapper` is designed for non-negative integer count targets; it is not recommended for continuous or high-volume demand.
+- `TwoStageForecasterWrapper` defaults to Negative Binomial count targets; use
+  `GammaFamily` for strictly positive continuous targets.
 - `fourier_seasonality` expects a pandas DataFrame with a datetime column.
 - `ts_features` functions are lightweight feature engineering helpers for time-series forecasting.
