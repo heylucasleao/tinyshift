@@ -432,6 +432,90 @@ def test_pmf_and_marginal_benefit(sample_train_data):
     assert np.allclose(actual_marginal_benefit, expected_marginal_benefit)
 
 
+def test_marginal_benefit_does_not_depend_on_pmf(sample_train_data, monkeypatch):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("marginal_benefit must evaluate the CDF directly")
+
+    monkeypatch.setattr(wrapper, "pmf", fail_if_called)
+
+    result = wrapper.marginal_benefit(h=2, underage_cost=10.0, overage_cost=2.0)
+
+    assert "MB(k=10)" in result
+
+
+def test_marginal_benefit_accepts_x_df_with_only_cost_columns(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    costs = pd.DataFrame({"cu": [10.0] * 4, "co": [2.0] * 4})
+
+    result = wrapper.marginal_benefit(
+        h=2, underage_cost="cu", overage_cost="co", X_df=costs
+    )
+
+    assert len(result) == len(costs)
+    assert "MB(k=10)" in result
+
+
+def test_marginal_benefit_accepts_sparse_units(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    result = wrapper.marginal_benefit(
+        h=2,
+        underage_cost=10.0,
+        overage_cost=2.0,
+        units=[5, 10, 20],
+    )
+    dense = wrapper.marginal_benefit(
+        h=2, underage_cost=10.0, overage_cost=2.0, max_k=20
+    )
+
+    mb_columns = [column for column in result if column.startswith("MB(k=")]
+    assert mb_columns == ["MB(k=5)", "MB(k=10)", "MB(k=20)"]
+    assert np.allclose(result[mb_columns], dense[mb_columns])
+
+
+def test_marginal_benefit_accepts_stepped_range(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    result = wrapper.marginal_benefit(
+        h=2,
+        underage_cost=10.0,
+        overage_cost=2.0,
+        units=range(0, 21, 5),
+    )
+
+    mb_columns = [column for column in result if column.startswith("MB(k=")]
+    assert mb_columns == [
+        "MB(k=0)",
+        "MB(k=5)",
+        "MB(k=10)",
+        "MB(k=15)",
+        "MB(k=20)",
+    ]
+
+
+def test_marginal_benefit_rejects_max_k_with_units(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    with pytest.raises(ValueError, match="either max_k or units"):
+        wrapper.marginal_benefit(h=1, max_k=5, units=[1, 3, 5])
+
+
+@pytest.mark.parametrize("units", [[], [1, 1], [1.5], [-1], [True], "1,2"])
+def test_marginal_benefit_rejects_invalid_units(sample_train_data, units):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    with pytest.raises(ValueError, match="units"):
+        wrapper.marginal_benefit(h=1, units=units)
+
+
 def test_pmf_rejects_negative_max_k(sample_train_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
@@ -672,7 +756,7 @@ def test_optimize_rejects_bad_cost_frame(sample_train_data):
             overage_cost="co",
             X_df=pd.DataFrame({"cu": [1.0], "co": [1.0]}),
         )
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="Cost columns not found.*missing"):
         wrapper.optimize(
             h=2,
             underage_cost="missing",

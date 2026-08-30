@@ -3,6 +3,7 @@
 # Licensed under the MIT License
 
 
+from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -304,6 +305,44 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         np.divide(cu, denom, out=out, where=~zero_mask)
         return out
 
+    @staticmethod
+    def _resolve_marginal_units(
+        max_k: Optional[int], units: Optional[Iterable[int]]
+    ) -> np.ndarray:
+        """Validate the marginal-benefit unit selection and return its grid."""
+        if max_k is not None and units is not None:
+            raise ValueError("Provide either max_k or units, not both.")
+        if units is None:
+            max_k = 10 if max_k is None else max_k
+            if (
+                isinstance(max_k, (bool, np.bool_))
+                or not isinstance(max_k, (int, np.integer))
+                or max_k < 0
+            ):
+                raise ValueError("max_k must be a non-negative integer.")
+            return np.arange(0, max_k + 1)
+
+        if isinstance(units, (str, bytes)):
+            raise ValueError("units must be a non-empty iterable of integers.")
+        try:
+            unit_values = list(units)
+        except TypeError as exc:
+            raise ValueError(
+                "units must be a non-empty iterable of integers."
+            ) from exc
+        if not unit_values or any(
+            isinstance(unit, (bool, np.bool_))
+            or not isinstance(unit, (int, np.integer))
+            or unit < 0
+            for unit in unit_values
+        ):
+            raise ValueError(
+                "units must be a non-empty iterable of non-negative integers."
+            )
+        if len(set(unit_values)) != len(unit_values):
+            raise ValueError("units must not contain duplicates.")
+        return np.asarray(unit_values, dtype=int)
+
     def _extract_cost_array(
         self,
         df: pd.DataFrame,
@@ -359,6 +398,40 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             sort=False,
             validate="one_to_one",
         )
+
+    def _prepare_prediction_frame(
+        self,
+        X_df: Optional[pd.DataFrame],
+        underage_cost: Union[
+            str, float, int, Dict[Union[str, Tuple[str, Any]], float]
+        ],
+        overage_cost: Union[
+            str, float, int, Dict[Union[str, Tuple[str, Any]], float]
+        ],
+    ) -> Optional[pd.DataFrame]:
+        """Remove decision-only cost columns from the prediction frame."""
+        if X_df is None:
+            return None
+
+        cost_columns = {
+            cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
+        }
+        missing_cost_columns = cost_columns - set(X_df.columns)
+        if missing_cost_columns:
+            raise ValueError(
+                f"Cost columns not found in X_df: {sorted(missing_cost_columns)}"
+            )
+
+        prediction_columns = [
+            column for column in X_df.columns if column not in cost_columns
+        ]
+        exogenous_columns = set(prediction_columns) - {
+            self.id_col,
+            self.time_col,
+        }
+        if not exogenous_columns:
+            return None
+        return X_df[prediction_columns]
 
     def _calibrate_dispersion_cv(
         self,
@@ -633,18 +706,11 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         pd.DataFrame
             DataFrame containing the predictions, critical ratio, and optimal reorder quantity.
         """
-        excluded = {
-            cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
-        }
-        pred_x_df = None
-        if X_df is not None:
-            prediction_columns = [c for c in X_df.columns if c not in excluded]
-            exogenous_columns = set(prediction_columns) - {
-                self.id_col,
-                self.time_col,
-            }
-            if exogenous_columns:
-                pred_x_df = X_df[prediction_columns]
+        pred_x_df = self._prepare_prediction_frame(
+            X_df=X_df,
+            underage_cost=underage_cost,
+            overage_cost=overage_cost,
+        )
         df_out, distribution = self.predict_distribution(h=h, X_df=pred_x_df)
 
         cost_df = self._align_cost_frame(df_out, X_df)
@@ -716,18 +782,18 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         overage_cost: Union[
             str, float, int, Dict[Union[str, Tuple[str, Any]], float]
         ] = "co",
-        max_k: int = 10,
+        max_k: Optional[int] = None,
         X_df: pd.DataFrame = None,
+        units: Optional[Iterable[int]] = None,
     ) -> pd.DataFrame:
         """Calculates the expected marginal net benefit of each additional inventory unit k.
 
         Process
         -------
         1. Extracts underage and overage cost arrays using the internal cost extraction utility.
-        2. Leverages the internal `pmf` method to obtain exact discrete probabilities P(Y = k).
-        3. Computes the cumulative distribution function (CDF) to derive P(Y < k) and P(Y >= k).
-        4. Computes the marginal net benefit of stocking unit k:
-           MC(k) = c_u * P(Y >= k) - c_o * P(Y < k)
+        2. Evaluates the predictive CDF directly to obtain P(Y < k) = F(k - 1).
+        3. Computes the marginal net benefit of stocking unit k:
+           MB(k) = c_u * P(Y >= k) - c_o * P(Y < k)
 
         Parameters
         ----------
@@ -738,32 +804,43 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             column name, or dictionary mapping IDs or (ID, Time) tuples.
         overage_cost : str, float, int, or dict
             Unit cost of holding excess inventory (holding cost). Accepts same formats as underage_cost.
-        max_k : int, default=10
-            Maximum number of units to evaluate individual marginal benefits for.
+        max_k : int, optional
+            Maximum unit to evaluate, producing all units from 0 through `max_k`.
+            Defaults to 10 when `units` is not provided. Cannot be combined with
+            `units`.
         X_df : pandas.DataFrame, optional
             Exogenous features for the forecast horizon.
+        units : iterable of int, optional
+            Exact non-negative units to evaluate, in the supplied order. Useful for
+            sparse or stepped grids such as `[5, 10, 20]` or `range(0, 101, 5)`.
+            Cannot be combined with `max_k`.
 
         Returns
         -------
         pandas.DataFrame
-            DataFrame containing id_col, time_col, lambda_t, r_dispersion, and expected marginal benefits `MB(k=0)` through `MB(k=max_k)`.
+            DataFrame containing id_col, time_col, lambda_t, r_dispersion, and one
+            expected marginal-benefit column for each evaluated unit.
 
         Notes
         -----
         - Positive values represent an expected net monetary gain (the benefit of avoiding a stockout outweighs the holding risk).
         - Negative values represent an expected net monetary loss or cost increase (the risk of overstocking outweighs the shortage benefit).
         """
-        excluded = {
-            cost for cost in (underage_cost, overage_cost) if isinstance(cost, str)
-        }
-        pred_cols = (
-            [c for c in X_df.columns if c not in excluded] if X_df is not None else None
-        )
-        pred_x_df = X_df[pred_cols] if X_df is not None else None
-        df_pmf = self.pmf(h=h, max_k=max_k, X_df=pred_x_df)
+        units_array = self._resolve_marginal_units(max_k=max_k, units=units)
 
-        cost_df = self._align_cost_frame(df_pmf, X_df)
-        n_rows = len(df_pmf)
+        pred_x_df = self._prepare_prediction_frame(
+            X_df=X_df,
+            underage_cost=underage_cost,
+            overage_cost=overage_cost,
+        )
+        df_pred, distribution = self.predict_distribution(h=h, X_df=pred_x_df)
+        if not isinstance(distribution, DiscretePredictiveDistribution):
+            raise TypeError(
+                "marginal_benefit is available only for discrete distribution families."
+            )
+
+        cost_df = self._align_cost_frame(df_pred, X_df)
+        n_rows = len(df_pred)
         if len(cost_df) != n_rows:
             raise ValueError("Cost inputs must have one row per forecast row.")
         cu_arr = self._extract_cost_array(
@@ -780,12 +857,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             self.time_col,
             n_rows,
         )
-        k_range = np.arange(0, max_k + 1)
-        pmf_cols = [f"P(Y={k})" for k in k_range]
-        pmf_matrix = df_pmf[pmf_cols].to_numpy()
-        cdf_matrix = np.cumsum(pmf_matrix, axis=1)
-
-        p_less_matrix = np.hstack([np.zeros((n_rows, 1)), cdf_matrix[:, :-1]])
+        p_less_matrix = np.asarray(distribution.cdf(units_array - 1))
         p_greater_equal_matrix = 1.0 - p_less_matrix
 
         mb_matrix = (
@@ -793,11 +865,11 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         )
 
         parameter_column = self.distribution_family_.parameter_column
-        df_out = df_pmf[
+        df_out = df_pred[
             [self.id_col, self.time_col, "lambda_t", parameter_column]
         ].copy()
 
-        for i, k in enumerate(k_range):
+        for i, k in enumerate(units_array):
             df_out[f"MB(k={k})"] = mb_matrix[:, i]
 
         return df_out
