@@ -185,9 +185,11 @@ Wraps a single-model `MLForecast` instance in a two-stage probabilistic workflow
 2. Temporal cross-validation calibrates a Negative Binomial dispersion parameter
    (`r_dispersion`) for each series, with a global median fallback for new series.
 
-The fitted distribution can produce discrete demand quantiles, exact probability
-masses, Newsvendor-optimal stock levels, and the marginal benefit of each
-additional inventory unit. Targets must be non-negative integer counts.
+The default Negative Binomial family produces discrete demand quantiles, exact
+probability masses, Newsvendor-optimal stock levels, and the marginal benefit of
+each additional inventory unit. Distribution construction is separated from
+forecasting: every family exposes `cdf`, `ppf`, `interval`, and `sample`, while
+only discrete families expose `pmf`.
 
 ```python
 from mlforecast import MLForecast
@@ -229,6 +231,21 @@ stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
 
 # Exact probabilities from P(Y=0) through P(Y=10), plus P(Y>10)
 probabilities = model.pmf(h=14, max_k=10)
+```
+
+For strictly positive continuous targets, select the Gamma family explicitly:
+
+```python
+from tinyshift.modelling import GammaFamily, TwoStageForecasterWrapper
+
+continuous_model = TwoStageForecasterWrapper(
+    fcst,
+    distribution=GammaFamily(),
+)
+continuous_model.fit(df_train, h=14, n_windows=5)
+
+forecast, distribution = continuous_model.predict_distribution(h=14)
+quantiles = distribution.ppf([0.1, 0.5, 0.9])
 ```
 
 Use `FirstStageForecasterEvaluator` to inspect bias, false demand on zero-demand
@@ -287,6 +304,8 @@ The `tinyshift.modelling` package exports:
 - `DTLWrapper`
 - `DMSTLWrapper`
 - `TwoStageForecasterWrapper`
+- `DistributionFamily`, `NegativeBinomialFamily`, `GammaFamily`
+- `PredictiveDistribution`, `DiscretePredictiveDistribution`
 - `FirstStageForecasterEvaluator`
 - `TwoStageForecasterEvaluator`
 - `relative_strength_index`
@@ -299,6 +318,7 @@ The `tinyshift.modelling` package exports:
 ## Notes
 
 - `DTLWrapper`, `DMSTLWrapper`, and `TwoStageForecasterWrapper` require the `series` extra.
-- `TwoStageForecasterWrapper` is designed for non-negative integer count targets; it is not recommended for continuous or high-volume demand.
+- `TwoStageForecasterWrapper` defaults to Negative Binomial count targets; use
+  `GammaFamily` for strictly positive continuous targets.
 - `fourier_seasonality` expects a pandas DataFrame with a datetime column.
 - `ts_features` functions are lightweight feature engineering helpers for time-series forecasting.

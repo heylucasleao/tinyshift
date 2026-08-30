@@ -7,6 +7,9 @@ from sklearn.linear_model import LinearRegression
 import tinyshift.modelling.tsf.wrapper as tsf_wrapper_module
 from tinyshift.modelling import (
     FirstStageForecasterEvaluator,
+    GammaFamily,
+    GammaPredictiveDistribution,
+    NegativeBinomialPredictiveDistribution,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
@@ -32,6 +35,17 @@ def sample_train_data_with_costs(sample_train_data):
     df["cu"] = 10.0
     df["co"] = 2.0
     return df
+
+
+@pytest.fixture
+def sample_continuous_data():
+    dates = pd.date_range(start="2023-01-01", periods=200, freq="D")
+    data = []
+    for offset, uid in enumerate(["A", "B"]):
+        values = 5.0 + offset + np.sin(np.arange(200) / 7.0)
+        for ds, y in zip(dates, values):
+            data.append({"unique_id": uid, "ds": ds, "y": y})
+    return pd.DataFrame(data)
 
 
 def test_init():
@@ -149,9 +163,7 @@ def test_compute_critical_quantile():
 def test_compute_critical_quantile_rejects_negative_costs():
     wrapper = TwoStageForecasterWrapper(fcst=None)
     with pytest.raises(ValueError, match="non-negative"):
-        wrapper._compute_critical_quantile(
-            cu=np.array([-1.0]), co=np.array([2.0])
-        )
+        wrapper._compute_critical_quantile(cu=np.array([-1.0]), co=np.array([2.0]))
 
 
 def test_extract_cost_array(sample_train_data):
@@ -217,9 +229,7 @@ def test_fit_rejects_invalid_target(sample_train_data, invalid_y, message):
     [
         (pd.DataFrame(columns=["unique_id", "ds", "y"]), "cannot be empty"),
         (
-            pd.DataFrame(
-                {"unique_id": ["A"], "ds": [pd.Timestamp("2023-01-01")]}
-            ),
+            pd.DataFrame({"unique_id": ["A"], "ds": [pd.Timestamp("2023-01-01")]}),
             "was not found",
         ),
     ],
@@ -244,6 +254,63 @@ def test_fit_and_predict_without_x_df(sample_train_data):
     assert "lambda_t" in pred_df.columns
     assert "q_50" in pred_df.columns
     assert len(pred_df) == 6  # 2 IDs * 3 horizon
+
+
+def test_default_family_returns_negative_binomial_distribution(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    frame, distribution = wrapper.predict_distribution(h=2)
+
+    assert isinstance(distribution, NegativeBinomialPredictiveDistribution)
+    assert len(distribution) == len(frame)
+    assert distribution.cdf(frame["lambda_t"].to_numpy()).shape == (len(frame),)
+    assert distribution.pmf(np.arange(3)).shape == (len(frame), 3)
+
+
+def test_gamma_family_supports_continuous_targets(sample_continuous_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1, 7])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst, distribution=GammaFamily()).fit(
+        sample_continuous_data, h=7, n_windows=3
+    )
+
+    frame = wrapper.predict(h=2, quantiles=[0.1, 0.5, 0.9])
+    distribution_frame, distribution = wrapper.predict_distribution(h=2)
+
+    assert "shape_dispersion" in frame
+    assert np.issubdtype(frame["q_50"].dtype, np.floating)
+    assert isinstance(distribution, GammaPredictiveDistribution)
+    assert distribution.interval(0.9).shape == (len(distribution_frame), 2)
+    assert distribution.sample(3, random_state=42).shape == (
+        len(distribution_frame),
+        3,
+    )
+
+
+def test_gamma_family_rejects_zero_and_has_no_pmf(sample_continuous_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst, distribution=GammaFamily())
+    invalid = sample_continuous_data.copy()
+    invalid.loc[invalid.index[0], "y"] = 0.0
+
+    with pytest.raises(ValueError, match="strictly positive"):
+        wrapper.fit(invalid)
+
+    wrapper.fit(sample_continuous_data)
+    with pytest.raises(TypeError, match="only for discrete"):
+        wrapper.pmf(h=1)
+
+
+def test_optimize_uses_continuous_distribution_ppf(sample_continuous_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst, distribution=GammaFamily()).fit(
+        sample_continuous_data
+    )
+
+    result = wrapper.optimize(h=2, underage_cost=3.0, overage_cost=1.0)
+
+    assert np.allclose(result["critical_ratio"], 0.75)
+    assert np.issubdtype(result["y_optimal"].dtype, np.floating)
 
 
 def test_fit_and_predict_with_x_df(sample_train_data):
@@ -346,9 +413,7 @@ def test_pmf_and_marginal_benefit(sample_train_data):
     expected_marginal_benefit = 10.0 * (1.0 - probability_below_k) - (
         2.0 * probability_below_k
     )
-    actual_marginal_benefit = mb_df[
-        [f"MB(k={k})" for k in range(max_k + 1)]
-    ].to_numpy()
+    actual_marginal_benefit = mb_df[[f"MB(k={k})" for k in range(max_k + 1)]].to_numpy()
     assert np.allclose(actual_marginal_benefit, expected_marginal_benefit)
 
 

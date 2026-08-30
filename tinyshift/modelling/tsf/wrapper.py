@@ -13,27 +13,33 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.utils.imports import requires_extra
 
+from .distribution import DiscretePredictiveDistribution, PredictiveDistribution
+from .family import DistributionFamily, NegativeBinomialFamily
+
 
 class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
-    """Two-stage probabilistic forecasting wrapper using MLForecast and Negative Binomial distribution.
+    """Two-stage probabilistic forecasting wrapper using MLForecast.
 
     This model decouples conditional expectation from dispersion:
         1. Employs `MLForecast` regressors (e.g., LightGBM) with optional exponential time-decay weighting to forecast conditional expectation (lambda_t).
-        2. Calibrates a per-series dispersion parameter (r) via Maximum Likelihood Estimation (MLE) on out-of-sample temporal cross-validation residuals.
-        3. Projects discrete inventory quantiles, exact probability mass functions (PMF), and Newsvendor optimal stock levels via the inverse CDF (PPF) of the Negative Binomial distribution.
+        2. Calibrates a per-series distribution parameter via maximum likelihood
+           on out-of-sample temporal cross-validation predictions.
+        3. Exposes a row-aligned predictive distribution and projects arbitrary
+           quantiles or Newsvendor-optimal levels through its inverse CDF.
 
-    Demand Regime Applicability
-    ---------------------------
+    Default Negative Binomial Applicability
+    ---------------------------------------
     - **Intermittent Demand (Zero-Inflated)**: Highly recommended. Handles frequent zeros efficiently.
     - **Erratic / Lumpy Demand**: Highly recommended. Captures high variance (variance > mean) via 'r'.
     - **Smooth / Low-Variance Demand**: Supported. As r increases, it naturally converges to a Poisson regime.
-    - **Continuous / High-Volume Demand**: Not recommended. High-volume series with high r values will automatically fall back
-      or converge toward a Poisson regime (bounded by r = 50).
+    - **Continuous / High-Volume Demand**: Select an explicit continuous family,
+      such as :class:`GammaFamily`, instead of the default.
 
     Architecture & Key Features
     ---------------------------
     - **Decoupled Two-Stage Design**: Separates point expectation forecasting from variance and tail modeling.
-    - **Out-of-Sample Dispersion Calibration**: Optimizes per-series dispersion (r) using cross-validation residuals, backed by a robust global median fallback for cold-start series.
+    - **Out-of-Sample Dispersion Calibration**: Optimizes a family-specific
+      parameter per series, backed by a global median fallback for cold starts.
     - **Time-Decay Recency Weighting**: Supports exponential time-decay scaling (`gamma`) to prioritize recent historical dynamics during base model fitting.
     - **Inventory Optimization**: Built-in native support for Newsvendor critical fractile calculations and discrete marginal benefit evaluation.
 
@@ -41,10 +47,19 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     ----------
     fcst : MLForecast
         An un-fitted or fitted MLForecast instance configured with a single underlying regressor.
+    distribution : DistributionFamily, optional
+        Conditional distribution family for the second stage. Defaults to
+        :class:`NegativeBinomialFamily`; use :class:`GammaFamily` for strictly
+        positive continuous targets.
     """
 
-    def __init__(self, fcst: Any):
+    def __init__(
+        self,
+        fcst: Any,
+        distribution: Optional[DistributionFamily] = None,
+    ):
         self.fcst = fcst
+        self.distribution = distribution
 
     @staticmethod
     def _validate_target(df: pd.DataFrame, target_col: str) -> None:
@@ -173,11 +188,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             bounds=(1e-3, 50.0),
             method="bounded",
         )
-        if (
-            not res.success
-            or not np.isfinite(res.fun)
-            or not np.isfinite(res.x)
-        ):
+        if not res.success or not np.isfinite(res.fun) or not np.isfinite(res.x):
             raise RuntimeError(f"Dispersion optimization failed: {res.message}")
         return float(res.x)
 
@@ -325,17 +336,19 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             **fit_kwargs,
         )
 
-        r_dict = {}
+        dispersion_dict = {}
         for uid, group in cv_df.groupby(self.id_col):
             y_obs = group[self.target_col].to_numpy()
             lambdas_oof = group[self.model_name].to_numpy()
-            r_dict[uid] = self._estimate_r(y_obs, lambdas_oof)
+            dispersion_dict[uid] = self.distribution_family_.fit_dispersion(
+                y_obs, lambdas_oof
+            )
 
-        if not r_dict:
+        if not dispersion_dict:
             raise RuntimeError("Dispersion calibration produced no series.")
-        r_fallback = float(np.median(list(r_dict.values())))
+        dispersion_fallback = float(np.median(list(dispersion_dict.values())))
 
-        return r_dict, r_fallback
+        return dispersion_dict, dispersion_fallback
 
     def _fit_base_forecaster(
         self,
@@ -410,7 +423,23 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.target_col = target_col
         self.static_features = static_features or []
 
-        self._validate_target(df_train, target_col)
+        self.distribution_family_ = (
+            NegativeBinomialFamily() if self.distribution is None else self.distribution
+        )
+        if not isinstance(self.distribution_family_, DistributionFamily):
+            raise TypeError(
+                "distribution must be a DistributionFamily instance or None."
+            )
+        if target_col not in df_train.columns:
+            raise ValueError(f"Target column {target_col!r} was not found.")
+        try:
+            target = df_train[target_col].to_numpy(dtype=float)
+        except (TypeError, ValueError) as exc:
+            label = "numeric counts" if self.distribution is None else "numeric"
+            raise ValueError(f"Target values must be {label}.") from exc
+        if target.size == 0:
+            raise ValueError("Training data cannot be empty.")
+        self.distribution_family_.validate_target(target)
         df_fit = df_train.copy()
 
         fit_kwargs = {}
@@ -421,9 +450,15 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             df_fit["_temp_weight"] = weights_array
             fit_kwargs["weight_col"] = "_temp_weight"
 
-        self.r_dict_, self.r_fallback_ = self._calibrate_dispersion_cv(
-            df_fit, h, n_windows, step_size, refit, fit_kwargs
+        self.dispersion_dict_, self.dispersion_fallback_ = (
+            self._calibrate_dispersion_cv(
+                df_fit, h, n_windows, step_size, refit, fit_kwargs
+            )
         )
+        # Backwards-compatible fitted attributes for the default family.
+        if isinstance(self.distribution_family_, NegativeBinomialFamily):
+            self.r_dict_ = self.dispersion_dict_
+            self.r_fallback_ = self.dispersion_fallback_
 
         self.exog_cols_ = self._fit_base_forecaster(
             df=df_fit,
@@ -439,14 +474,15 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         X_df: pd.DataFrame = None,
         quantiles: tuple = (0.05, 0.50, 0.95),
     ) -> pd.DataFrame:
-        """Generates out-of-sample probabilistic forecast quantiles using the Negative Binomial CDF.
+        """Generate out-of-sample quantiles from the configured distribution.
 
         Process
         -------
         1. Executes recursive forecasting via MLForecast to obtain future lambda_t values.
-        2. Maps historical `r` dispersion parameters (or applies `r_fallback` for new series).
-        3. Computes exact integer quantiles using the Negative Binomial Percent Point Function (PPF/Inverse CDF)
-           and applies `np.ceil` to ensure discrete inventory units.
+        2. Maps calibrated per-series distribution parameters, using the global
+           median fallback for unseen series.
+        3. Evaluates the configured distribution's PPF. Results are integer-valued
+           for discrete families and real-valued for continuous families.
 
         Parameters
         ----------
@@ -460,26 +496,46 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         Returns
         -------
         df_pred : pandas.DataFrame
-            DataFrame containing time series identifiers, predicted lambda_t, dispersion parameters,
-            and discrete stock quantile estimates (`q_*`).
+            DataFrame containing identifiers, conditional means, distribution
+            parameters, and quantile estimates (`q_*`).
         """
 
-        df_pred = self.fcst.predict(h=h, X_df=X_df)
-
-        df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
-        lambda_t = df_pred["lambda_t"].to_numpy(dtype=float)
-        if not np.all(np.isfinite(lambda_t)):
-            raise ValueError("Predicted lambda values must be finite.")
-        df_pred["lambda_t"] = np.maximum(lambda_t, 1e-6)
-        df_pred["r_dispersion"] = (
-            df_pred[self.id_col].map(self.r_dict_).fillna(self.r_fallback_)
-        )
+        df_pred, distribution = self.predict_distribution(h=h, X_df=X_df)
 
         for q in sorted(quantiles):
+            if not np.isfinite(q) or not 0.0 < q < 1.0:
+                raise ValueError(
+                    "Quantiles must be finite and strictly between 0 and 1."
+                )
             col_name = f"q_{int(q * 100)}"
-            df_pred[col_name] = self._compute_quantile(df_pred, target_q=q)
+            df_pred[col_name] = distribution.ppf(q)
 
         return df_pred
+
+    @requires_extra("series")
+    def predict_distribution(
+        self,
+        h: int,
+        X_df: pd.DataFrame = None,
+    ) -> Tuple[pd.DataFrame, PredictiveDistribution]:
+        """Return the forecast frame and its aligned predictive distributions."""
+        df_pred = self.fcst.predict(h=h, X_df=X_df)
+        df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
+        means = df_pred["lambda_t"].to_numpy(dtype=float)
+        if not np.all(np.isfinite(means)):
+            raise ValueError("Predicted mean values must be finite.")
+        means = np.maximum(means, 1e-6)
+        df_pred["lambda_t"] = means
+        parameter_column = self.distribution_family_.parameter_column
+        df_pred[parameter_column] = (
+            df_pred[self.id_col]
+            .map(self.dispersion_dict_)
+            .fillna(self.dispersion_fallback_)
+        )
+        predictive = self.distribution_family_.distribution(
+            means, df_pred[parameter_column].to_numpy(dtype=float)
+        )
+        return df_pred, predictive
 
     @requires_extra("series")
     def optimize(
@@ -525,7 +581,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             [c for c in X_df.columns if c not in excluded] if X_df is not None else None
         )
         pred_x_df = X_df[pred_cols] if X_df is not None else None
-        df_out = self.predict(h=h, X_df=pred_x_df, quantiles=[])
+        df_out, distribution = self.predict_distribution(h=h, X_df=pred_x_df)
 
         cost_df = X_df if X_df is not None else df_out
         n_rows = len(df_out)
@@ -540,7 +596,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         critical_fractile = self._compute_critical_quantile(cu=cu_arr, co=co_arr)
 
         df_out[ratio_col] = critical_fractile
-        df_out[output_col] = self._compute_quantile(df_out, target_q=critical_fractile)
+        df_out[output_col] = distribution.ppf(critical_fractile)
 
         return df_out
 
@@ -571,16 +627,13 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         if not isinstance(max_k, (int, np.integer)) or max_k < 0:
             raise ValueError("max_k must be a non-negative integer.")
 
-        df_out = self.predict(h=h, X_df=X_df, quantiles=[])
-
-        p_param = df_out["r_dispersion"] / (df_out["r_dispersion"] + df_out["lambda_t"])
-        r_param = df_out["r_dispersion"].values
+        df_out, distribution = self.predict_distribution(h=h, X_df=X_df)
+        if not isinstance(distribution, DiscretePredictiveDistribution):
+            raise TypeError("pmf is available only for discrete distribution families.")
 
         k_range = np.arange(0, max_k + 1)
 
-        pmf_matrix = nbinom.pmf(
-            k_range[None, :], r_param[:, None], p_param.values[:, None]
-        )
+        pmf_matrix = distribution.pmf(k_range)
 
         for k in k_range:
             df_out[f"P(Y={k})"] = pmf_matrix[:, k]
@@ -675,7 +728,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             cu_arr[:, None] * p_greater_equal_matrix - co_arr[:, None] * p_less_matrix
         )
 
-        df_out = df_pmf[[self.id_col, self.time_col, "lambda_t", "r_dispersion"]].copy()
+        parameter_column = self.distribution_family_.parameter_column
+        df_out = df_pmf[
+            [self.id_col, self.time_col, "lambda_t", parameter_column]
+        ].copy()
 
         for i, k in enumerate(k_range):
             df_out[f"MB(k={k})"] = mb_matrix[:, i]

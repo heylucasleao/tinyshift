@@ -342,7 +342,7 @@ The `tinyshift.modelling` package contains preprocessing and forecasting wrapper
 - `RobustGaussianScaler` — robust scaling with winsorization and power transforms
 - `DTLWrapper` — decomposed LOWESS trend plus ML residual forecasting for non-seasonal data
 - `DMSTLWrapper` — decomposed MSTL forecasting wrapper for panel/multi-seasonal data
-- `TwoStageForecasterWrapper` — Negative Binomial demand quantiles and inventory optimization on top of `MLForecast`
+- `TwoStageForecasterWrapper` — configurable Negative Binomial or Gamma predictive distributions and inventory optimization on top of `MLForecast`
 - `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
 
 Use `tinyshift.modelling` when you need preprocessors and decomposition-aware forecasting tools that complement the core `tinyshift.series` diagnostics and stability metrics.
@@ -440,10 +440,10 @@ print(preds.head())
 ### 11. Two-Stage Probabilistic Demand Forecasting
 
 `TwoStageForecasterWrapper` separates the point forecast from uncertainty
-calibration. An `MLForecast` model estimates expected demand (`lambda_t`), while
-temporal cross-validation fits a per-series Negative Binomial dispersion
-parameter. The result supports discrete demand quantiles and inventory decisions
-for intermittent, erratic, and lumpy count data.
+calibration. An `MLForecast` model estimates the conditional mean (`lambda_t`),
+while temporal cross-validation fits a per-series distribution parameter. The
+default Negative Binomial family supports discrete demand and inventory
+decisions; `GammaFamily` supports strictly positive continuous targets.
 
 ```python
 from mlforecast import MLForecast
@@ -474,10 +474,16 @@ stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
 
 # Exact probabilities P(Y=k), including the remaining upper tail
 probabilities = model.pmf(h=14, max_k=10)
+
+# Continuous alternative; cdf/ppf/interval/sample share the same interface.
+from tinyshift.modelling import GammaFamily
+
+continuous_model = TwoStageForecasterWrapper(fcst, distribution=GammaFamily())
 ```
 
-The target must contain non-negative integer counts. Install the `series` extra
-to use this wrapper: `pip install "tinyshift[series]"`.
+Negative Binomial targets must contain non-negative integer counts; Gamma targets
+must be strictly positive. Install the `series` extra to use this wrapper:
+`pip install "tinyshift[series]"`.
 
 ## 📁 Project Structure
 
