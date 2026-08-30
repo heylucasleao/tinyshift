@@ -175,7 +175,7 @@ strategy with `mode="local"` or `mode="global"` when creating the wrapper.
 
 ---
 
-### 6. Two-Stage Probabilistic Forecasting (`two_stage/`)
+### 6. Two-Stage Probabilistic Forecasting (`tsf/`)
 
 #### **`TwoStageForecasterWrapper`** - Demand Forecasting + Inventory Optimization
 
