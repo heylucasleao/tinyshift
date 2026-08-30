@@ -1,14 +1,17 @@
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
 
+import tinyshift.modelling.tsf.family as tsf_family_module
 import tinyshift.modelling.tsf.wrapper as tsf_wrapper_module
 from tinyshift.modelling import (
     FirstStageForecasterEvaluator,
     GammaFamily,
     GammaPredictiveDistribution,
+    NegativeBinomialFamily,
     NegativeBinomialPredictiveDistribution,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
@@ -375,9 +378,7 @@ def test_optimize_accepts_x_df_with_only_cost_columns(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
     costs = pd.DataFrame({"cu": [10.0] * 4, "co": [2.0] * 4})
 
-    result = wrapper.optimize(
-        h=2, underage_cost="cu", overage_cost="co", X_df=costs
-    )
+    result = wrapper.optimize(h=2, underage_cost="cu", overage_cost="co", X_df=costs)
 
     assert len(result) == len(costs)
     assert np.allclose(result["critical_ratio"], 10.0 / 12.0)
@@ -509,3 +510,272 @@ def test_tsf_evaluator_rejects_invalid_quantile():
     df = pd.DataFrame({"y": [1.0], "q_100": [1.0]})
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
         TwoStageForecasterEvaluator.evaluate(df, quantiles=[1.0])
+
+
+@pytest.mark.parametrize("family", [NegativeBinomialFamily(), GammaFamily()])
+def test_family_fit_dispersion_rejects_misaligned_or_non_finite_means(family):
+    target = np.array([1.0, 2.0])
+
+    with pytest.raises(ValueError, match="same shape"):
+        family.fit_dispersion(target, np.array([1.0]))
+    with pytest.raises(ValueError, match="must be finite"):
+        family.fit_dispersion(target, np.array([1.0, np.nan]))
+
+
+@pytest.mark.parametrize(
+    ("family", "target"),
+    [
+        (NegativeBinomialFamily(min_size=0.1, max_size=8.0), [0, 1, 3, 2]),
+        (GammaFamily(min_shape=0.1, max_shape=20.0), [0.8, 1.5, 2.2, 3.0]),
+    ],
+)
+def test_family_fit_dispersion_uses_configured_bounds(family, target):
+    result = family.fit_dispersion(np.asarray(target), np.array([1.0, 1.5, 2.0, 2.5]))
+
+    assert family.dispersion_bounds[0] <= result <= family.dispersion_bounds[1]
+
+
+def test_family_fit_dispersion_reports_optimizer_failure(monkeypatch):
+    class FailedResult:
+        success = False
+        message = "did not converge"
+        x = np.nan
+        fun = np.inf
+
+    monkeypatch.setattr(
+        tsf_family_module, "minimize_scalar", lambda *args, **kwargs: FailedResult()
+    )
+
+    with pytest.raises(RuntimeError, match="Dispersion optimization failed"):
+        NegativeBinomialFamily().fit_dispersion(np.array([0, 1]), np.array([0.5, 1.0]))
+
+
+@pytest.mark.parametrize("family", [NegativeBinomialFamily(), GammaFamily()])
+@pytest.mark.parametrize("dispersion", [0.0, -1.0, np.nan, np.inf])
+def test_family_negative_log_likelihood_rejects_invalid_dispersion(family, dispersion):
+    target = np.array([1.0, 2.0])
+    means = np.array([1.0, 2.0])
+
+    assert family.negative_log_likelihood(dispersion, target, means) == 1e10
+
+
+@pytest.mark.parametrize(
+    ("means", "dispersions", "message"),
+    [
+        ([1.0, 2.0], [1.0], "aligned one-dimensional"),
+        ([[1.0, 2.0]], [[1.0, 2.0]], "aligned one-dimensional"),
+        ([1.0, np.nan], [1.0, 1.0], "must be finite"),
+        ([1.0, 2.0], [1.0, np.inf], "must be finite"),
+        ([0.0, 2.0], [1.0, 1.0], "strictly positive"),
+        ([1.0, 2.0], [-1.0, 1.0], "strictly positive"),
+    ],
+)
+def test_parametric_distribution_rejects_invalid_parameters(
+    means, dispersions, message
+):
+    with pytest.raises(ValueError, match=message):
+        GammaPredictiveDistribution(means, dispersions)
+
+
+@pytest.fixture
+def gamma_distribution():
+    return GammaPredictiveDistribution([2.0, 4.0], [3.0, 5.0])
+
+
+@pytest.fixture
+def count_distribution():
+    return NegativeBinomialPredictiveDistribution([2.0, 4.0], [3.0, 5.0])
+
+
+def test_distribution_aligns_scalar_row_grid_and_matrix(gamma_distribution):
+    assert gamma_distribution.cdf(2.0).shape == (2,)
+    assert gamma_distribution.cdf([2.0, 4.0]).shape == (2,)
+    assert gamma_distribution.cdf([1.0, 2.0, 3.0]).shape == (2, 3)
+    assert gamma_distribution.cdf([[1.0, 2.0], [3.0, 4.0]]).shape == (2, 2)
+
+    with pytest.raises(ValueError, match="scalar, a grid"):
+        gamma_distribution.cdf(np.ones((3, 2)))
+    with pytest.raises(ValueError, match="finite values"):
+        gamma_distribution.cdf(np.nan)
+
+
+@pytest.mark.parametrize("quantile", [-0.01, 1.01])
+def test_predictive_distributions_reject_invalid_quantiles(
+    gamma_distribution, count_distribution, quantile
+):
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        gamma_distribution.ppf(quantile)
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        count_distribution.ppf(quantile)
+
+
+@pytest.mark.parametrize("coverage", [0.0, 1.0, -0.1, np.nan, np.inf])
+def test_distribution_interval_rejects_invalid_coverage(gamma_distribution, coverage):
+    with pytest.raises(ValueError, match="strictly between 0 and 1"):
+        gamma_distribution.interval(coverage)
+
+
+@pytest.mark.parametrize("n_samples", [0, -1, 1.5, True])
+def test_distribution_sample_rejects_invalid_count(gamma_distribution, n_samples):
+    with pytest.raises(ValueError, match="positive integer"):
+        gamma_distribution.sample(n_samples)
+
+
+def test_distribution_sample_is_reproducible(gamma_distribution):
+    first = gamma_distribution.sample(4, random_state=42)
+    second = gamma_distribution.sample(4, random_state=42)
+
+    assert first.shape == (2, 4)
+    assert np.array_equal(first, second)
+
+
+@pytest.mark.parametrize("value", [1.5, np.nan, np.inf])
+def test_discrete_pmf_rejects_non_integer_or_non_finite_values(
+    count_distribution, value
+):
+    with pytest.raises(ValueError, match="finite integers"):
+        count_distribution.pmf(value)
+
+
+def test_discrete_distribution_probability_contract(count_distribution):
+    values = np.arange(0, 6)
+    pmf = count_distribution.pmf(values)
+
+    assert np.allclose(
+        pmf,
+        count_distribution.cdf(values) - count_distribution.cdf(values - 1),
+    )
+    quantiles = np.array([[0.1, 0.5, 0.9], [0.1, 0.5, 0.9]])
+    projected = count_distribution.ppf(quantiles)
+    assert np.all(count_distribution.cdf(projected) >= quantiles)
+
+
+def test_optimize_preserves_row_aligned_costs(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    costs = pd.DataFrame({"cu": [1.0, 3.0, 8.0, 0.0], "co": [3.0, 1.0, 2.0, 0.0]})
+
+    result = wrapper.optimize(h=2, underage_cost="cu", overage_cost="co", X_df=costs)
+
+    assert np.allclose(result["critical_ratio"], [0.25, 0.75, 0.8, 0.5])
+
+
+def test_optimize_rejects_bad_cost_frame(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    with pytest.raises(ValueError, match="one row per forecast row"):
+        wrapper.optimize(
+            h=2,
+            underage_cost="cu",
+            overage_cost="co",
+            X_df=pd.DataFrame({"cu": [1.0], "co": [1.0]}),
+        )
+    with pytest.raises(KeyError):
+        wrapper.optimize(
+            h=2,
+            underage_cost="missing",
+            overage_cost="co",
+            X_df=pd.DataFrame({"co": [1.0] * 4}),
+        )
+
+
+@pytest.mark.parametrize("cost", [-1.0, np.nan, np.inf])
+def test_optimize_rejects_invalid_costs(sample_train_data, cost):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    with pytest.raises(ValueError, match="finite|non-negative"):
+        wrapper.optimize(h=1, underage_cost=cost, overage_cost=1.0)
+
+
+def test_predict_distribution_uses_fallback_for_unknown_series(
+    sample_train_data, monkeypatch
+):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    raw = fcst.make_future_dataframe(h=1).iloc[[0]].copy()
+    raw["unique_id"] = "unseen"
+    raw[wrapper.model_name] = 2.0
+    monkeypatch.setattr(fcst, "predict", lambda **kwargs: raw.copy())
+
+    frame, _ = wrapper.predict_distribution(h=1)
+
+    assert frame.loc[frame.index[0], "r_dispersion"] == pytest.approx(
+        wrapper.dispersion_fallback_
+    )
+
+
+def test_first_stage_evaluator_rejects_missing_or_empty_data():
+    with pytest.raises(KeyError, match="Columns not found"):
+        FirstStageForecasterEvaluator.evaluate(pd.DataFrame({"y": [1.0]}))
+    with pytest.raises(ValueError, match="No valid"):
+        FirstStageForecasterEvaluator.evaluate(
+            pd.DataFrame(
+                {
+                    "unique_id": ["a"],
+                    "ds": [1],
+                    "y": [np.nan],
+                    "lambda_t": [np.nan],
+                }
+            )
+        )
+
+
+def test_first_stage_evaluator_handles_all_zero_target():
+    data = pd.DataFrame(
+        {
+            "unique_id": ["a", "a"],
+            "ds": [1, 2],
+            "y": [0.0, 0.0],
+            "lambda_t": [1.0, 1.0],
+        }
+    )
+
+    result = FirstStageForecasterEvaluator.evaluate(data)
+
+    assert np.isnan(result.loc["WAPE", "Metrics"])
+    assert np.isnan(result.loc["PBias", "Metrics"])
+
+
+@pytest.mark.parametrize("n_bins", [1, 1.5])
+def test_calibration_table_rejects_invalid_bins(n_bins):
+    data = pd.DataFrame({"y": [1.0, 2.0], "lambda_t": [1.0, 2.0]})
+
+    with pytest.raises(ValueError, match="greater than or equal to 2"):
+        FirstStageForecasterEvaluator.calibration_table(data, n_bins=n_bins)
+
+
+def test_calibration_table_handles_constant_predictions():
+    data = pd.DataFrame({"y": [1.0, 2.0], "lambda_t": [1.5, 1.5]})
+
+    result = FirstStageForecasterEvaluator.calibration_table(data, n_bins=5)
+
+    assert len(result) == 1
+    assert result.loc[0, "Calibration Bin"] == "all"
+
+
+def test_two_stage_evaluator_requires_target_and_skips_missing_quantiles():
+    with pytest.raises(KeyError, match="Target column"):
+        TwoStageForecasterEvaluator.evaluate(pd.DataFrame({"q_50": [1.0]}))
+
+    result = TwoStageForecasterEvaluator.evaluate(
+        pd.DataFrame({"y": [1.0]}), quantiles=(0.5, 0.95)
+    )
+    assert result.empty
+
+
+def test_wrapper_joblib_round_trip(sample_train_data, tmp_path):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    expected = wrapper.predict(h=2, quantiles=(0.5, 0.95))
+    path = tmp_path / "tsf.joblib"
+
+    joblib.dump(wrapper, path)
+    restored = joblib.load(path)
+    actual = restored.predict(h=2, quantiles=(0.5, 0.95))
+
+    pd.testing.assert_frame_equal(actual, expected)
+    assert isinstance(restored.distribution_family_, NegativeBinomialFamily)
+    assert restored.dispersion_dict_ == wrapper.dispersion_dict_
+    assert restored.dispersion_fallback_ == wrapper.dispersion_fallback_
