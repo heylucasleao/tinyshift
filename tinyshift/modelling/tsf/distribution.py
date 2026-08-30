@@ -102,7 +102,11 @@ class NegativeBinomialPredictiveDistribution(
         if np.any((quantiles < 0.0) | (quantiles > 1.0)):
             raise ValueError("quantiles must lie in [0, 1].")
         probabilities = sizes / (sizes + means)
-        return np.ceil(nbinom.ppf(quantiles, sizes, probabilities)).astype(int)
+        projected = np.ceil(nbinom.ppf(quantiles, sizes, probabilities))
+        projected = np.where(quantiles == 0.0, 0.0, projected)
+        if np.all(np.isfinite(projected)):
+            return projected.astype(int)
+        return projected
 
 
 class GammaPredictiveDistribution(_ParametricDistribution):

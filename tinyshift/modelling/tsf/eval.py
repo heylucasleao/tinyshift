@@ -135,9 +135,7 @@ class FirstStageForecasterEvaluator:
             return 0.0
         revisions = prev_values - curr_values
         return float(
-            (np.abs(revisions).sum() + abs(revisions.sum()))
-            / average_volume
-            * 100
+            (np.abs(revisions).sum() + abs(revisions.sum())) / average_volume * 100
         )
 
     @classmethod
@@ -178,10 +176,9 @@ class FirstStageForecasterEvaluator:
             )
             .reset_index()
         )
-        result["Mean_Residual"] = (
-            result["Mean_Observed"] - result["Mean_Prediction"]
-        )
+        result["Mean_Residual"] = result["Mean_Observed"] - result["Mean_Prediction"]
         return result
+
 
 class TwoStageForecasterEvaluator:
     r"""Evaluator utility for probabilistic quantile forecasts.
@@ -210,6 +207,8 @@ class TwoStageForecasterEvaluator:
         mask = ~(np.isnan(y_true) | np.isnan(y_pred))
         y_true_clean = y_true[mask]
         y_pred_clean = y_pred[mask]
+        if y_true_clean.size == 0:
+            return np.nan
 
         err = y_true_clean - y_pred_clean
         return float(np.maximum(quantile * err, (quantile - 1) * err).mean())
@@ -246,7 +245,9 @@ class TwoStageForecasterEvaluator:
 
         for q in sorted(quantiles):
             if not np.isfinite(q) or not 0 < q < 1:
-                raise ValueError("Quantiles must be finite and strictly between 0 and 1.")
+                raise ValueError(
+                    "Quantiles must be finite and strictly between 0 and 1."
+                )
 
             q_int = round(q * 100)
             col_q = f"q_{q_int}"

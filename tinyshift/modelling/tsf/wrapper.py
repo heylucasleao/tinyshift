@@ -62,26 +62,56 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.distribution = distribution
 
     @staticmethod
-    def _validate_target(df: pd.DataFrame, target_col: str) -> None:
-        """Validate that the target is a non-empty sequence of count values."""
+    def _validate_fit_parameters(
+        h: int,
+        n_windows: int,
+        step_size: Optional[int],
+        gamma: Optional[float],
+    ) -> None:
+        """Validate temporal calibration and recency-weighting parameters."""
+        if (
+            isinstance(h, (bool, np.bool_))
+            or not isinstance(h, (int, np.integer))
+            or h < 1
+        ):
+            raise ValueError("h must be a positive integer.")
+        if (
+            isinstance(n_windows, (bool, np.bool_))
+            or not isinstance(n_windows, (int, np.integer))
+            or n_windows < 1
+        ):
+            raise ValueError("n_windows must be a positive integer.")
+        if step_size is not None and (
+            isinstance(step_size, (bool, np.bool_))
+            or not isinstance(step_size, (int, np.integer))
+            or step_size < 1
+        ):
+            raise ValueError("step_size must be None or a positive integer.")
+        if gamma is not None and (
+            isinstance(gamma, (bool, np.bool_)) or not np.isfinite(gamma) or gamma < 0
+        ):
+            raise ValueError("gamma must be a finite, non-negative number.")
+
+    @staticmethod
+    def _validate_training_target(
+        df: pd.DataFrame,
+        target_col: str,
+        distribution_family: DistributionFamily,
+        numeric_label: str,
+    ) -> np.ndarray:
+        """Extract and validate the target against the selected family."""
         if target_col not in df.columns:
             raise ValueError(f"Target column {target_col!r} was not found.")
 
         try:
-            y = df[target_col].to_numpy(dtype=float)
+            target = df[target_col].to_numpy(dtype=float)
         except (TypeError, ValueError) as exc:
-            raise ValueError("Target values must be numeric counts.") from exc
+            raise ValueError(f"Target values must be {numeric_label}.") from exc
 
-        if y.size == 0:
+        if target.size == 0:
             raise ValueError("Training data cannot be empty.")
-        if not np.all(np.isfinite(y)):
-            raise ValueError("Target values must be finite.")
-        if np.any(y < 0):
-            raise ValueError("Target values must be non-negative.")
-        if np.any(y != np.floor(y)):
-            raise ValueError(
-                "Target values must be integer counts for the Negative Binomial model."
-            )
+        distribution_family.validate_target(target)
+        return target
 
     @property
     def model_name(self) -> str:
@@ -307,6 +337,29 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
                 f"or dict mapping IDs or (ID, Time) tuples to values. Received: {type(cost_input)}"
             )
 
+    def _align_cost_frame(
+        self,
+        forecast_df: pd.DataFrame,
+        X_df: Optional[pd.DataFrame],
+    ) -> pd.DataFrame:
+        """Align decision inputs with forecast rows by key or positional order.
+
+        When ID and time columns are available, a one-to-one merge makes the
+        alignment explicit and independent of input row order. A frame without
+        those keys is treated as already row-aligned.
+        """
+        if X_df is None:
+            return forecast_df
+        if not {self.id_col, self.time_col}.issubset(X_df.columns):
+            return X_df
+        return forecast_df[[self.id_col, self.time_col]].merge(
+            X_df,
+            on=[self.id_col, self.time_col],
+            how="left",
+            sort=False,
+            validate="one_to_one",
+        )
+
     def _calibrate_dispersion_cv(
         self,
         df: pd.DataFrame,
@@ -423,6 +476,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self.target_col = target_col
         self.static_features = static_features or []
 
+        self._validate_fit_parameters(h, n_windows, step_size, gamma)
+
         self.distribution_family_ = (
             NegativeBinomialFamily() if self.distribution is None else self.distribution
         )
@@ -430,16 +485,13 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             raise TypeError(
                 "distribution must be a DistributionFamily instance or None."
             )
-        if target_col not in df_train.columns:
-            raise ValueError(f"Target column {target_col!r} was not found.")
-        try:
-            target = df_train[target_col].to_numpy(dtype=float)
-        except (TypeError, ValueError) as exc:
-            label = "numeric counts" if self.distribution is None else "numeric"
-            raise ValueError(f"Target values must be {label}.") from exc
-        if target.size == 0:
-            raise ValueError("Training data cannot be empty.")
-        self.distribution_family_.validate_target(target)
+        numeric_label = "numeric counts" if self.distribution is None else "numeric"
+        self._validate_training_target(
+            df_train,
+            target_col,
+            self.distribution_family_,
+            numeric_label,
+        )
         df_fit = df_train.copy()
 
         fit_kwargs = {}
@@ -502,12 +554,19 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         df_pred, distribution = self.predict_distribution(h=h, X_df=X_df)
 
+        quantile_columns = {}
         for q in sorted(quantiles):
             if not np.isfinite(q) or not 0.0 < q < 1.0:
                 raise ValueError(
                     "Quantiles must be finite and strictly between 0 and 1."
                 )
             col_name = f"q_{int(q * 100)}"
+            if col_name in quantile_columns:
+                raise ValueError(
+                    f"Quantiles {quantile_columns[col_name]} and {q} map to the "
+                    f"same output column {col_name!r}."
+                )
+            quantile_columns[col_name] = q
             df_pred[col_name] = distribution.ppf(q)
 
         return df_pred
@@ -588,7 +647,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
                 pred_x_df = X_df[prediction_columns]
         df_out, distribution = self.predict_distribution(h=h, X_df=pred_x_df)
 
-        cost_df = X_df if X_df is not None else df_out
+        cost_df = self._align_cost_frame(df_out, X_df)
         n_rows = len(df_out)
         if len(cost_df) != n_rows:
             raise ValueError("Cost inputs must have one row per forecast row.")
@@ -703,7 +762,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         pred_x_df = X_df[pred_cols] if X_df is not None else None
         df_pmf = self.pmf(h=h, max_k=max_k, X_df=pred_x_df)
 
-        cost_df = X_df if X_df is not None else df_pmf
+        cost_df = self._align_cost_frame(df_pmf, X_df)
         n_rows = len(df_pmf)
         if len(cost_df) != n_rows:
             raise ValueError("Cost inputs must have one row per forecast row.")

@@ -8,6 +8,7 @@ from sklearn.linear_model import LinearRegression
 import tinyshift.modelling.tsf.family as tsf_family_module
 import tinyshift.modelling.tsf.wrapper as tsf_wrapper_module
 from tinyshift.modelling import (
+    DistributionFamily,
     FirstStageForecasterEvaluator,
     GammaFamily,
     GammaPredictiveDistribution,
@@ -779,3 +780,260 @@ def test_wrapper_joblib_round_trip(sample_train_data, tmp_path):
     assert isinstance(restored.distribution_family_, NegativeBinomialFamily)
     assert restored.dispersion_dict_ == wrapper.dispersion_dict_
     assert restored.dispersion_fallback_ == wrapper.dispersion_fallback_
+
+
+def test_gamma_wrapper_joblib_round_trip(sample_continuous_data, tmp_path):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst, distribution=GammaFamily()).fit(
+        sample_continuous_data
+    )
+    expected = wrapper.predict(h=2, quantiles=(0.1, 0.9))
+    path = tmp_path / "gamma-tsf.joblib"
+
+    joblib.dump(wrapper, path)
+    restored = joblib.load(path)
+
+    pd.testing.assert_frame_equal(restored.predict(h=2, quantiles=(0.1, 0.9)), expected)
+    assert isinstance(restored.distribution_family_, GammaFamily)
+    assert restored.dispersion_dict_ == wrapper.dispersion_dict_
+
+
+def test_continuous_optimize_accepts_cost_only_x_df(sample_continuous_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst, distribution=GammaFamily()).fit(
+        sample_continuous_data
+    )
+    costs = pd.DataFrame({"cu": [3.0, 1.0, 7.0, 1.0], "co": [1.0] * 4})
+
+    result = wrapper.optimize(h=2, underage_cost="cu", overage_cost="co", X_df=costs)
+
+    assert np.allclose(result["critical_ratio"], [0.75, 0.5, 0.875, 0.5])
+    assert np.issubdtype(result["y_optimal"].dtype, np.floating)
+
+
+def test_optimize_accepts_time_keyed_cost_dicts(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    future = fcst.make_future_dataframe(h=2)
+    keys = list(zip(future["unique_id"], future["ds"]))
+    underage = dict(zip(keys, [1.0, 3.0, 8.0, 1.0]))
+    overage = dict(zip(keys, [3.0, 1.0, 2.0, 1.0]))
+
+    result = wrapper.optimize(h=2, underage_cost=underage, overage_cost=overage)
+
+    assert np.allclose(result["critical_ratio"], [0.25, 0.75, 0.8, 0.5])
+
+
+def test_optimize_separates_costs_from_real_exogenous_features():
+    dates = pd.date_range("2024-01-01", periods=80, freq="D")
+    train = pd.DataFrame(
+        {
+            "unique_id": "A",
+            "ds": dates,
+            "promo": np.tile([0.0, 1.0], 40),
+            "y": np.tile([2.0, 5.0], 40),
+        }
+    )
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst).fit(
+        train, static_features=[], h=2, n_windows=3
+    )
+    future = fcst.make_future_dataframe(h=2)
+    future["promo"] = [0.0, 1.0]
+    future["cu"] = [1.0, 3.0]
+    future["co"] = [3.0, 1.0]
+
+    result = wrapper.optimize(h=2, underage_cost="cu", overage_cost="co", X_df=future)
+
+    assert np.allclose(result["critical_ratio"], [0.25, 0.75])
+
+
+def test_optimize_aligns_shuffled_cost_rows_by_id_and_time(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+    costs = fcst.make_future_dataframe(h=2)
+    costs["cu"] = [1.0, 3.0, 8.0, 1.0]
+    costs["co"] = [3.0, 1.0, 2.0, 1.0]
+    expected = dict(zip(zip(costs["unique_id"], costs["ds"]), [0.25, 0.75, 0.8, 0.5]))
+
+    result = wrapper.optimize(
+        h=2,
+        underage_cost="cu",
+        overage_cost="co",
+        X_df=costs.sample(frac=1.0, random_state=42).reset_index(drop=True),
+    )
+
+    actual = [expected[(uid, ds)] for uid, ds in zip(result.unique_id, result.ds)]
+    assert np.allclose(result["critical_ratio"], actual)
+
+
+class CustomGammaFamily(DistributionFamily):
+    parameter_column = "custom_shape"
+
+    def __init__(self, min_shape=0.5, max_shape=30.0):
+        self.min_shape = min_shape
+        self.max_shape = max_shape
+
+    @property
+    def dispersion_bounds(self):
+        return self.min_shape, self.max_shape
+
+    def validate_target(self, y):
+        GammaFamily().validate_target(y)
+
+    def negative_log_likelihood(self, dispersion, y, means):
+        return GammaFamily().negative_log_likelihood(dispersion, y, means)
+
+    def distribution(self, means, dispersions):
+        return GammaPredictiveDistribution(means, dispersions)
+
+
+def test_wrapper_supports_custom_distribution_family(sample_continuous_data):
+    family = CustomGammaFamily()
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst, distribution=family).fit(
+        sample_continuous_data
+    )
+
+    result = wrapper.predict(h=1, quantiles=(0.5,))
+
+    assert "custom_shape" in result
+    assert "q_50" in result
+
+
+@pytest.mark.parametrize(
+    "family",
+    [NegativeBinomialFamily(min_size=2.0, max_size=1.0), GammaFamily(2.0, 1.0)],
+)
+def test_family_rejects_reversed_dispersion_bounds(family):
+    with pytest.raises(ValueError, match="lower bound"):
+        family.fit_dispersion(np.array([1.0, 2.0]), np.array([1.0, 2.0]))
+
+
+def test_distribution_ppf_supports_probability_endpoints(
+    gamma_distribution, count_distribution
+):
+    assert np.all(gamma_distribution.ppf(0.0) == 0.0)
+    assert np.all(count_distribution.ppf(0.0) == 0)
+    assert np.all(np.isinf(gamma_distribution.ppf(1.0)))
+    assert np.all(np.isinf(count_distribution.ppf(1.0)))
+
+
+def test_discrete_pmf_supports_negative_values_and_matrices(count_distribution):
+    values = np.array([[-2, -1, 0], [1, 2, 3]])
+    result = count_distribution.pmf(values)
+
+    assert result.shape == values.shape
+    assert np.all(result[0, :2] == 0.0)
+
+
+@pytest.mark.parametrize(
+    ("means", "dispersions"),
+    [([1e-12, 1e12], [1e-6, 1e6]), ([1e-8, 1e8], [1e-5, 1e5])],
+)
+def test_distributions_remain_finite_at_extreme_parameters(means, dispersions):
+    distribution = GammaPredictiveDistribution(means, dispersions)
+
+    cdf = distribution.cdf(np.asarray(means))
+    median = distribution.ppf(0.5)
+
+    assert np.all(np.isfinite(cdf))
+    assert np.all(np.isfinite(median))
+
+
+def test_two_stage_evaluator_handles_all_nan_pairs():
+    result = TwoStageForecasterEvaluator.evaluate(
+        pd.DataFrame({"y": [np.nan], "q_50": [np.nan]}), quantiles=(0.5,)
+    )
+
+    assert np.isnan(result.loc["q_50", "Pinball Loss"])
+    assert np.isnan(result.loc["q_50", "Empirical Coverage"])
+
+
+def test_wrapper_supports_custom_column_names():
+    dates = pd.date_range("2024-01-01", periods=80, freq="D")
+    train = pd.DataFrame(
+        {
+            "series": np.repeat(["A", "B"], 80),
+            "date": np.tile(dates, 2),
+            "demand": np.tile(np.arange(80) % 4, 2),
+        }
+    )
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst).fit(
+        train,
+        id_col="series",
+        time_col="date",
+        target_col="demand",
+        h=2,
+        n_windows=3,
+    )
+
+    result = wrapper.predict(h=2, quantiles=(0.5,))
+
+    assert {"series", "date", "q_50"}.issubset(result.columns)
+
+
+@pytest.mark.parametrize("gamma", [-1.0, np.nan, np.inf])
+def test_fit_rejects_invalid_time_decay_gamma(sample_train_data, gamma):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst)
+
+    with pytest.raises(ValueError, match="gamma"):
+        wrapper.fit(sample_train_data, gamma=gamma)
+
+
+def test_fit_reports_empty_cross_validation(sample_train_data, monkeypatch):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    monkeypatch.setattr(fcst, "cross_validation", lambda **kwargs: pd.DataFrame())
+
+    with pytest.raises((RuntimeError, KeyError), match="no series|unique_id"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data)
+
+
+def test_family_is_compatible_with_sklearn_parameter_protocol():
+    from sklearn.base import clone
+
+    family = NegativeBinomialFamily(min_size=0.2, max_size=12.0)
+    cloned = clone(family)
+    cloned.set_params(max_size=15.0)
+
+    assert cloned.get_params() == {"max_size": 15.0, "min_size": 0.2}
+
+
+def test_predict_rejects_quantile_column_collisions(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
+
+    with pytest.raises(ValueError, match="same output column"):
+        wrapper.predict(h=1, quantiles=(0.051, 0.059))
+
+
+@pytest.mark.parametrize(
+    "fit_kwargs",
+    [
+        {"h": 0},
+        {"h": 1.5},
+        {"n_windows": 0},
+        {"n_windows": True},
+        {"step_size": 0},
+        {"step_size": 1.5},
+    ],
+)
+def test_fit_rejects_invalid_temporal_parameters(sample_train_data, fit_kwargs):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(ValueError, match="positive integer"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data, **fit_kwargs)
+
+
+def test_fit_propagates_cross_validation_failure(sample_train_data, monkeypatch):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    def fail_cross_validation(**kwargs):
+        raise RuntimeError("backtest failed")
+
+    monkeypatch.setattr(fcst, "cross_validation", fail_cross_validation)
+
+    with pytest.raises(RuntimeError, match="backtest failed"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data)
