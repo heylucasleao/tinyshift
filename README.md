@@ -451,6 +451,7 @@ from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
 from tinyshift.modelling import (
     FirstStageForecasterEvaluator,
+    NewsvendorOptimizer,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
@@ -471,35 +472,39 @@ model.fit(
     n_windows=5,
 )
 
-# Discrete median and upper-tail demand forecasts
-preds = model.predict(h=14, quantiles=(0.50, 0.95))
+# Forecast once and derive all probabilistic views from the distribution
+forecast, distribution = model.predict_distribution(h=14)
+forecast["q_50"] = distribution.ppf(0.50)
+forecast["q_95"] = distribution.ppf(0.95)
 
 # Newsvendor-optimal inventory using shortage and holding costs
-stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
+stock_plan = NewsvendorOptimizer.optimize(
+    forecast, distribution, underage_cost=10.0, overage_cost=2.0
+)
 
 # Exact probabilities P(Y=k), including the remaining upper tail
-probabilities = model.pmf(h=14, max_k=10)
+probabilities = distribution.pmf(range(11))
 
 # Expected value of stocking each additional discrete inventory unit
-marginal_value = model.marginal_benefit(
-    h=14,
+marginal_value = NewsvendorOptimizer.marginal_benefit(
+    forecast,
+    distribution,
     underage_cost=10.0,
     overage_cost=2.0,
     max_k=10,
 )
 
-# Direct access to the aligned distributions
-forecast, distribution = model.predict_distribution(h=14)
 probability_below_five = distribution.cdf(5)
 median = distribution.ppf(0.50)
 
 # Cost columns may be supplied without exogenous forecast features.
 costs = pd.DataFrame({"cu": [10.0] * len(forecast), "co": [2.0] * len(forecast)})
-stock_plan = model.optimize(
-    h=14,
+stock_plan = NewsvendorOptimizer.optimize(
+    forecast,
+    distribution,
     underage_cost="cu",
     overage_cost="co",
-    X_df=costs,
+    cost_df=costs,
 )
 
 # Continuous alternative; cdf/ppf/interval/sample share the same interface.

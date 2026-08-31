@@ -177,7 +177,7 @@ strategy with `mode="local"` or `mode="global"` when creating the wrapper.
 
 ### 6. Two-Stage Probabilistic Forecasting (`tsf/`)
 
-#### **`TwoStageForecasterWrapper`** - Demand Forecasting + Inventory Optimization
+#### **`TwoStageForecasterWrapper`** - Probabilistic Demand Forecasting
 
 Wraps a single-model `MLForecast` instance in a two-stage probabilistic workflow:
 
@@ -198,6 +198,7 @@ from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
 from tinyshift.modelling import (
     FirstStageForecasterEvaluator,
+    NewsvendorOptimizer,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
@@ -232,25 +233,28 @@ probabilistic_summary = TwoStageForecasterEvaluator.evaluate(
     backtest_df, quantiles=(0.05, 0.50, 0.95)
 )
 
-# Point-distribution parameters and discrete demand quantiles
-predictions = model.predict(h=14, quantiles=(0.50, 0.95))
+# Forecast once and derive quantiles from the row-aligned distribution
+forecast, distribution = model.predict_distribution(h=14)
+forecast["q_50"] = distribution.ppf(0.50)
+forecast["q_95"] = distribution.ppf(0.95)
 
 # Newsvendor inventory level for fixed shortage and holding costs
-stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
+stock_plan = NewsvendorOptimizer.optimize(
+    forecast, distribution, underage_cost=10.0, overage_cost=2.0
+)
 
 # Exact probabilities from P(Y=0) through P(Y=10), plus P(Y>10)
-probabilities = model.pmf(h=14, max_k=10)
+probabilities = distribution.pmf(range(11))
 
 # Expected marginal value of each additional discrete inventory unit
-marginal_value = model.marginal_benefit(
-    h=14,
+marginal_value = NewsvendorOptimizer.marginal_benefit(
+    forecast,
+    distribution,
     underage_cost=10.0,
     overage_cost=2.0,
     max_k=10,
 )
 
-# Direct CDF and PPF access through row-aligned predictive distributions
-forecast, distribution = model.predict_distribution(h=14)
 probability_below_five = distribution.cdf(5)
 median = distribution.ppf(0.50)
 ```
@@ -263,11 +267,12 @@ forecaster does not require future exogenous features:
 costs = pd.DataFrame(
     {"cu": [10.0] * len(forecast), "co": [2.0] * len(forecast)}
 )
-stock_plan = model.optimize(
-    h=14,
+stock_plan = NewsvendorOptimizer.optimize(
+    forecast,
+    distribution,
     underage_cost="cu",
     overage_cost="co",
-    X_df=costs,
+    cost_df=costs,
 )
 ```
 

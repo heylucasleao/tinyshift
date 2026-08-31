@@ -3,6 +3,7 @@
 # Licensed under the MIT License
 
 
+from .decision import NewsvendorOptimizer
 from .distribution import (
     DiscretePredictiveDistribution,
     GammaPredictiveDistribution,
@@ -21,6 +22,7 @@ __all__ = [
     "GammaPredictiveDistribution",
     "NegativeBinomialFamily",
     "NegativeBinomialPredictiveDistribution",
+    "NewsvendorOptimizer",
     "PredictiveDistribution",
     "TwoStageForecasterEvaluator",
     "TwoStageForecasterWrapper",
