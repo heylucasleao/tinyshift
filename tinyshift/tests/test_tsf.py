@@ -14,9 +14,96 @@ from tinyshift.modelling import (
     GammaPredictiveDistribution,
     NegativeBinomialFamily,
     NegativeBinomialPredictiveDistribution,
+    NewsvendorOptimizer,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
+
+
+def _predict(wrapper, h, X_df=None, quantiles=(0.05, 0.50, 0.95)):
+    frame, distribution = wrapper.predict_distribution(h=h, X_df=X_df)
+    seen = set()
+    for quantile in sorted(quantiles):
+        if not np.isfinite(quantile) or not 0 < quantile < 1:
+            raise ValueError("Quantiles must be finite and strictly between 0 and 1.")
+        column = f"q_{int(quantile * 100)}"
+        if column in seen:
+            raise ValueError(f"Quantiles map to the same output column {column!r}.")
+        seen.add(column)
+        frame[column] = distribution.ppf(quantile)
+    return frame
+
+
+def _split_prediction_and_cost_frames(wrapper, X_df, underage_cost, overage_cost):
+    if X_df is None:
+        return None, None
+    cost_columns = {
+        value for value in (underage_cost, overage_cost) if isinstance(value, str)
+    }
+    missing = cost_columns - set(X_df.columns)
+    if missing:
+        raise ValueError(f"Cost columns not found in X_df: {sorted(missing)}")
+    prediction_columns = [column for column in X_df if column not in cost_columns]
+    keys = {wrapper.id_col, wrapper.time_col}
+    prediction_df = X_df[prediction_columns] if set(prediction_columns) - keys else None
+    return prediction_df, X_df
+
+
+def _optimize(wrapper, h, underage_cost="cu", overage_cost="co", X_df=None, **kwargs):
+    prediction_df, cost_df = _split_prediction_and_cost_frames(
+        wrapper, X_df, underage_cost, overage_cost
+    )
+    frame, distribution = wrapper.predict_distribution(h=h, X_df=prediction_df)
+    return NewsvendorOptimizer.optimize(
+        frame,
+        distribution,
+        underage_cost,
+        overage_cost,
+        cost_df=cost_df,
+        id_col=wrapper.id_col,
+        time_col=wrapper.time_col,
+        **kwargs,
+    )
+
+
+def _pmf(wrapper, h, max_k=10, X_df=None):
+    frame, distribution = wrapper.predict_distribution(h=h, X_df=X_df)
+    if not hasattr(distribution, "pmf"):
+        raise TypeError("pmf is available only for discrete distributions.")
+    units = np.arange(max_k + 1)
+    if max_k < 0:
+        raise ValueError("max_k must be a non-negative integer.")
+    values = distribution.pmf(units)
+    for index, unit in enumerate(units):
+        frame[f"P(Y={unit})"] = values[:, index]
+    frame[f"P(Y>{max_k})"] = 1.0 - values.sum(axis=1)
+    return frame
+
+
+def _marginal_benefit(
+    wrapper,
+    h,
+    underage_cost="cu",
+    overage_cost="co",
+    max_k=None,
+    X_df=None,
+    units=None,
+):
+    prediction_df, cost_df = _split_prediction_and_cost_frames(
+        wrapper, X_df, underage_cost, overage_cost
+    )
+    frame, distribution = wrapper.predict_distribution(h=h, X_df=prediction_df)
+    return NewsvendorOptimizer.marginal_benefit(
+        frame,
+        distribution,
+        underage_cost,
+        overage_cost,
+        max_k=max_k,
+        units=units,
+        cost_df=cost_df,
+        id_col=wrapper.id_col,
+        time_col=wrapper.time_col,
+    )
 
 
 @pytest.fixture
@@ -137,26 +224,10 @@ def test_compute_time_decay_weights(sample_train_data):
     assert np.all(weights <= 1.0)
 
 
-def test_compute_quantile():
-    df = pd.DataFrame({"r_dispersion": [2.0, 5.0], "lambda_t": [3.0, 1.5]})
-    quantiles = TwoStageForecasterWrapper._compute_quantile(df, target_q=0.95)
-    assert isinstance(quantiles, np.ndarray)
-    assert len(quantiles) == 2
-    assert np.issubdtype(quantiles.dtype, np.integer)
-
-
-@pytest.mark.parametrize("quantile", [-0.1, 0.0, 1.0, 1.1])
-def test_compute_quantile_rejects_invalid_probability(quantile):
-    df = pd.DataFrame({"r_dispersion": [2.0], "lambda_t": [3.0]})
-    with pytest.raises(ValueError, match="strictly between 0 and 1"):
-        TwoStageForecasterWrapper._compute_quantile(df, target_q=quantile)
-
-
 def test_compute_critical_quantile():
-    wrapper = TwoStageForecasterWrapper(fcst=None)
     cu = np.array([10.0, 5.0, 0.0])
     co = np.array([2.0, 5.0, 0.0])
-    q_star = wrapper._compute_critical_quantile(cu, co)
+    q_star = NewsvendorOptimizer._critical_ratio(cu, co)
 
     assert isinstance(q_star, np.ndarray)
     assert q_star[0] == pytest.approx(10.0 / 12.0)
@@ -165,43 +236,43 @@ def test_compute_critical_quantile():
 
 
 def test_compute_critical_quantile_rejects_negative_costs():
-    wrapper = TwoStageForecasterWrapper(fcst=None)
     with pytest.raises(ValueError, match="non-negative"):
-        wrapper._compute_critical_quantile(cu=np.array([-1.0]), co=np.array([2.0]))
+        NewsvendorOptimizer._critical_ratio(cu=np.array([-1.0]), co=np.array([2.0]))
 
 
 def test_extract_cost_array(sample_train_data):
-    wrapper = TwoStageForecasterWrapper(fcst=None)
     n_rows = len(sample_train_data)
 
-    arr_scalar = wrapper._extract_cost_array(
+    arr_scalar = NewsvendorOptimizer._extract_cost_array(
         sample_train_data, 5.0, "unique_id", "ds", n_rows
     )
     assert np.all(arr_scalar == 5.0)
 
     sample_train_data["cu"] = 10.0
-    arr_col = wrapper._extract_cost_array(
+    arr_col = NewsvendorOptimizer._extract_cost_array(
         sample_train_data, "cu", "unique_id", "ds", n_rows
     )
     assert np.array_equal(arr_col, sample_train_data["cu"].to_numpy(dtype=float))
 
     dict_map = {"A": 15.0, "B": 25.0}
-    arr_dict = wrapper._extract_cost_array(
+    arr_dict = NewsvendorOptimizer._extract_cost_array(
         sample_train_data, dict_map, "unique_id", "ds", n_rows
     )
     assert len(arr_dict) == n_rows
 
     tuple_dict = {("A", sample_train_data["ds"].iloc[0]): 99.0}
-    arr_tuple = wrapper._extract_cost_array(
+    arr_tuple = NewsvendorOptimizer._extract_cost_array(
         sample_train_data, tuple_dict, "unique_id", "ds", n_rows
     )
     assert np.isnan(arr_tuple[1])
 
     with pytest.raises(ValueError, match="Cost dictionary cannot be empty."):
-        wrapper._extract_cost_array(sample_train_data, {}, "unique_id", "ds", n_rows)
+        NewsvendorOptimizer._extract_cost_array(
+            sample_train_data, {}, "unique_id", "ds", n_rows
+        )
 
     with pytest.raises(TypeError, match="Cost input must be a column name"):
-        wrapper._extract_cost_array(
+        NewsvendorOptimizer._extract_cost_array(
             sample_train_data, [1, 2, 3], "unique_id", "ds", n_rows
         )
 
@@ -253,7 +324,7 @@ def test_fit_and_predict_without_x_df(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=fcst)
     wrapper.fit(sample_train_data)
 
-    pred_df = wrapper.predict(h=3, X_df=None, quantiles=[0.5, 0.95])
+    pred_df = _predict(wrapper, h=3, X_df=None, quantiles=[0.5, 0.95])
     assert isinstance(pred_df, pd.DataFrame)
     assert "lambda_t" in pred_df.columns
     assert "q_50" in pred_df.columns
@@ -278,7 +349,7 @@ def test_gamma_family_supports_continuous_targets(sample_continuous_data):
         sample_continuous_data, h=7, n_windows=3
     )
 
-    frame = wrapper.predict(h=2, quantiles=[0.1, 0.5, 0.9])
+    frame = _predict(wrapper, h=2, quantiles=[0.1, 0.5, 0.9])
     distribution_frame, distribution = wrapper.predict_distribution(h=2)
 
     assert "shape_dispersion" in frame
@@ -302,7 +373,7 @@ def test_gamma_family_rejects_zero_and_has_no_pmf(sample_continuous_data):
 
     wrapper.fit(sample_continuous_data)
     with pytest.raises(TypeError, match="only for discrete"):
-        wrapper.pmf(h=1)
+        _pmf(wrapper, h=1)
 
 
 def test_optimize_uses_continuous_distribution_ppf(sample_continuous_data):
@@ -311,7 +382,7 @@ def test_optimize_uses_continuous_distribution_ppf(sample_continuous_data):
         sample_continuous_data
     )
 
-    result = wrapper.optimize(h=2, underage_cost=3.0, overage_cost=1.0)
+    result = _optimize(wrapper, h=2, underage_cost=3.0, overage_cost=1.0)
 
     assert np.allclose(result["critical_ratio"], 0.75)
     assert np.issubdtype(result["y_optimal"].dtype, np.floating)
@@ -327,7 +398,7 @@ def test_fit_and_predict_with_x_df(sample_train_data):
     future_df = fcst.make_future_dataframe(h=2)
     future_df["exog_feat"] = 1.0
 
-    pred_df = wrapper.predict(h=2, X_df=future_df, quantiles=[0.5])
+    pred_df = _predict(wrapper, h=2, X_df=future_df, quantiles=[0.5])
     assert isinstance(pred_df, pd.DataFrame)
     assert len(pred_df) == 4
 
@@ -339,7 +410,7 @@ def test_predict_floors_negative_lambdas(sample_train_data, monkeypatch):
     raw_predictions[wrapper.model_name] = -1.0
     monkeypatch.setattr(fcst, "predict", lambda **kwargs: raw_predictions.copy())
 
-    pred_df = wrapper.predict(h=1, quantiles=[])
+    pred_df = _predict(wrapper, h=1, quantiles=[])
 
     assert np.all(pred_df["lambda_t"] == 1e-6)
 
@@ -356,8 +427,8 @@ def test_optimize_with_costs(sample_train_data_with_costs):
     future_df["co"] = 2.0
     future_df["exog_feat"] = 1.0
 
-    opt_df = wrapper.optimize(
-        h=2, underage_cost="cu", overage_cost="co", X_df=future_df
+    opt_df = _optimize(
+        wrapper, h=2, underage_cost="cu", overage_cost="co", X_df=future_df
     )
     assert isinstance(opt_df, pd.DataFrame)
     assert "critical_ratio" in opt_df.columns
@@ -368,7 +439,7 @@ def test_optimize_with_scalar_costs_without_x_df(sample_train_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
-    opt_df = wrapper.optimize(h=2, underage_cost=10.0, overage_cost=2.0)
+    opt_df = _optimize(wrapper, h=2, underage_cost=10.0, overage_cost=2.0)
 
     assert len(opt_df) == 4
     assert np.allclose(opt_df["critical_ratio"], 10.0 / 12.0)
@@ -379,7 +450,7 @@ def test_optimize_accepts_x_df_with_only_cost_columns(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
     costs = pd.DataFrame({"cu": [10.0] * 4, "co": [2.0] * 4})
 
-    result = wrapper.optimize(h=2, underage_cost="cu", overage_cost="co", X_df=costs)
+    result = _optimize(wrapper, h=2, underage_cost="cu", overage_cost="co", X_df=costs)
 
     assert len(result) == len(costs)
     assert np.allclose(result["critical_ratio"], 10.0 / 12.0)
@@ -389,7 +460,8 @@ def test_optimize_with_cost_dicts(sample_train_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
-    opt_df = wrapper.optimize(
+    opt_df = _optimize(
+        wrapper,
         h=2,
         underage_cost={"A": 10.0, "B": 6.0},
         overage_cost={"A": 2.0, "B": 4.0},
@@ -410,14 +482,14 @@ def test_pmf_and_marginal_benefit(sample_train_data):
     future_df = fcst.make_future_dataframe(h=2)
     future_df["exog_feat"] = 1.0
 
-    pmf_df = wrapper.pmf(h=2, max_k=max_k, X_df=future_df)
+    pmf_df = _pmf(wrapper, h=2, max_k=max_k, X_df=future_df)
     assert isinstance(pmf_df, pd.DataFrame)
     assert f"P(Y={max_k})" in pmf_df.columns
 
     future_df["cu"] = 10.0
     future_df["co"] = 2.0
-    mb_df = wrapper.marginal_benefit(
-        h=2, underage_cost="cu", overage_cost="co", max_k=max_k, X_df=future_df
+    mb_df = _marginal_benefit(
+        wrapper, h=2, underage_cost="cu", overage_cost="co", max_k=max_k, X_df=future_df
     )
     assert isinstance(mb_df, pd.DataFrame)
     assert f"MB(k={max_k})" in mb_df.columns
@@ -432,18 +504,22 @@ def test_pmf_and_marginal_benefit(sample_train_data):
     assert np.allclose(actual_marginal_benefit, expected_marginal_benefit)
 
 
-def test_marginal_benefit_does_not_depend_on_pmf(sample_train_data, monkeypatch):
+def test_marginal_benefit_uses_distribution_cdf(sample_train_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("marginal_benefit must evaluate the CDF directly")
-
-    monkeypatch.setattr(wrapper, "pmf", fail_if_called)
-
-    result = wrapper.marginal_benefit(h=2, underage_cost=10.0, overage_cost=2.0)
+    result = _marginal_benefit(wrapper, h=2, underage_cost=10.0, overage_cost=2.0)
 
     assert "MB(k=10)" in result
+
+
+def test_wrapper_exposes_only_distribution_prediction(sample_train_data):
+    wrapper = TwoStageForecasterWrapper(
+        MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    ).fit(sample_train_data)
+
+    for removed_method in ("predict", "pmf", "optimize", "marginal_benefit"):
+        assert not hasattr(wrapper, removed_method)
 
 
 def test_marginal_benefit_accepts_x_df_with_only_cost_columns(sample_train_data):
@@ -451,8 +527,8 @@ def test_marginal_benefit_accepts_x_df_with_only_cost_columns(sample_train_data)
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
     costs = pd.DataFrame({"cu": [10.0] * 4, "co": [2.0] * 4})
 
-    result = wrapper.marginal_benefit(
-        h=2, underage_cost="cu", overage_cost="co", X_df=costs
+    result = _marginal_benefit(
+        wrapper, h=2, underage_cost="cu", overage_cost="co", X_df=costs
     )
 
     assert len(result) == len(costs)
@@ -463,14 +539,15 @@ def test_marginal_benefit_accepts_sparse_units(sample_train_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
-    result = wrapper.marginal_benefit(
+    result = _marginal_benefit(
+        wrapper,
         h=2,
         underage_cost=10.0,
         overage_cost=2.0,
         units=[5, 10, 20],
     )
-    dense = wrapper.marginal_benefit(
-        h=2, underage_cost=10.0, overage_cost=2.0, max_k=20
+    dense = _marginal_benefit(
+        wrapper, h=2, underage_cost=10.0, overage_cost=2.0, max_k=20
     )
 
     mb_columns = [column for column in result if column.startswith("MB(k=")]
@@ -478,11 +555,27 @@ def test_marginal_benefit_accepts_sparse_units(sample_train_data):
     assert np.allclose(result[mb_columns], dense[mb_columns])
 
 
+def test_marginal_benefit_grid_can_match_forecast_row_count(sample_train_data):
+    wrapper = TwoStageForecasterWrapper(
+        MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    ).fit(sample_train_data)
+    frame, distribution = wrapper.predict_distribution(h=2)
+    units = [0, 1, 2, 3]
+
+    result = NewsvendorOptimizer.marginal_benefit(
+        frame, distribution, 10.0, 2.0, units=units
+    )
+
+    assert all(f"MB(k={unit})" in result for unit in units)
+    assert len(result) == len(frame)
+
+
 def test_marginal_benefit_accepts_stepped_range(sample_train_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
-    result = wrapper.marginal_benefit(
+    result = _marginal_benefit(
+        wrapper,
         h=2,
         underage_cost=10.0,
         overage_cost=2.0,
@@ -504,7 +597,7 @@ def test_marginal_benefit_rejects_max_k_with_units(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
     with pytest.raises(ValueError, match="either max_k or units"):
-        wrapper.marginal_benefit(h=1, max_k=5, units=[1, 3, 5])
+        _marginal_benefit(wrapper, h=1, max_k=5, units=[1, 3, 5])
 
 
 @pytest.mark.parametrize("units", [[], [1, 1], [1.5], [-1], [True], "1,2"])
@@ -513,14 +606,14 @@ def test_marginal_benefit_rejects_invalid_units(sample_train_data, units):
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
     with pytest.raises(ValueError, match="units"):
-        wrapper.marginal_benefit(h=1, units=units)
+        _marginal_benefit(wrapper, h=1, units=units)
 
 
 def test_pmf_rejects_negative_max_k(sample_train_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
     with pytest.raises(ValueError, match="non-negative integer"):
-        wrapper.pmf(h=1, max_k=-1)
+        _pmf(wrapper, h=1, max_k=-1)
 
 
 def test_first_stage_evaluator_metrics():
@@ -740,7 +833,7 @@ def test_optimize_preserves_row_aligned_costs(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
     costs = pd.DataFrame({"cu": [1.0, 3.0, 8.0, 0.0], "co": [3.0, 1.0, 2.0, 0.0]})
 
-    result = wrapper.optimize(h=2, underage_cost="cu", overage_cost="co", X_df=costs)
+    result = _optimize(wrapper, h=2, underage_cost="cu", overage_cost="co", X_df=costs)
 
     assert np.allclose(result["critical_ratio"], [0.25, 0.75, 0.8, 0.5])
 
@@ -750,14 +843,16 @@ def test_optimize_rejects_bad_cost_frame(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
     with pytest.raises(ValueError, match="one row per forecast row"):
-        wrapper.optimize(
+        _optimize(
+            wrapper,
             h=2,
             underage_cost="cu",
             overage_cost="co",
             X_df=pd.DataFrame({"cu": [1.0], "co": [1.0]}),
         )
     with pytest.raises(ValueError, match="Cost columns not found.*missing"):
-        wrapper.optimize(
+        _optimize(
+            wrapper,
             h=2,
             underage_cost="missing",
             overage_cost="co",
@@ -771,7 +866,7 @@ def test_optimize_rejects_invalid_costs(sample_train_data, cost):
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
     with pytest.raises(ValueError, match="finite|non-negative"):
-        wrapper.optimize(h=1, underage_cost=cost, overage_cost=1.0)
+        _optimize(wrapper, h=1, underage_cost=cost, overage_cost=1.0)
 
 
 def test_predict_distribution_uses_fallback_for_unknown_series(
@@ -853,12 +948,12 @@ def test_two_stage_evaluator_requires_target_and_skips_missing_quantiles():
 def test_wrapper_joblib_round_trip(sample_train_data, tmp_path):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
-    expected = wrapper.predict(h=2, quantiles=(0.5, 0.95))
+    expected = _predict(wrapper, h=2, quantiles=(0.5, 0.95))
     path = tmp_path / "tsf.joblib"
 
     joblib.dump(wrapper, path)
     restored = joblib.load(path)
-    actual = restored.predict(h=2, quantiles=(0.5, 0.95))
+    actual = _predict(restored, h=2, quantiles=(0.5, 0.95))
 
     pd.testing.assert_frame_equal(actual, expected)
     assert isinstance(restored.distribution_family_, NegativeBinomialFamily)
@@ -871,13 +966,15 @@ def test_gamma_wrapper_joblib_round_trip(sample_continuous_data, tmp_path):
     wrapper = TwoStageForecasterWrapper(fcst, distribution=GammaFamily()).fit(
         sample_continuous_data
     )
-    expected = wrapper.predict(h=2, quantiles=(0.1, 0.9))
+    expected = _predict(wrapper, h=2, quantiles=(0.1, 0.9))
     path = tmp_path / "gamma-tsf.joblib"
 
     joblib.dump(wrapper, path)
     restored = joblib.load(path)
 
-    pd.testing.assert_frame_equal(restored.predict(h=2, quantiles=(0.1, 0.9)), expected)
+    pd.testing.assert_frame_equal(
+        _predict(restored, h=2, quantiles=(0.1, 0.9)), expected
+    )
     assert isinstance(restored.distribution_family_, GammaFamily)
     assert restored.dispersion_dict_ == wrapper.dispersion_dict_
 
@@ -889,7 +986,7 @@ def test_continuous_optimize_accepts_cost_only_x_df(sample_continuous_data):
     )
     costs = pd.DataFrame({"cu": [3.0, 1.0, 7.0, 1.0], "co": [1.0] * 4})
 
-    result = wrapper.optimize(h=2, underage_cost="cu", overage_cost="co", X_df=costs)
+    result = _optimize(wrapper, h=2, underage_cost="cu", overage_cost="co", X_df=costs)
 
     assert np.allclose(result["critical_ratio"], [0.75, 0.5, 0.875, 0.5])
     assert np.issubdtype(result["y_optimal"].dtype, np.floating)
@@ -903,7 +1000,7 @@ def test_optimize_accepts_time_keyed_cost_dicts(sample_train_data):
     underage = dict(zip(keys, [1.0, 3.0, 8.0, 1.0]))
     overage = dict(zip(keys, [3.0, 1.0, 2.0, 1.0]))
 
-    result = wrapper.optimize(h=2, underage_cost=underage, overage_cost=overage)
+    result = _optimize(wrapper, h=2, underage_cost=underage, overage_cost=overage)
 
     assert np.allclose(result["critical_ratio"], [0.25, 0.75, 0.8, 0.5])
 
@@ -927,7 +1024,7 @@ def test_optimize_separates_costs_from_real_exogenous_features():
     future["cu"] = [1.0, 3.0]
     future["co"] = [3.0, 1.0]
 
-    result = wrapper.optimize(h=2, underage_cost="cu", overage_cost="co", X_df=future)
+    result = _optimize(wrapper, h=2, underage_cost="cu", overage_cost="co", X_df=future)
 
     assert np.allclose(result["critical_ratio"], [0.25, 0.75])
 
@@ -940,7 +1037,8 @@ def test_optimize_aligns_shuffled_cost_rows_by_id_and_time(sample_train_data):
     costs["co"] = [3.0, 1.0, 2.0, 1.0]
     expected = dict(zip(zip(costs["unique_id"], costs["ds"]), [0.25, 0.75, 0.8, 0.5]))
 
-    result = wrapper.optimize(
+    result = _optimize(
+        wrapper,
         h=2,
         underage_cost="cu",
         overage_cost="co",
@@ -979,7 +1077,7 @@ def test_wrapper_supports_custom_distribution_family(sample_continuous_data):
         sample_continuous_data
     )
 
-    result = wrapper.predict(h=1, quantiles=(0.5,))
+    result = _predict(wrapper, h=1, quantiles=(0.5,))
 
     assert "custom_shape" in result
     assert "q_50" in result
@@ -1053,7 +1151,7 @@ def test_wrapper_supports_custom_column_names():
         n_windows=3,
     )
 
-    result = wrapper.predict(h=2, quantiles=(0.5,))
+    result = _predict(wrapper, h=2, quantiles=(0.5,))
 
     assert {"series", "date", "q_50"}.issubset(result.columns)
 
@@ -1090,7 +1188,7 @@ def test_predict_rejects_quantile_column_collisions(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
     with pytest.raises(ValueError, match="same output column"):
-        wrapper.predict(h=1, quantiles=(0.051, 0.059))
+        _predict(wrapper, h=1, quantiles=(0.051, 0.059))
 
 
 @pytest.mark.parametrize(
