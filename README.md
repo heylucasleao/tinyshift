@@ -166,12 +166,14 @@ outlier_labels = spad.predict(X_test)
 # HBOS (Histogram-Based Outlier Score)
 hbos = HBOS(dynamic_bins=True)
 hbos.fit(X_train, nbins="fd")
-scores = hbos.predict(X_test)
+scores = hbos.decision_function(X_test)
+outlier_labels = hbos.predict(X_test)
 
 # PCA-based outlier detection
-pca_detector = PCAReconstructionError()
+pca_detector = PCAReconstructionError(n_components=None)
 pca_detector.fit(X_train)
-pca_scores = pca_detector.predict(X_test)
+pca_scores = pca_detector.decision_function(X_test)
+pca_outlier_labels = pca_detector.predict(X_test)
 ```
 ### 4. Binary Classification Model Evaluation
 

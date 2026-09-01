@@ -5,8 +5,9 @@
 
 import numpy as np
 import pandas as pd
-from tinyshift.outlier.hbos import HBOS
 import pytest
+
+from tinyshift.outlier.hbos import HBOS
 
 
 class TestHBOS:
@@ -21,6 +22,7 @@ class TestHBOS:
             ],
         ]
         self.hbos.n_features = 2
+        self.hbos.n_features_in_ = 2
 
     def test_compute_outlier_score_categorical(self):
         X = np.array([[1, 0], [2, 0], [3, 0], [4, 0]])
@@ -79,3 +81,28 @@ class TestHBOS:
 
         with pytest.raises(ValueError, match="columns"):
             hbos.decision_function(pd.DataFrame({"x": [1, 2, 3], "y": [0.1, 0.2, 0.3]}))
+
+    def test_refit_replaces_learned_distributions(self):
+        hbos = HBOS().fit(np.array([[0.0], [1.0], [2.0]]), nbins=2)
+        first_distribution = hbos.feature_distributions[0]
+        hbos.fit(np.array([[10.0], [11.0], [12.0]]), nbins=3)
+        assert len(hbos.feature_distributions) == 1
+        assert hbos.feature_distributions[0] is not first_distribution
+        assert len(hbos.feature_distributions[0][0]) == 3
+
+    def test_auto_bins_are_computed_per_feature(self):
+        X = np.column_stack((np.ones(100), np.arange(100, dtype=float)))
+        hbos = HBOS().fit(X, nbins="auto")
+        assert len(hbos.feature_distributions[0][0]) == 1
+        assert len(hbos.feature_distributions[1][0]) > 1
+
+    def test_values_outside_fitted_support_receive_higher_score(self):
+        hbos = HBOS().fit(np.array([[0.0], [0.5], [1.0]]), nbins=2)
+        scores = hbos.decision_function(np.array([[0.5], [100.0]]))
+        assert scores[1] > scores[0]
+
+    @pytest.mark.parametrize("quantile", [-0.1, 1.1, np.nan])
+    def test_predict_rejects_invalid_quantile(self, quantile):
+        hbos = HBOS().fit(np.array([[0.0], [1.0], [2.0]]))
+        with pytest.raises(ValueError, match="quantile"):
+            hbos.predict(np.array([[1.0]]), quantile=quantile)

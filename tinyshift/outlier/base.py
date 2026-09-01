@@ -1,12 +1,10 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
-from typing import Union, List, Dict
 import numpy as np
 import pandas as pd
-from sklearn.utils import check_array
 from sklearn.base import BaseEstimator
 
 
@@ -35,10 +33,10 @@ class BaseHistogramModel(BaseEstimator):
         self.n_features = None
         self.feature_names = None
         self.feature_dtypes = []
-        self.feature_distributions: List[Union[Dict, List[np.ndarray]]] = []
+        self.feature_distributions: list[dict | list[np.ndarray]] = []
         self.decision_scores_ = None
 
-    def _check_bins(self, X: np.ndarray, nbins: Union[int, str]) -> int:
+    def _check_bins(self, X: np.ndarray, nbins: int | str) -> int:
         """
         Determine the number of bins for histogram binning.
         Parameters:
@@ -58,8 +56,12 @@ class BaseHistogramModel(BaseEstimator):
             If `nbins` is not a positive integer or a valid binning strategy.
         """
 
-        if isinstance(nbins, int) and nbins > 0:
-            return nbins
+        if (
+            isinstance(nbins, (int, np.integer))
+            and not isinstance(nbins, (bool, np.bool_))
+            and nbins > 0
+        ):
+            return int(nbins)
         elif isinstance(nbins, str):
             try:
                 bin_edges = np.histogram_bin_edges(X, bins=nbins)
@@ -83,7 +85,7 @@ class BaseHistogramModel(BaseEstimator):
                 "nbins must be a positive integer or a valid `np.histogram_bin_edges` binning strategy."
             )
 
-    def _check_columns(self, X: Union[np.ndarray, "pd.DataFrame"]):
+    def _check_columns(self, X: np.ndarray | pd.DataFrame):
         """
         Check if the columns of the input data match the columns of the training data.
 
@@ -97,13 +99,25 @@ class BaseHistogramModel(BaseEstimator):
         ValueError
             If the columns of the input data do not match the columns of the training data.
         """
-        if isinstance(X, pd.DataFrame):
-            if not all(X.columns == self.feature_names):
-                raise ValueError(
-                    "The columns of the input data do not match the columns of the training data."
-                )
+        if isinstance(X, pd.DataFrame) and X.columns.tolist() != self.feature_names:
+            raise ValueError(
+                "The columns of the input data do not match the columns of the training data."
+            )
 
-    def _extract_feature_info(self, X: Union[pd.Series, pd.DataFrame]):
+    def _reset_fit_state(self) -> None:
+        """Clear learned distributions before fitting again."""
+        self.feature_distributions = []
+        self.decision_scores_ = None
+
+    def _validate_n_features(self, X: np.ndarray) -> None:
+        """Require the same feature count used during fitting."""
+        if X.shape[1] != self.n_features_in_:
+            raise ValueError(
+                f"X has {X.shape[1]} features, but {self.__class__.__name__} "
+                f"was fitted with {self.n_features_in_} features."
+            )
+
+    def _extract_feature_info(self, X: pd.Series | pd.DataFrame | np.ndarray):
         """
         Extract feature information from the input data.
 
@@ -135,7 +149,7 @@ class BaseHistogramModel(BaseEstimator):
                 "Input data must be a pandas Series, DataFrame, or numpy ndarray."
             )
 
-    def _get_index(self, X: Union[pd.Series, List[np.ndarray], List[list]]):
+    def _get_index(self, X: pd.Series | list[np.ndarray] | list[list]):
         """
         Helper function to retrieve the index of a pandas Series or generate a default index.
         """
@@ -170,9 +184,12 @@ class BaseHistogramModel(BaseEstimator):
             )
         else:
             probabilities, bin_edges = self.feature_distributions[i]
-            digitized = np.digitize(X[:, i], bin_edges, right=True)
-            bin_indices = np.clip(digitized - 1, 0, len(probabilities) - 1)
+            values = X[:, i].astype(float)
+            bin_indices = np.searchsorted(bin_edges, values, side="right") - 1
+            bin_indices = np.clip(bin_indices, 0, len(probabilities) - 1)
             densities = probabilities[bin_indices]
+            outside = (values < bin_edges[0]) | (values > bin_edges[-1])
+            densities = np.where(outside, 1e-9, densities)
 
         return -np.log(densities + 1e-9)
 
@@ -184,7 +201,7 @@ class BaseHistogramModel(BaseEstimator):
         ----------
         X : ndarray of shape (n_samples, n_features)
             Data to evaluate.
-        quantile : float, default=0.01
+        quantile : float, default=0.99
             Threshold quantile for outlier detection.
 
         Raises
@@ -199,8 +216,11 @@ class BaseHistogramModel(BaseEstimator):
 
         if self.decision_scores_ is None:
             raise ValueError("Model must be fitted before prediction.")
+        if not np.isscalar(quantile) or not np.isfinite(quantile):
+            raise ValueError("quantile must be finite and lie in [0, 1].")
+        if not 0.0 <= float(quantile) <= 1.0:
+            raise ValueError("quantile must be finite and lie in [0, 1].")
         index = self._get_index(X)
-        X = check_array(X)
         scores = self.decision_function(X)
         threshold = np.quantile(self.decision_scores_, quantile, method="higher")
         return pd.Series(scores > threshold, index=index)

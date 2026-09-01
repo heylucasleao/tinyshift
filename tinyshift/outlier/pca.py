@@ -1,14 +1,13 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
 import numpy as np
+import pandas as pd
+from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA
 from sklearn.utils import check_array
-from sklearn.base import BaseEstimator
-from typing import Union, List
-import pandas as pd
 
 
 class PCAReconstructionError(BaseEstimator):
@@ -23,22 +22,22 @@ class PCAReconstructionError(BaseEstimator):
 
     Parameters
     ----------
-    n_components : int
-        Number of PCA components to keep (the component with the lowest explained variance will be discarded).
+    n_components : int or None, default=None
+        Number of PCA components to retain. ``None`` retains one fewer than the
+        number of input features so that reconstruction error remains defined.
 
     Attributes
     ----------
     decision_scores_ : ndarray of shape (n_samples,)
         Reconstruction error scores after fitting.
-    PCA : sklearn.decomposition.PCA
-        Internal PCA instance configured with n_components-1.
+    pca_ : sklearn.decomposition.PCA
+        Internal fitted PCA instance.
     """
 
-    def __init__(self) -> None:
-        self.PCA = None
-        self.decision_scores_: np.ndarray = None
+    def __init__(self, n_components: int | None = None) -> None:
+        self.n_components = n_components
 
-    def _get_index(self, X: Union[pd.Series, List[np.ndarray], List[list]]):
+    def _get_index(self, X: pd.Series | list[np.ndarray] | list[list]):
         """
         Helper function to retrieve the index of a pandas Series or generate a default index.
         """
@@ -64,7 +63,7 @@ class PCAReconstructionError(BaseEstimator):
         """
         return np.sum((original - reconstructed) ** 2, axis=1)
 
-    def fit(self, X: np.ndarray, n_components: int = None) -> "PCAReconstructionError":
+    def fit(self, X: np.ndarray, y=None) -> "PCAReconstructionError":
         """
         Fit the model to the data and calculate reconstruction scores.
 
@@ -72,22 +71,31 @@ class PCAReconstructionError(BaseEstimator):
         ----------
         X : ndarray of shape (n_samples, n_features)
             Training data.
-        n_components : int, optional
-            Number of PCA components to keep (the component with the lowest explained variance will be discarded).
-            If none, defaults to n_features - 1.
-
         Returns
         -------
         self : PCAReconstructionError
             The fitted detector.
         """
         X = check_array(X)
+        self.n_features_in_ = X.shape[1]
+        n_components = self.n_components
         if n_components is None:
-            n_components = X.shape[1] - 1
+            if self.n_features_in_ < 2:
+                raise ValueError(
+                    "PCAReconstructionError requires at least two features when "
+                    "n_components is None."
+                )
+            n_components = self.n_features_in_ - 1
+        if (
+            isinstance(n_components, (bool, np.bool_))
+            or not isinstance(n_components, (int, np.integer))
+            or not 1 <= int(n_components) < self.n_features_in_
+        ):
+            raise ValueError("n_components must be an integer in [1, n_features - 1].")
 
-        self.PCA = PCA(n_components=n_components)
-        self.PCA.fit(X)
-        X_reconstructed = self.PCA.inverse_transform(self.PCA.transform(X))
+        self.pca_ = PCA(n_components=int(n_components))
+        self.pca_.fit(X)
+        X_reconstructed = self.pca_.inverse_transform(self.pca_.transform(X))
         self.decision_scores_ = self._calculate_reconstruction_error(X, X_reconstructed)
         return self
 
@@ -105,11 +113,16 @@ class PCAReconstructionError(BaseEstimator):
         scores : ndarray of shape (n_samples,)
             Reconstruction error scores for each sample.
         """
-        if self.PCA is None:
+        if not hasattr(self, "pca_"):
             raise ValueError("Model must be fitted before prediction.")
 
         X = check_array(X)
-        X_reconstructed = self.PCA.inverse_transform(self.PCA.transform(X))
+        if X.shape[1] != self.n_features_in_:
+            raise ValueError(
+                f"X has {X.shape[1]} features, but PCAReconstructionError was "
+                f"fitted with {self.n_features_in_} features."
+            )
+        X_reconstructed = self.pca_.inverse_transform(self.pca_.transform(X))
         return self._calculate_reconstruction_error(X, X_reconstructed)
 
     def predict(self, X: np.ndarray, quantile: float = 0.99) -> np.ndarray:
@@ -139,10 +152,13 @@ class PCAReconstructionError(BaseEstimator):
         - Higher reconstruction errors indicate more anomalous observations.
         """
 
-        if self.PCA is None:
+        if not hasattr(self, "pca_"):
             raise ValueError("Model must be fitted before prediction.")
+        if not np.isscalar(quantile) or not np.isfinite(quantile):
+            raise ValueError("quantile must be finite and lie in [0, 1].")
+        if not 0.0 <= float(quantile) <= 1.0:
+            raise ValueError("quantile must be finite and lie in [0, 1].")
         index = self._get_index(X)
-        X = check_array(X)
         scores = self.decision_function(X)
         threshold = np.quantile(self.decision_scores_, quantile, method="higher")
         return pd.Series(scores > threshold, index=index)

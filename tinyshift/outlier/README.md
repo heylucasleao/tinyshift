@@ -47,10 +47,11 @@
 ✅ **Pros**:
 - Naturally handles correlations
 - No independence assumptions
-- Robust to feature scaling
+- Simple squared reconstruction-error score
 
 ❌ **Cons**:
 - Requires sufficient samples for PCA
+- Sensitive to feature scale; standardize heterogeneous features first
 - Loses feature interpretability
 
 ---
@@ -59,9 +60,9 @@
 
 | Metric               | HBOS                          | SPAD                          | SPAD+                         | PCAReconstructionError         |
 |----------------------|-------------------------------|-------------------------------|-------------------------------|--------------------------------|
-| **Score Formula**    | `-log(density)`               | `-log(probability)`           | `-log(probability)` + PCA     | Squared reconstruction error   |
+| **Score Formula**    | Sum of `-log(bin probability)` | Sum of `-log(bin probability)` | Same score over original and PCA-extended features | Squared reconstruction error |
 | **Score Direction**  | ↑ (high = anomalous)          | ↑ (high = anomalous)          | ↑ (high = anomalous)          | ↑ (high = anomalous)          |
-| **Probability**      | `P = e^{-score}`              | `P = e^{-score}`              | `P = e^{-score}` (with PCA)   | Not probabilistic              |
+| **Probability**      | Product of per-feature bin probabilities | Product of per-feature bin probabilities | Product over original and PCA-extended features | Not probabilistic |
 
 ---
 
