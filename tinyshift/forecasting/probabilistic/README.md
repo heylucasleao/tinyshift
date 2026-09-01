@@ -118,7 +118,7 @@ one-dimensional input defines a common grid, and a two-dimensional array with
 
 Negative Binomial distributions use the conditional mean and calibrated size
 parameter. Gamma distributions use the conditional mean and calibrated shape.
-Both expose `cdf`, `ppf`, `interval`, and `sample` internally. Discrete
+Both expose `cdf`, `ppf`, and `interval` internally. Discrete
 distributions additionally define `pmf(k) = cdf(k) - cdf(k - 1)`.
 
 The forecast facade returns DataFrames and names quantile columns as percentages,

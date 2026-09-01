@@ -203,7 +203,7 @@ Wraps a single-model `MLForecast` instance in a two-stage probabilistic workflow
 The default Negative Binomial family produces discrete demand quantiles, exact
 probability masses, Newsvendor-optimal stock levels, and the marginal benefit of
 each additional inventory unit. Distribution construction is separated from
-forecasting: every family exposes `cdf`, `ppf`, `interval`, and `sample`, while
+forecasting: every family exposes `cdf`, `ppf`, and `interval`, while
 only discrete families expose `pmf`.
 
 ```python

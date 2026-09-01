@@ -510,7 +510,7 @@ stock_plan = NewsvendorOptimizer.optimize(
     cost_df=costs,
 )
 
-# Continuous alternative; cdf/ppf/interval/sample share the same interface.
+# Continuous alternative; cdf/ppf/interval share the same interface.
 from tinyshift.forecasting import GammaFamily
 
 continuous_model = TwoStageForecasterWrapper(fcst, distribution=GammaFamily())
