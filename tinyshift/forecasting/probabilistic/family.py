@@ -34,7 +34,10 @@ class DistributionFamily(BaseEstimator, ABC):
     def distribution(self, means, dispersions) -> PredictiveDistribution:
         """Construct a batch distribution."""
 
-    def fit_dispersion(self, y: np.ndarray, means: np.ndarray) -> float:
+    def _calibration_data(
+        self, y: np.ndarray, means: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Validate and return aligned dispersion-calibration arrays."""
         y = np.asarray(y, dtype=float)
         means = np.asarray(means, dtype=float)
         if y.shape != means.shape:
@@ -44,11 +47,11 @@ class DistributionFamily(BaseEstimator, ABC):
         if not np.all(np.isfinite(means)):
             raise ValueError("Predicted mean values must be finite.")
         self.validate_target(y)
-        result = minimize_scalar(
-            lambda value: self.negative_log_likelihood(value, y, means),
-            bounds=self.dispersion_bounds,
-            method="bounded",
-        )
+        return y, means
+
+    @staticmethod
+    def _fitted_dispersion(result) -> float:
+        """Validate an optimizer result and return its fitted value."""
         if (
             not result.success
             or not np.isfinite(result.fun)
@@ -56,6 +59,39 @@ class DistributionFamily(BaseEstimator, ABC):
         ):
             raise RuntimeError(f"Dispersion optimization failed: {result.message}")
         return float(result.x)
+
+    def fit_dispersion(self, y: np.ndarray, means: np.ndarray) -> float:
+        """Estimate dispersion by bounded maximum likelihood."""
+        y, means = self._calibration_data(y, means)
+        result = minimize_scalar(
+            lambda value: self.negative_log_likelihood(value, y, means),
+            bounds=self.dispersion_bounds,
+            method="bounded",
+        )
+        return self._fitted_dispersion(result)
+
+    def fit_log_dispersion(
+        self, y: np.ndarray, means: np.ndarray, epsilon: float = 0.05
+    ) -> tuple[float, float, float]:
+        """Estimate dispersion and the local variance of its logarithm."""
+        y, means = self._calibration_data(y, means)
+        dispersion = self.fit_dispersion(y, means)
+        log_dispersion = float(np.log(dispersion))
+
+        def objective(theta: float) -> float:
+            return self.negative_log_likelihood(np.exp(theta), y, means)
+
+        curvature = (
+            objective(log_dispersion + epsilon)
+            - 2.0 * objective(log_dispersion)
+            + objective(log_dispersion - epsilon)
+        ) / epsilon**2
+        variance = (
+            1.0 / curvature
+            if np.isfinite(curvature) and curvature > 1e-8
+            else np.inf
+        )
+        return dispersion, log_dispersion, float(variance)
 
 
 class NegativeBinomialFamily(DistributionFamily):

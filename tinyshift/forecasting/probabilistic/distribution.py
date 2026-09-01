@@ -69,21 +69,40 @@ class _ParametricDistribution(PredictiveDistribution):
     def __len__(self) -> int:
         return self.means.size
 
+    @staticmethod
+    def _validate_quantiles(quantiles) -> None:
+        """Require probability levels in the closed unit interval."""
+        if np.any((quantiles < 0.0) | (quantiles > 1.0)):
+            raise ValueError("quantiles must lie in [0, 1].")
+
+    @staticmethod
+    def _finalize(result, squeeze: bool):
+        """Collapse a single row-wise output column when requested."""
+        return result[:, 0] if squeeze and result.ndim == 2 else result
+
     def _align(self, values, name: str):
         array = np.asarray(values, dtype=float)
         if not np.all(np.isfinite(array)):
             raise ValueError(f"{name} must contain only finite values.")
         if array.ndim == 0:
-            return array, self.means, self.dispersions
+            return array, self.means, self.dispersions, True
         if array.ndim == 1:
-            if array.size == len(self):
-                return array, self.means, self.dispersions
-            return array[None, :], self.means[:, None], self.dispersions[:, None]
+            return (
+                array[None, :],
+                self.means[:, None],
+                self.dispersions[:, None],
+                False,
+            )
         if array.ndim == 2 and array.shape[0] == len(self):
-            return array, self.means[:, None], self.dispersions[:, None]
+            return (
+                array,
+                self.means[:, None],
+                self.dispersions[:, None],
+                array.shape[1] == 1,
+            )
         raise ValueError(
-            f"{name} must be a scalar, a grid, a row-wise vector of length "
-            f"{len(self)}, or a matrix with {len(self)} rows."
+            f"{name} must be a scalar, a one-dimensional grid, or a matrix "
+            f"with {len(self)} rows."
         )
 
 
@@ -93,31 +112,32 @@ class NegativeBinomialPredictiveDistribution(
     """Negative Binomial batches parameterized by conditional mean and size."""
 
     def cdf(self, values):
-        values, means, sizes = self._align(values, "values")
+        values, means, sizes, squeeze = self._align(values, "values")
         probabilities = sizes / (sizes + means)
-        return nbinom.cdf(np.floor(values), sizes, probabilities)
+        result = nbinom.cdf(np.floor(values), sizes, probabilities)
+        return self._finalize(result, squeeze)
 
     def ppf(self, quantiles):
-        quantiles, means, sizes = self._align(quantiles, "quantiles")
-        if np.any((quantiles < 0.0) | (quantiles > 1.0)):
-            raise ValueError("quantiles must lie in [0, 1].")
+        quantiles, means, sizes, squeeze = self._align(quantiles, "quantiles")
+        self._validate_quantiles(quantiles)
         probabilities = sizes / (sizes + means)
         projected = np.ceil(nbinom.ppf(quantiles, sizes, probabilities))
         projected = np.where(quantiles == 0.0, 0.0, projected)
         if np.all(np.isfinite(projected)):
-            return projected.astype(int)
-        return projected
+            projected = projected.astype(int)
+        return self._finalize(projected, squeeze)
 
 
 class GammaPredictiveDistribution(_ParametricDistribution):
     """Gamma batches parameterized by conditional mean and shape."""
 
     def cdf(self, values):
-        values, means, shapes = self._align(values, "values")
-        return gamma.cdf(values, a=shapes, scale=means / shapes)
+        values, means, shapes, squeeze = self._align(values, "values")
+        result = gamma.cdf(values, a=shapes, scale=means / shapes)
+        return self._finalize(result, squeeze)
 
     def ppf(self, quantiles):
-        quantiles, means, shapes = self._align(quantiles, "quantiles")
-        if np.any((quantiles < 0.0) | (quantiles > 1.0)):
-            raise ValueError("quantiles must lie in [0, 1].")
-        return gamma.ppf(quantiles, a=shapes, scale=means / shapes)
+        quantiles, means, shapes, squeeze = self._align(quantiles, "quantiles")
+        self._validate_quantiles(quantiles)
+        result = gamma.ppf(quantiles, a=shapes, scale=means / shapes)
+        return self._finalize(result, squeeze)

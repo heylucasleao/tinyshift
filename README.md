@@ -333,9 +333,9 @@ smooth_forecast = hpi(y_hat, w_s=0.4)
 fully_stable_forecast = hfi(y_hat, w_s=0.5)
 ```
 
-### 8. Modelling Utilities and Time-Series Feature Tools
+### 8. Preprocessing, Features and Forecasting
 
-The `tinyshift.modelling` package contains preprocessing and forecasting wrappers for machine learning workflows:
+These responsibilities are exposed through focused packages:
 
 - `filter_features_by_vif` — remove highly correlated features using VIF filtering
 - `FeatureResidualizer` — residualize correlated predictors while preserving information
@@ -345,12 +345,15 @@ The `tinyshift.modelling` package contains preprocessing and forecasting wrapper
 - `TwoStageForecasterWrapper` — configurable Negative Binomial or Gamma predictive distributions and inventory optimization on top of `MLForecast`
 - `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
 
-Use `tinyshift.modelling` when you need preprocessors and decomposition-aware forecasting tools that complement the core `tinyshift.series` diagnostics and stability metrics.
+Use `tinyshift.preprocessing` for data transforms, `tinyshift.features` for
+feature engineering and `tinyshift.forecasting` for estimators and predictive
+distributions. `tinyshift.modelling` remains available as a compatibility
+facade for existing code.
 
 ### 9. Advanced Modeling Tools
 
 ```python
-from tinyshift.modelling import filter_features_by_vif
+from tinyshift.preprocessing import FeatureResidualizer, filter_features_by_vif
 from tinyshift.stats import bootstrap_bca_interval
 
 #Residualizer
@@ -384,7 +387,7 @@ confidence_interval = bootstrap_bca_interval(
 TinyShift includes decomposed forecasting wrappers for non-seasonal and multi-seasonal panel data. `DTLWrapper` extracts a robust LOWESS trend and models residuals with `MLForecast`:
 
 ```python
-from tinyshift.modelling import DTLWrapper
+from tinyshift.forecasting import DTLWrapper
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
 
@@ -410,7 +413,7 @@ preds = model.predict(h=14, stabilization_method="hfi", w_s=0.2)
 For multiple seasonalities, use `DMSTLWrapper`:
 
 ```python
-from tinyshift.modelling import DMSTLWrapper
+from tinyshift.forecasting import DMSTLWrapper
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
 
@@ -449,8 +452,9 @@ decisions; `GammaFamily` supports strictly positive continuous targets.
 import pandas as pd
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
-from tinyshift.modelling import (
+from tinyshift.forecasting import (
     FirstStageForecasterEvaluator,
+    NewsvendorOptimizer,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
@@ -471,39 +475,43 @@ model.fit(
     n_windows=5,
 )
 
-# Discrete median and upper-tail demand forecasts
-preds = model.predict(h=14, quantiles=(0.50, 0.95))
+# Forecast once and derive all probabilistic views from the distribution
+forecast, distribution = model.predict_distribution(h=14)
+forecast["q_50"] = distribution.ppf(0.50)
+forecast["q_95"] = distribution.ppf(0.95)
 
 # Newsvendor-optimal inventory using shortage and holding costs
-stock_plan = model.optimize(h=14, underage_cost=10.0, overage_cost=2.0)
+stock_plan = NewsvendorOptimizer.optimize(
+    forecast, distribution, underage_cost=10.0, overage_cost=2.0
+)
 
 # Exact probabilities P(Y=k), including the remaining upper tail
-probabilities = model.pmf(h=14, max_k=10)
+probabilities = distribution.pmf(range(11))
 
 # Expected value of stocking each additional discrete inventory unit
-marginal_value = model.marginal_benefit(
-    h=14,
+marginal_value = NewsvendorOptimizer.marginal_benefit(
+    forecast,
+    distribution,
     underage_cost=10.0,
     overage_cost=2.0,
     max_k=10,
 )
 
-# Direct access to the aligned distributions
-forecast, distribution = model.predict_distribution(h=14)
 probability_below_five = distribution.cdf(5)
 median = distribution.ppf(0.50)
 
 # Cost columns may be supplied without exogenous forecast features.
 costs = pd.DataFrame({"cu": [10.0] * len(forecast), "co": [2.0] * len(forecast)})
-stock_plan = model.optimize(
-    h=14,
+stock_plan = NewsvendorOptimizer.optimize(
+    forecast,
+    distribution,
     underage_cost="cu",
     overage_cost="co",
-    X_df=costs,
+    cost_df=costs,
 )
 
 # Continuous alternative; cdf/ppf/interval/sample share the same interface.
-from tinyshift.modelling import GammaFamily
+from tinyshift.forecasting import GammaFamily
 
 continuous_model = TwoStageForecasterWrapper(fcst, distribution=GammaFamily())
 ```
@@ -555,21 +563,35 @@ tinyshift/
 │   ├── categorical.py           # CatDrift for categorical features
 │   └── continuous.py            # ConDrift for numerical features
 ├── examples/                    # Jupyter notebook examples
-│   ├── decomp_mstl_ml.ipynb     # MSTL decomposition and ML examples
+│   ├── dmstl.ipynb              # Multi-seasonal forecasting example
+│   ├── dtl.ipynb                # Trend/residual forecasting example
 │   ├── drift.ipynb              # Drift detection examples
 │   ├── outlier.ipynb            # Outlier detection demos
+│   ├── power_analysis.ipynb     # Statistical power analysis
 │   ├── series.ipynb             # Time series analysis
+│   ├── solver.ipynb             # Probabilistic decision example
 │   ├── transaction_analyzer.ipynb  # Transaction analysis examples
-│   └── ts_diagnostics.ipynb     # Time series diagnostics
-├── modelling/                   # ML modeling utilities
-│   ├── README.md                # Module documentation
+│   ├── ts_diagnostics.ipynb     # Time series diagnostics
+│   └── tsf.ipynb                # Probabilistic forecasting example
+├── features/                    # Feature-engineering helpers
+│   ├── README.md                # Package documentation
 │   ├── __init__.py              # Package exports
-│   ├── dtl.py                   # DTL LOWESS trend/residual forecasting wrapper
-│   ├── dmstl.py                 # DMSTL decomposed forecasting wrapper
-│   ├── multicollinearity.py     # VIF-based multicollinearity detection
-│   ├── residualizer.py          # Residualizer feature
-│   ├── scaler.py                # Custom scaling transformations
-│   └── ts_features.py           # Time-series feature engineering
+│   └── time_series.py           # Time-series feature functions
+├── forecasting/                 # Forecasting estimators and distributions
+│   ├── README.md                # Package documentation
+│   ├── __init__.py              # Public forecasting API
+│   ├── dmstl/                   # Multi-seasonal decomposed forecasting
+│   ├── dtl/                     # LOWESS trend/residual forecasting
+│   └── probabilistic/           # Distributions, calibration and decisions
+├── modelling/                   # Backward-compatible import facade
+│   ├── README.md                # Migration and legacy documentation
+│   └── __init__.py              # Aliases for historical import paths
+├── preprocessing/               # Sklearn-compatible data transforms
+│   ├── README.md                # Package documentation
+│   ├── __init__.py              # Package exports
+│   ├── multicollinearity.py     # VIF-based feature filtering
+│   ├── residualizer.py          # Correlated-feature residualization
+│   └── scaler.py                # Robust Gaussian scaling
 ├── outlier/                     # Outlier detection algorithms
 │   ├── README.md                # Module documentation
 │   ├── __init__.py              # Package exports

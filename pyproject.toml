@@ -1,6 +1,6 @@
 [project]
 name = "tinyshift"
-version = "1.7.4"
+version = "1.7.5"
 description = "A small toolbox for mlops"
 license = { text = "MIT" }
 authors = [{ name = "Lucas Leão", email = "heylucasleao@gmail.com" }]

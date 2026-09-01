@@ -168,7 +168,7 @@ label. Costs can also be provided as fixed scalar values, such as
 ## Notes
 
 - The `series` module exports functions from `outlier`, `forecastability`, `stability`, `interpolation`, `metric`, and `diagnostic`.
-- For decomposed forecasting wrappers such as `DMSTLWrapper`, see `tinyshift.modelling`.
+- For decomposed forecasting wrappers such as `DMSTLWrapper`, see `tinyshift.forecasting`.
 
 ## Summary: Function Quick Reference
 
