@@ -433,10 +433,6 @@ def test_gamma_family_supports_continuous_targets(sample_continuous_data):
     assert np.issubdtype(frame["q_50"].dtype, np.floating)
     assert isinstance(distribution, GammaPredictiveDistribution)
     assert distribution.interval(0.9).shape == (len(distribution_frame), 2)
-    assert distribution.sample(3, random_state=42).shape == (
-        len(distribution_frame),
-        3,
-    )
 
 
 def test_gamma_family_rejects_zero_and_has_no_pmf(sample_continuous_data):
@@ -899,20 +895,6 @@ def test_predictive_distributions_reject_invalid_quantiles(
 def test_distribution_interval_rejects_invalid_coverage(gamma_distribution, coverage):
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
         gamma_distribution.interval(coverage)
-
-
-@pytest.mark.parametrize("n_samples", [0, -1, 1.5, True])
-def test_distribution_sample_rejects_invalid_count(gamma_distribution, n_samples):
-    with pytest.raises(ValueError, match="positive integer"):
-        gamma_distribution.sample(n_samples)
-
-
-def test_distribution_sample_is_reproducible(gamma_distribution):
-    first = gamma_distribution.sample(4, random_state=42)
-    second = gamma_distribution.sample(4, random_state=42)
-
-    assert first.shape == (2, 4)
-    assert np.array_equal(first, second)
 
 
 @pytest.mark.parametrize("value", [1.5, np.nan, np.inf])

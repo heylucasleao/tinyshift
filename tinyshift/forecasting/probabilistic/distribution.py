@@ -30,17 +30,6 @@ class PredictiveDistribution(ABC):
         )
         return np.asarray(self.ppf(levels))
 
-    def sample(self, n_samples: int = 1, random_state=None) -> np.ndarray:
-        if (
-            isinstance(n_samples, (bool, np.bool_))
-            or not isinstance(n_samples, (int, np.integer))
-            or n_samples < 1
-        ):
-            raise ValueError("n_samples must be a positive integer.")
-        rng = np.random.default_rng(random_state)
-        return np.asarray(self.ppf(rng.random((len(self), int(n_samples)))))
-
-
 class DiscretePredictiveDistribution(PredictiveDistribution):
     """Predictive distribution with ordered integer support."""
 
