@@ -41,7 +41,7 @@ class NewsvendorOptimizer:
 
         result = forecast_df.copy()
         result[ratio_col] = ratio
-        result[output_col] = distribution.ppf(ratio)
+        result[output_col] = distribution.ppf(ratio[:, None])
         return result
 
     @classmethod
