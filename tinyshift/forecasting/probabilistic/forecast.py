@@ -37,6 +37,11 @@ class PanelPredictiveForecast:
     def __len__(self) -> int:
         return len(self._distribution)
 
+    @property
+    def distribution(self) -> PredictiveDistribution:
+        """Return the row-aligned predictive distribution."""
+        return self._distribution
+
     def to_frame(self) -> pd.DataFrame:
         """Return the point-forecast panel without distributional columns.
 

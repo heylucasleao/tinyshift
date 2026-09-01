@@ -7,8 +7,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize_scalar
-from scipy.stats import nbinom
 from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.utils.imports import requires_extra
@@ -141,84 +139,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             models_dict, "The MLForecast object has not been fitted yet."
         )
         return model
-
-    def _nbinom_log_likelihood(
-        self,
-        params: list,
-        y: np.ndarray,
-        lambda_t: np.ndarray,
-    ) -> float:
-        """Computes the negative log-likelihood of the Negative Binomial distribution.
-
-        Process
-        -------
-        1. Ensures parameter r remains positive.
-        2. Converts (lambda_t, r) to the success probability parameter `p = r / (r + lambda_t)`.
-        3. Computes the log probability mass function (logpmf) for discrete counts.
-        4. Replaces negative infinities using a lower-bound floor (-1e2).
-
-        Parameters
-        ----------
-        params : list of float
-            Parameter vector containing [r] (dispersion/size parameter of the Negative Binomial).
-        y : numpy.ndarray
-            Observed historical demand values.
-        lambda_t : numpy.ndarray
-            In-sample predicted conditional expectation (lambda).
-
-        Returns
-        -------
-        float
-            Negative log-likelihood value to be minimized.
-        """
-        r = params[0]
-        if not np.isfinite(r) or r <= 0:
-            return 1e10
-
-        lambda_t = np.maximum(lambda_t, 1e-6)
-        p = r / (r + lambda_t)
-
-        log_pdf = nbinom.logpmf(y, r, p)
-        log_pdf = np.where(np.isneginf(log_pdf), -1e2, log_pdf)
-
-        return -np.sum(log_pdf)
-
-    def _estimate_r(
-        self,
-        y_obs: np.ndarray,
-        lambdas: np.ndarray,
-    ) -> float:
-        """Internal helper to estimate the dispersion parameter (r) via Maximum Likelihood Estimation.
-
-        Process
-        -------
-        Uses bounded scalar optimization to minimize `_nbinom_log_likelihood` over the observed
-        target series and in-sample predictions. Parameter r is bounded between 1e-3 and 50.0 to
-        prevent collapse into thin-tailed distributions (Poisson) and ensure tail coverage.
-
-        Parameters
-        ----------
-        y_obs : numpy.ndarray
-            Target demand values for a specific series.
-        lambdas : numpy.ndarray
-            Predicted conditional expectation values (lambda_t) for the same series.
-
-        Returns
-        -------
-        float
-            Optimized per-series dispersion parameter r.
-        """
-        if not np.all(np.isfinite(lambdas)):
-            raise ValueError("Predicted lambda values must be finite.")
-
-        res = minimize_scalar(
-            lambda r: self._nbinom_log_likelihood([r], y_obs, lambdas),
-            bounds=(1e-3, 50.0),
-            method="bounded",
-        )
-        if not res.success or not np.isfinite(res.fun) or not np.isfinite(res.x):
-            raise RuntimeError(f"Dispersion optimization failed: {res.message}")
-        return float(res.x)
 
     def _calibrate_dispersion_cv(
         self,

@@ -20,34 +20,39 @@ class DistributionFamily(BaseEstimator, ABC):
     is_discrete = False
     parameter_column = "dispersion"
 
+    @property
+    @abstractmethod
+    def dispersion_bounds(self) -> tuple[float, float]:
+        """Return the lower and upper bounds for dispersion optimization."""
+
     @abstractmethod
     def validate_target(self, y: np.ndarray) -> None:
         """Validate whether observations belong to this family's support."""
 
     @abstractmethod
     def negative_log_likelihood(
-        self, dispersion: float, y: np.ndarray, means: np.ndarray
+        self, dispersion: float, y: np.ndarray, conditional_means: np.ndarray
     ) -> float:
         """Return the negative log likelihood for one dispersion value."""
 
     @abstractmethod
-    def distribution(self, means, dispersions) -> PredictiveDistribution:
+    def distribution(self, conditional_means, dispersions) -> PredictiveDistribution:
         """Construct a batch distribution."""
 
-    def _calibration_data(
-        self, y: np.ndarray, means: np.ndarray
+    def _validate_calibration_data(
+        self, y: np.ndarray, conditional_means: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """Validate and return aligned dispersion-calibration arrays."""
         y = np.asarray(y, dtype=float)
-        means = np.asarray(means, dtype=float)
-        if y.shape != means.shape:
+        conditional_means = np.asarray(conditional_means, dtype=float)
+        if y.shape != conditional_means.shape:
             raise ValueError(
                 "observations and predicted means must have the same shape."
             )
-        if not np.all(np.isfinite(means)):
+        if not np.all(np.isfinite(conditional_means)):
             raise ValueError("Predicted mean values must be finite.")
         self.validate_target(y)
-        return y, means
+        return y, conditional_means
 
     @staticmethod
     def _fitted_dispersion(result) -> float:
@@ -60,26 +65,26 @@ class DistributionFamily(BaseEstimator, ABC):
             raise RuntimeError(f"Dispersion optimization failed: {result.message}")
         return float(result.x)
 
-    def fit_dispersion(self, y: np.ndarray, means: np.ndarray) -> float:
+    def fit_dispersion(self, y: np.ndarray, conditional_means: np.ndarray) -> float:
         """Estimate dispersion by bounded maximum likelihood."""
-        y, means = self._calibration_data(y, means)
+        y, conditional_means = self._validate_calibration_data(y, conditional_means)
         result = minimize_scalar(
-            lambda value: self.negative_log_likelihood(value, y, means),
+            lambda value: self.negative_log_likelihood(value, y, conditional_means),
             bounds=self.dispersion_bounds,
             method="bounded",
         )
         return self._fitted_dispersion(result)
 
     def fit_log_dispersion(
-        self, y: np.ndarray, means: np.ndarray, epsilon: float = 0.05
+        self, y: np.ndarray, conditional_means: np.ndarray, epsilon: float = 0.05
     ) -> tuple[float, float, float]:
         """Estimate dispersion and the local variance of its logarithm."""
-        y, means = self._calibration_data(y, means)
-        dispersion = self.fit_dispersion(y, means)
+        y, conditional_means = self._validate_calibration_data(y, conditional_means)
+        dispersion = self.fit_dispersion(y, conditional_means)
         log_dispersion = float(np.log(dispersion))
 
         def objective(theta: float) -> float:
-            return self.negative_log_likelihood(np.exp(theta), y, means)
+            return self.negative_log_likelihood(np.exp(theta), y, conditional_means)
 
         curvature = (
             objective(log_dispersion + epsilon)
@@ -87,9 +92,7 @@ class DistributionFamily(BaseEstimator, ABC):
             + objective(log_dispersion - epsilon)
         ) / epsilon**2
         variance = (
-            1.0 / curvature
-            if np.isfinite(curvature) and curvature > 1e-8
-            else np.inf
+            1.0 / curvature if np.isfinite(curvature) and curvature > 1e-8 else np.inf
         )
         return dispersion, log_dispersion, float(variance)
 
@@ -105,7 +108,7 @@ class NegativeBinomialFamily(DistributionFamily):
         self.max_size = max_size
 
     @property
-    def dispersion_bounds(self):
+    def dispersion_bounds(self) -> tuple[float, float]:
         return (self.min_size, self.max_size)
 
     def validate_target(self, y: np.ndarray) -> None:
@@ -118,17 +121,17 @@ class NegativeBinomialFamily(DistributionFamily):
                 "Target values must be integer counts for the Negative Binomial model."
             )
 
-    def negative_log_likelihood(self, dispersion, y, means) -> float:
+    def negative_log_likelihood(self, dispersion, y, conditional_means) -> float:
         if not np.isfinite(dispersion) or dispersion <= 0:
             return 1e10
-        means = np.maximum(means, 1e-6)
-        probability = dispersion / (dispersion + means)
+        conditional_means = np.maximum(conditional_means, 1e-6)
+        probability = dispersion / (dispersion + conditional_means)
         log_probability = nbinom.logpmf(y, dispersion, probability)
         log_probability = np.where(np.isneginf(log_probability), -1e2, log_probability)
         return float(-np.sum(log_probability))
 
-    def distribution(self, means, dispersions):
-        return NegativeBinomialPredictiveDistribution(means, dispersions)
+    def distribution(self, conditional_means, dispersions):
+        return NegativeBinomialPredictiveDistribution(conditional_means, dispersions)
 
 
 class GammaFamily(DistributionFamily):
@@ -141,7 +144,7 @@ class GammaFamily(DistributionFamily):
         self.max_shape = max_shape
 
     @property
-    def dispersion_bounds(self):
+    def dispersion_bounds(self) -> tuple[float, float]:
         return (self.min_shape, self.max_shape)
 
     def validate_target(self, y: np.ndarray) -> None:
@@ -152,14 +155,16 @@ class GammaFamily(DistributionFamily):
                 "Target values must be strictly positive for the Gamma model."
             )
 
-    def negative_log_likelihood(self, dispersion, y, means) -> float:
+    def negative_log_likelihood(self, dispersion, y, conditional_means) -> float:
         if not np.isfinite(dispersion) or dispersion <= 0:
             return 1e10
-        means = np.maximum(means, 1e-6)
-        log_density = gamma.logpdf(y, a=dispersion, scale=means / dispersion)
+        conditional_means = np.maximum(conditional_means, 1e-6)
+        log_density = gamma.logpdf(
+            y, a=dispersion, scale=conditional_means / dispersion
+        )
         if not np.all(np.isfinite(log_density)):
             return 1e10
         return float(-np.sum(log_density))
 
-    def distribution(self, means, dispersions):
-        return GammaPredictiveDistribution(means, dispersions)
+    def distribution(self, conditional_means, dispersions):
+        return GammaPredictiveDistribution(conditional_means, dispersions)

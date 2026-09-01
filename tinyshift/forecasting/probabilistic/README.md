@@ -57,7 +57,7 @@ forecasts intentionally do not expose `pmf`.
 | `wrapper.py` | Estimator lifecycle, temporal calibration and forecast construction |
 | `family.py` | Target support, likelihood optimization and distribution factories |
 | `calibration.py` | Hierarchical shrinkage state and fallback policy |
-| `distribution.py` | Row-aligned parametric CDF, PPF, interval, sampling and PMF mathematics |
+| `distribution.py` | Row-aligned parametric CDF, PPF, interval and PMF mathematics |
 | `forecast.py` | DataFrame facade that keeps distribution outputs aligned with panel rows |
 | `decision.py` | Newsvendor critical-ratio and marginal-benefit policies |
 | `eval.py` | Point and probabilistic forecast metrics |
@@ -77,6 +77,26 @@ shrunk in `log(dispersion)` toward their parent using weights inferred from the
 likelihood curvature and empirical between-group variance. No regularization
 constant is required from the user. The global fit is retained as the fallback
 for series not seen during calibration. MLForecast is then fitted on all rows.
+
+For each calibration group, the family minimizes the negative log-likelihood
+
+```text
+d_hat = argmin_d -sum_t log p(y_t | lambda_t, d)
+```
+
+in which `lambda_t` is an out-of-fold conditional mean and `d` is the
+family-specific dispersion. The local variance is approximated from the inverse
+curvature of that objective in `theta = log(d)`. A raw group estimate is then
+shrunk toward its hierarchical parent:
+
+```text
+weight        = tau² / (tau² + local_variance)
+theta_shrunk  = weight * theta_raw + (1 - weight) * theta_parent
+dispersion    = exp(theta_shrunk)
+```
+
+Consequently, noisy groups borrow more strength from their parent, while groups
+with well-identified likelihoods retain more of their own estimate.
 
 Fitted layers are stored in `calibration_.dispersion`: `global`,
 `global_horizon`, `series`, and `series_horizon`. Prediction resolves known
@@ -117,13 +137,20 @@ one-dimensional input defines a common grid, and a two-dimensional array with
 `len(forecast)` rows supplies row-wise values.
 
 Negative Binomial distributions use the conditional mean and calibrated size
-parameter. Gamma distributions use the conditional mean and calibrated shape.
+parameter, with `p = size / (size + lambda_t)`. This gives
+`E[Y] = lambda_t` and `Var[Y] = lambda_t + lambda_t² / size`. Gamma
+distributions use the conditional mean and calibrated shape, with
+`scale = lambda_t / shape`, `E[Y] = lambda_t`, and
+`Var[Y] = lambda_t² / shape`.
 Both expose `cdf`, `ppf`, and `interval` internally. Discrete
 distributions additionally define `pmf(k) = cdf(k) - cdf(k - 1)`.
 
 The forecast facade returns DataFrames and names quantile columns as percentages,
 for example `lambda_t-q-50` and `lambda_t-q-90`. Distribution implementation
 classes remain internal and are intentionally excluded from `forecasting.probabilistic.__all__`.
+The fitted row-aligned distribution remains available as
+`forecast.distribution` for decision utilities that operate on the underlying
+mathematical object.
 
 ## Decision flow
 

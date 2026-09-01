@@ -247,29 +247,30 @@ probabilistic_summary = TwoStageForecasterEvaluator.evaluate(
 )
 
 # Forecast once and derive quantiles from the row-aligned distribution
-forecast, distribution = model.predict_distribution(h=14)
-forecast["q_50"] = distribution.ppf(0.50)
-forecast["q_95"] = distribution.ppf(0.95)
+forecast = model.predict_distribution(h=14)
+forecast_df = forecast.to_frame()
+quantiles = forecast.ppf([0.50, 0.95])
+distribution = forecast.distribution
 
 # Newsvendor inventory level for fixed shortage and holding costs
 stock_plan = NewsvendorOptimizer.optimize(
-    forecast, distribution, underage_cost=10.0, overage_cost=2.0
+    forecast_df, distribution, underage_cost=10.0, overage_cost=2.0
 )
 
-# Exact probabilities from P(Y=0) through P(Y=10), plus P(Y>10)
-probabilities = distribution.pmf(range(11))
+# Exact probabilities from P(Y=0) through P(Y=10)
+probabilities = forecast.pmf(range(11))
 
 # Expected marginal value of each additional discrete inventory unit
 marginal_value = NewsvendorOptimizer.marginal_benefit(
-    forecast,
+    forecast_df,
     distribution,
     underage_cost=10.0,
     overage_cost=2.0,
     max_k=10,
 )
 
-probability_below_five = distribution.cdf(5)
-median = distribution.ppf(0.50)
+probability_below_five = forecast.cdf(5)
+median = forecast.ppf(0.50)
 ```
 
 Cost columns used only by the Newsvendor decision do not need to be model
@@ -281,7 +282,7 @@ costs = pd.DataFrame(
     {"cu": [10.0] * len(forecast), "co": [2.0] * len(forecast)}
 )
 stock_plan = NewsvendorOptimizer.optimize(
-    forecast,
+    forecast_df,
     distribution,
     underage_cost="cu",
     overage_cost="co",
@@ -300,8 +301,8 @@ continuous_model = TwoStageForecasterWrapper(
 )
 continuous_model.fit(df_train, h=14, n_windows=5)
 
-forecast, distribution = continuous_model.predict_distribution(h=14)
-quantiles = distribution.ppf([0.1, 0.5, 0.9])
+forecast = continuous_model.predict_distribution(h=14)
+quantiles = forecast.ppf([0.1, 0.5, 0.9])
 ```
 
 Use `FirstStageForecasterEvaluator` to inspect bias, false demand on zero-demand
