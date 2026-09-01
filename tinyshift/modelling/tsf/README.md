@@ -56,7 +56,7 @@ forecasts intentionally do not expose `pmf`.
 |---|---|
 | `wrapper.py` | Estimator lifecycle, temporal calibration and forecast construction |
 | `family.py` | Target support, likelihood optimization and distribution factories |
-| `dispersion_calibration.py` | Hierarchical shrinkage state and fallback policy |
+| `calibration.py` | Hierarchical shrinkage state and fallback policy |
 | `distribution.py` | Row-aligned parametric CDF, PPF, interval, sampling and PMF mathematics |
 | `forecast.py` | DataFrame facade that keeps distribution outputs aligned with panel rows |
 | `decision.py` | Newsvendor critical-ratio and marginal-benefit policies |
@@ -78,11 +78,11 @@ likelihood curvature and empirical between-group variance. No regularization
 constant is required from the user. The global fit is retained as the fallback
 for series not seen during calibration. MLForecast is then fitted on all rows.
 
-Fitted layers are stored in `dispersion_calibration_.dispersion`: `global`,
+Fitted layers are stored in `calibration_.dispersion`: `global`,
 `global_horizon`, `series`, and `series_horizon`. Prediction resolves known
 series through `series_horizon -> series -> global`. For an unknown series it
 uses `global_horizon -> global`. The corresponding between-group variances are
-available in `dispersion_calibration_.tau2`.
+available in `calibration_.tau2`.
 
 ```text
 training panel

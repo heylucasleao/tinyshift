@@ -13,7 +13,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.utils.imports import requires_extra
 
-from .dispersion_calibration import DispersionCalibration, DispersionCalibrator
+from .calibration import Calibration, Calibrator
 from .family import DistributionFamily, NegativeBinomialFamily
 from .forecast import DiscretePanelPredictiveForecast, PanelPredictiveForecast
 
@@ -269,12 +269,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         step_size: int | None,
         refit: bool | int,
         fit_kwargs: dict[str, Any],
-    ) -> DispersionCalibration:
+    ) -> Calibration:
         """Generate OOF predictions and fit hierarchical dispersion."""
         cv_df = self._dispersion_cv_predictions(
             df, h, n_windows, step_size, refit, fit_kwargs
         )
-        calibrator = DispersionCalibrator(
+        calibrator = Calibrator(
             family=self.distribution_family_,
             id_col=self.id_col,
             target_col=self.target_col,
@@ -427,7 +427,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             numeric_label,
         )
         df_fit, fit_kwargs = self._prepare_fit_data(df_train, gamma)
-        self.dispersion_calibration_ = self._calibrate_dispersion_cv(
+        self.calibration_ = self._calibrate_dispersion_cv(
             df_fit, h, n_windows, step_size, refit, fit_kwargs
         )
         self.exog_cols_ = self._fit_base_forecaster(df_fit, fit_kwargs)
@@ -449,7 +449,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         horizons = frame.groupby(self.id_col, sort=False).cumcount() + 1
         dispersions = np.fromiter(
             (
-                self.dispersion_calibration_.resolve(uid, int(horizon))
+                self.calibration_.resolve(uid, int(horizon))
                 for uid, horizon in zip(frame[self.id_col], horizons)
             ),
             dtype=float,

@@ -1,4 +1,4 @@
-"""Hierarchical dispersion calibration for panel forecasts."""
+"""Hierarchical distribution-parameter calibration for TSF."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -10,7 +10,7 @@ from .family import DistributionFamily
 
 
 @dataclass
-class DispersionCalibration:
+class Calibration:
     """Fitted dispersion layers and their fallback policy."""
 
     dispersion: dict[str, Any]
@@ -51,7 +51,7 @@ class DispersionCalibration:
         return float(self.dispersion["global"])
 
 
-class DispersionCalibrator:
+class Calibrator:
     """Estimate hierarchical dispersions from out-of-fold predictions."""
 
     def __init__(
@@ -68,7 +68,7 @@ class DispersionCalibrator:
         self.prediction_col = prediction_col
         self.horizon_col = horizon_col
 
-    def fit(self, cv_df: pd.DataFrame) -> DispersionCalibration:
+    def fit(self, cv_df: pd.DataFrame) -> Calibration:
         """Fit and shrink every layer of the dispersion hierarchy."""
         global_dispersion, global_theta = self._fit_global(cv_df)
         global_horizon, tau2_global_horizon = self._fit_global_horizon(
@@ -78,7 +78,7 @@ class DispersionCalibrator:
         series_horizon, tau2_series_horizon = self._fit_series_horizon(
             cv_df, series_fit
         )
-        return DispersionCalibration(
+        return Calibration(
             dispersion={
                 "global": global_dispersion,
                 "global_horizon": global_horizon,

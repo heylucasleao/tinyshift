@@ -15,10 +15,7 @@ from tinyshift.modelling import (
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
-from tinyshift.modelling.tsf.dispersion_calibration import (
-    DispersionCalibration,
-    DispersionCalibrator,
-)
+from tinyshift.modelling.tsf.calibration import Calibration, Calibrator
 from tinyshift.modelling.tsf.distribution import (
     GammaPredictiveDistribution,
     NegativeBinomialPredictiveDistribution,
@@ -260,7 +257,7 @@ def test_zero_between_group_variance_collapses_to_parent():
         }
     )
 
-    shrunk = DispersionCalibrator._shrink(fitted, tau2=0.0)
+    shrunk = Calibrator._shrink(fitted, tau2=0.0)
 
     assert np.allclose(shrunk["weight"], 0.0)
     assert np.allclose(shrunk["theta"], fitted["parent"])
@@ -270,7 +267,7 @@ def test_prediction_uses_horizon_dispersion_then_series_fallback():
     wrapper = TwoStageForecasterWrapper(fcst=None)
     wrapper.id_col = "unique_id"
     wrapper.distribution_family_ = NegativeBinomialFamily()
-    wrapper.dispersion_calibration_ = DispersionCalibration(
+    wrapper.calibration_ = Calibration(
         dispersion={
             "global": 8.0,
             "global_horizon": {1: 6.0},
@@ -287,7 +284,7 @@ def test_prediction_uses_horizon_dispersion_then_series_fallback():
 
 
 def test_resolve_dispersion_uses_global_for_unknown_uncalibrated_horizon():
-    calibration = DispersionCalibration(
+    calibration = Calibration(
         dispersion={
             "global": 8.0,
             "global_horizon": {1: 6.0},
@@ -1004,7 +1001,7 @@ def test_predict_distribution_uses_fallback_for_unknown_series(
     frame = wrapper.predict_distribution(h=1).to_frame()
 
     assert frame.loc[frame.index[0], "r_dispersion"] == pytest.approx(
-        wrapper.dispersion_calibration_.dispersion["global_horizon"][1]
+        wrapper.calibration_.dispersion["global_horizon"][1]
     )
 
 
@@ -1079,7 +1076,7 @@ def test_wrapper_joblib_round_trip(sample_train_data, tmp_path):
 
     pd.testing.assert_frame_equal(actual, expected)
     assert isinstance(restored.distribution_family_, NegativeBinomialFamily)
-    assert restored.dispersion_calibration_ == wrapper.dispersion_calibration_
+    assert restored.calibration_ == wrapper.calibration_
 
 
 def test_gamma_wrapper_joblib_round_trip(sample_continuous_data, tmp_path):
@@ -1097,7 +1094,7 @@ def test_gamma_wrapper_joblib_round_trip(sample_continuous_data, tmp_path):
         _predict(restored, h=2, quantiles=(0.1, 0.9)), expected
     )
     assert isinstance(restored.distribution_family_, GammaFamily)
-    assert restored.dispersion_calibration_ == wrapper.dispersion_calibration_
+    assert restored.calibration_ == wrapper.calibration_
 
 
 def test_continuous_optimize_accepts_cost_only_x_df(sample_continuous_data):
