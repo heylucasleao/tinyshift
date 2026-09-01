@@ -13,6 +13,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.utils.imports import requires_extra
 
+from .dispersion_calibration import DispersionCalibration, DispersionCalibrator
 from .family import DistributionFamily, NegativeBinomialFamily
 from .forecast import DiscretePanelPredictiveForecast, PanelPredictiveForecast
 
@@ -268,39 +269,18 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         step_size: int | None,
         refit: bool | int,
         fit_kwargs: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, float]]:
-        """Calibrate hierarchical dispersion with empirical-Bayes shrinkage.
-
-        Returns
-        -------
-        tuple
-            Nested dispersion layers and their between-group variances.
-        """
+    ) -> DispersionCalibration:
+        """Generate OOF predictions and fit hierarchical dispersion."""
         cv_df = self._dispersion_cv_predictions(
             df, h, n_windows, step_size, refit, fit_kwargs
         )
-        global_dispersion, global_theta = self._global_dispersion(cv_df)
-        global_horizon, tau2_global_horizon = (
-            self._calibrate_global_horizon_dispersions(cv_df, global_theta)
+        calibrator = DispersionCalibrator(
+            family=self.distribution_family_,
+            id_col=self.id_col,
+            target_col=self.target_col,
+            prediction_col=self.model_name,
         )
-        series_fit, series, tau2_series = self._calibrate_series_dispersions(
-            cv_df, global_theta
-        )
-        series_horizon, tau2_series_horizon = (
-            self._calibrate_horizon_dispersions(cv_df, series_fit)
-        )
-        dispersion = {
-            "global": global_dispersion,
-            "global_horizon": global_horizon,
-            "series": series,
-            "series_horizon": series_horizon,
-        }
-        tau2 = {
-            "global_horizon": tau2_global_horizon,
-            "series": tau2_series,
-            "series_horizon": tau2_series_horizon,
-        }
-        return dispersion, tau2
+        return calibrator.fit(cv_df)
 
     def _dispersion_cv_predictions(
         self,
@@ -332,101 +312,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             cv_df.groupby([self.id_col, "cutoff"], sort=False).cumcount() + 1
         )
         return cv_df
-
-    def _global_dispersion(self, cv_df: pd.DataFrame) -> tuple[float, float]:
-        """Fit the global fallback and return it with its logarithm."""
-        target = cv_df[self.target_col].to_numpy()
-        means = cv_df[self.model_name].to_numpy()
-        fallback, global_theta, _ = self.distribution_family_.fit_log_dispersion(
-            target, means
-        )
-        return fallback, global_theta
-
-    def _calibrate_series_dispersions(
-        self, cv_df: pd.DataFrame, global_theta: float
-    ) -> tuple[pd.DataFrame, dict[Any, float], float]:
-        """Shrink per-series dispersions toward the global fit."""
-        series_fit = self._dispersion_fit_table(cv_df, [self.id_col])
-        series_fit["parent"] = global_theta
-        tau2 = self._between_group_variance(series_fit)
-        series_fit = self._shrink_dispersion(series_fit, tau2)
-        dispersion_dict = dict(
-            zip(series_fit[self.id_col], series_fit["dispersion"])
-        )
-        return series_fit, dispersion_dict, tau2
-
-    def _calibrate_global_horizon_dispersions(
-        self, cv_df: pd.DataFrame, global_theta: float
-    ) -> tuple[dict[int, float], float]:
-        """Shrink global horizon dispersions toward the global fit."""
-        horizon_fit = self._dispersion_fit_table(cv_df, ["_horizon"])
-        horizon_fit["parent"] = global_theta
-        tau2 = self._between_group_variance(horizon_fit)
-        horizon_fit = self._shrink_dispersion(horizon_fit, tau2)
-        dispersions = {
-            int(row["_horizon"]): row["dispersion"]
-            for _, row in horizon_fit.iterrows()
-        }
-        return dispersions, tau2
-
-    def _calibrate_horizon_dispersions(
-        self, cv_df: pd.DataFrame, series_fit: pd.DataFrame
-    ) -> tuple[dict[tuple[Any, int], float], float]:
-        """Shrink series×horizon dispersions toward their series fits."""
-        horizon_fit = self._dispersion_fit_table(
-            cv_df, [self.id_col, "_horizon"]
-        )
-        horizon_fit["parent"] = horizon_fit[self.id_col].map(
-            series_fit.set_index(self.id_col)["theta"]
-        )
-        tau2 = self._between_group_variance(horizon_fit)
-        horizon_fit = self._shrink_dispersion(horizon_fit, tau2)
-        horizon_dict = {
-            (row[self.id_col], int(row["_horizon"])): row["dispersion"]
-            for _, row in horizon_fit.iterrows()
-        }
-        return horizon_dict, tau2
-
-    def _dispersion_fit_table(
-        self, cv_df: pd.DataFrame, group_columns: list[str]
-    ) -> pd.DataFrame:
-        """Fit raw log-dispersion and its variance for calibration groups."""
-        rows = []
-        for keys, group in cv_df.groupby(group_columns, sort=False):
-            keys = keys if isinstance(keys, tuple) else (keys,)
-            fitted = self.distribution_family_.fit_log_dispersion(
-                group[self.target_col].to_numpy(),
-                group[self.model_name].to_numpy(),
-            )
-            rows.append((*keys, fitted[1], fitted[2]))
-        return pd.DataFrame(rows, columns=[*group_columns, "theta_raw", "variance"])
-
-    @staticmethod
-    def _between_group_variance(fitted: pd.DataFrame) -> float:
-        """Estimate genuine between-group variance after removing fit noise."""
-        finite = np.isfinite(fitted["theta_raw"]) & np.isfinite(fitted["variance"])
-        if finite.sum() < 2:
-            return 0.0
-        residuals = fitted.loc[finite, "theta_raw"] - fitted.loc[finite, "parent"]
-        observed = residuals.var(ddof=1)
-        estimation_noise = fitted.loc[finite, "variance"].mean()
-        return float(max(observed - estimation_noise, 0.0))
-
-    @staticmethod
-    def _shrink_dispersion(fitted: pd.DataFrame, tau2: float) -> pd.DataFrame:
-        """Shrink log-dispersions toward their hierarchical parent."""
-        fitted = fitted.copy()
-        fitted["weight"] = np.where(
-            np.isfinite(fitted["variance"]),
-            tau2 / (tau2 + fitted["variance"]),
-            0.0,
-        )
-        fitted["theta"] = (
-            fitted["weight"] * fitted["theta_raw"]
-            + (1.0 - fitted["weight"]) * fitted["parent"]
-        )
-        fitted["dispersion"] = np.exp(fitted["theta"])
-        return fitted
 
     def _fit_base_forecaster(
         self,
@@ -542,7 +427,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             numeric_label,
         )
         df_fit, fit_kwargs = self._prepare_fit_data(df_train, gamma)
-        self.dispersion_, self.dispersion_tau2_ = self._calibrate_dispersion_cv(
+        self.dispersion_calibration_ = self._calibrate_dispersion_cv(
             df_fit, h, n_windows, step_size, refit, fit_kwargs
         )
         self.exog_cols_ = self._fit_base_forecaster(df_fit, fit_kwargs)
@@ -559,47 +444,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         frame["lambda_t"] = np.maximum(means, 1e-6)
         return frame
 
-    def _resolve_dispersion(self, uid: Any, horizon: int) -> float:
-        """Resolve one dispersion through the fitted fallback hierarchy.
-
-        Resolution distinguishes known series from cold starts. A known
-        ``(series, horizon)`` uses the most specific shrunk estimate. When that
-        horizon was not calibrated, the series-level estimate is preferred
-        because it retains information learned for that series. For an unknown
-        series, no series-level evidence exists, so the shrunk global-horizon
-        estimate is used. The global estimate is the final fallback when
-        neither dimension has a calibrated value.
-
-        The resulting precedence is::
-
-            known series:   series×horizon -> series -> global
-            unknown series: global×horizon -> global
-
-        All non-global layers have already been regularized toward their
-        statistical parent during fitting; this method only selects a fitted
-        value and does not perform additional shrinkage.
-        """
-        layers = self.dispersion_
-        series_horizon = layers["series_horizon"]
-        if (uid, horizon) in series_horizon:
-            return float(series_horizon[uid, horizon])
-
-        series = layers["series"]
-        if uid in series:
-            return float(series[uid])
-
-        global_horizon = layers["global_horizon"]
-        if horizon in global_horizon:
-            return float(global_horizon[horizon])
-
-        return float(layers["global"])
-
     def _prediction_dispersions(self, frame: pd.DataFrame) -> np.ndarray:
         """Resolve and attach dispersions for all forecast rows."""
         horizons = frame.groupby(self.id_col, sort=False).cumcount() + 1
         dispersions = np.fromiter(
             (
-                self._resolve_dispersion(uid, int(horizon))
+                self.dispersion_calibration_.resolve(uid, int(horizon))
                 for uid, horizon in zip(frame[self.id_col], horizons)
             ),
             dtype=float,
