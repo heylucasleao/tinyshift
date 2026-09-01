@@ -1,14 +1,16 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import jensenshannon
-from .base import BaseModel
-from typing import Callable, Tuple, Union, List
 from sklearn.base import BaseEstimator
+
+from .base import BaseModel
 
 
 def chebyshev(a, b):
@@ -53,9 +55,9 @@ class CatDrift(BaseModel, BaseEstimator):
 
     def __init__(
         self,
-        freq: str = None,
+        freq: str | None = None,
         func: str = "chebyshev",
-        drift_limit: Union[str, Tuple[float, float]] = "auto",
+        drift_limit: str | tuple[float | None, float | None] = "auto",
         method: str = "expanding",
     ):
         """
@@ -85,10 +87,10 @@ class CatDrift(BaseModel, BaseEstimator):
             )
 
         self.freq = freq
-        self.func = self._selection_function(func)
+        self._selection_function(func)
+        self.func = func
         self.drift_limit = drift_limit
         self.method = method
-        self.reference_distribution = None
 
     def fit(
         self,
@@ -117,6 +119,7 @@ class CatDrift(BaseModel, BaseEstimator):
             Returns self for method chaining.
         """
         self._check_dataframe(df, time_col, target_col, id_col)
+        self._distance_function_ = self._selection_function(self.func)
 
         frequency = (
             df.groupby([id_col, pd.Grouper(key=time_col, freq=self.freq), target_col])[
@@ -125,15 +128,15 @@ class CatDrift(BaseModel, BaseEstimator):
             .size()
             .unstack(fill_value=0)
         )
-        reference = frequency.groupby([id_col]).sum() / np.sum(frequency.sum(axis=0))
-
-        reference_distance = self._generate_distance(
-            frequency,
+        reference_counts = frequency.groupby(level=id_col).sum()
+        reference = reference_counts.div(reference_counts.sum(axis=1), axis=0)
+        reference_distance = self._reference_distances_by_series(
+            frequency, id_col, time_col
         )
 
         self.reference_distribution = {
             unique_id: {
-                category: round(prob, 4)
+                category: float(prob)
                 for category, prob in reference.loc[unique_id].items()
             }
             for unique_id in reference.index
@@ -146,6 +149,21 @@ class CatDrift(BaseModel, BaseEstimator):
         )
 
         return self
+
+    def _reference_distances_by_series(
+        self, frequency: pd.DataFrame, id_col: str, time_col: str
+    ) -> pd.Series:
+        """Calibrate temporal distances independently for each series."""
+        parts = []
+        for unique_id in frequency.index.get_level_values(id_col).unique():
+            group = frequency.xs(unique_id, level=id_col)
+            distances = self._generate_distance(group)
+            distances.index = pd.MultiIndex.from_arrays(
+                [[unique_id] * len(distances), distances.index],
+                names=[id_col, time_col],
+            )
+            parts.append(distances)
+        return pd.concat(parts)
 
     def _selection_function(self, func_name: str) -> Callable:
         """Returns a specific function based on the given function name."""
@@ -162,7 +180,7 @@ class CatDrift(BaseModel, BaseEstimator):
 
     def _generate_distance(
         self,
-        X: Union[pd.Series, List[np.ndarray], List[list]],
+        X: pd.Series | list[np.ndarray] | list[list],
     ) -> pd.Series:
         """
         Compute a distance metric using different comparison strategies.
@@ -193,35 +211,44 @@ class CatDrift(BaseModel, BaseEstimator):
 
         if self.method == "expanding":
             return self._expanding_distance(X, index)
-        elif self.method == "jackknife":
+        if self.method == "jackknife":
             return self._jackknife_distance(X, index)
-        else:
-            raise ValueError(f"Unknown method: {self.method}")
+        raise ValueError(f"Unknown method: {self.method}")
 
     def _expanding_distance(self, X: np.ndarray, index) -> pd.Series:
         """Compute distances using expanding window approach."""
         n = len(X)
-        distances = np.zeros(n)
+        if n < 2:
+            raise ValueError(
+                "Each series requires at least two reference periods for expanding calibration."
+            )
+        distances = np.zeros(n - 1)
 
         past_value = np.zeros(X.shape[1], dtype=np.float64)
         for i in range(1, n):
             past_value = past_value + X[i - 1]
             past_value_norm = past_value / np.sum(past_value)
             current_value_norm = X[i] / np.sum(X[i])
-            distances[i] = self.func(past_value_norm, current_value_norm)
+            distances[i - 1] = self._distance_function_(
+                past_value_norm, current_value_norm
+            )
 
-        return pd.Series(distances, index=index)
+        return pd.Series(distances, index=index[1:])
 
     def _jackknife_distance(self, X: np.ndarray, index) -> pd.Series:
         """Compute distances using jackknife (leave-one-out) approach."""
         n = len(X)
+        if n < 2:
+            raise ValueError(
+                "Each series requires at least two reference periods for jackknife calibration."
+            )
         distances = np.zeros(n)
 
         for i in range(n):
             current_value_norm = X[i] / np.sum(X[i])
             past_value = np.delete(X, i, axis=0)
             past_value_norm = past_value.sum(axis=0) / np.sum(past_value.sum(axis=0))
-            distances[i] = self.func(past_value_norm, current_value_norm)
+            distances[i] = self._distance_function_(past_value_norm, current_value_norm)
 
         return pd.Series(distances, index=index)
 
@@ -231,12 +258,28 @@ class CatDrift(BaseModel, BaseEstimator):
         id_col: str = "unique_id",
         time_col: str = "ds",
         target_col: str = "y",
-    ) -> pd.Series:
+    ) -> pd.DataFrame:
         """
         Compute the drift metric between the reference distribution and new data points.
         """
         self._check_dataframe(df, time_col, target_col, id_col)
+        if not hasattr(self, "reference_distribution"):
+            raise ValueError("Model must be fitted before scoring.")
+        period_distributions = self._period_distributions(
+            df, id_col, time_col, target_col
+        )
+        return self._score_period_distributions(
+            period_distributions, id_col, time_col
+        )
 
+    def _period_distributions(
+        self,
+        df: pd.DataFrame,
+        id_col: str,
+        time_col: str,
+        target_col: str,
+    ) -> pd.DataFrame:
+        """Build normalized category probabilities per series and period."""
         frequency = (
             df.groupby([id_col, pd.Grouper(key=time_col, freq=self.freq), target_col])[
                 target_col
@@ -244,27 +287,64 @@ class CatDrift(BaseModel, BaseEstimator):
             .size()
             .unstack(fill_value=0)
         )
-        percent = frequency.div(frequency.sum(axis=1), axis=0)
+        return frequency.div(frequency.sum(axis=1), axis=0)
 
-        results = []
-        for unique_id in percent.index.get_level_values(0).unique():
-            id_data = percent.loc[unique_id]
-            reference = self.reference_distribution[unique_id]
+    @staticmethod
+    def _align_categories(
+        current: pd.DataFrame, reference: dict
+    ) -> tuple[pd.DataFrame, np.ndarray]:
+        """Align the union of current and reference category supports."""
+        categories = list(reference)
+        categories.extend(
+            category for category in current.columns if category not in reference
+        )
+        current_aligned = current.reindex(columns=categories, fill_value=0.0)
+        reference_aligned = np.array(
+            [reference.get(category, 0.0) for category in categories]
+        )
+        return current_aligned, reference_aligned
 
-            common_cols = id_data.columns.intersection(reference.keys())
-            id_data_aligned = id_data[common_cols]
-            reference_aligned = np.array([reference[col] for col in common_cols])
-            distances = np.array(
-                [self.func(row, reference_aligned) for row in id_data_aligned.values]
+    def _score_series(
+        self,
+        unique_id,
+        current: pd.DataFrame,
+        id_col: str,
+        time_col: str,
+    ) -> pd.DataFrame:
+        """Compare every period of one series with its reference distribution."""
+        if unique_id not in self.reference_distribution:
+            raise ValueError(
+                f"No reference distribution is available for series: {unique_id!r}."
             )
+        current, reference = self._align_categories(
+            current, self.reference_distribution[unique_id]
+        )
+        distances = np.fromiter(
+            (self._distance_function_(row, reference) for row in current.values),
+            dtype=float,
+            count=len(current),
+        )
+        return pd.DataFrame(
+            {
+                id_col: unique_id,
+                time_col: current.index,
+                "metric": distances,
+            }
+        )
 
-            result_df = pd.DataFrame(
-                {
-                    id_col: unique_id,
-                    time_col: id_data_aligned.index,
-                    "metric": distances,
-                }
-            )
-            results.append(result_df)
-
-        return pd.concat(results, ignore_index=True)
+    def _score_period_distributions(
+        self, periods: pd.DataFrame, id_col: str, time_col: str
+    ) -> pd.DataFrame:
+        """Score all categorical series and combine their period results."""
+        return pd.concat(
+            (
+                self._score_series(
+                    unique_id,
+                    periods.loc[unique_id],
+                    id_col,
+                    time_col,
+                )
+                for unique_id in periods.index.get_level_values(0).unique()
+            ),
+            ignore_index=True,
+        )
