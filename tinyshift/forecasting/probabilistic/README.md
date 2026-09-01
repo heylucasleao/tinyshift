@@ -1,10 +1,10 @@
-# Two-Stage Forecasting (`modelling.tsf`)
+# Two-Stage Forecasting (`forecasting.probabilistic`)
 
-The `modelling.tsf` package builds parametric predictive distributions around
+The `forecasting.probabilistic` package builds parametric predictive distributions around
 MLForecast point forecasts. It is the internal implementation behind
 `TwoStageForecasterWrapper`, the distribution families, panel forecast facades,
 evaluation helpers, and Newsvendor decisions exported from
-`tinyshift.modelling`.
+`tinyshift.forecasting`.
 
 ## Public API
 
@@ -19,12 +19,12 @@ evaluation helpers, and Newsvendor decisions exported from
 | `FirstStageForecasterEvaluator` | Evaluate the conditional-mean forecasting stage |
 | `TwoStageForecasterEvaluator` | Evaluate the complete probabilistic forecast |
 
-Users should normally import these objects from `tinyshift.modelling`:
+Users should normally import these objects from `tinyshift.forecasting`:
 
 ```python
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
-from tinyshift.modelling import TwoStageForecasterWrapper
+from tinyshift.forecasting import TwoStageForecasterWrapper
 
 point_forecaster = MLForecast(
     models=[LinearRegression()],
@@ -123,7 +123,7 @@ distributions additionally define `pmf(k) = cdf(k) - cdf(k - 1)`.
 
 The forecast facade returns DataFrames and names quantile columns as percentages,
 for example `lambda_t-q-50` and `lambda_t-q-90`. Distribution implementation
-classes remain internal and are intentionally excluded from `modelling.tsf.__all__`.
+classes remain internal and are intentionally excluded from `forecasting.probabilistic.__all__`.
 
 ## Decision flow
 

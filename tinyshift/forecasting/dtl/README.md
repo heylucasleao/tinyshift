@@ -1,18 +1,18 @@
-# Decomposed Trend Forecasting (`modelling.dtl`)
+# Decomposed Trend Forecasting (`forecasting.dtl`)
 
-The `modelling.dtl` package forecasts non-seasonal panels by separating a
+The `forecasting.dtl` package forecasts non-seasonal panels by separating a
 smooth LOWESS trend from the remaining residual dynamics. Trend components are
 forecast with StatsForecast and residuals with MLForecast. The public
 `DTLWrapper` facade selects a local or global residual strategy.
 
 ## Public API
 
-Only `DTLWrapper` is public. Users should import it from `tinyshift.modelling`:
+Only `DTLWrapper` is public. Users should import it from `tinyshift.forecasting`:
 
 ```python
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
-from tinyshift.modelling import DTLWrapper
+from tinyshift.forecasting import DTLWrapper
 
 
 def residual_model(nlags, freq):
