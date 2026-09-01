@@ -15,6 +15,7 @@ from tinyshift.modelling import (
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
+from tinyshift.modelling.tsf.calibration import Calibration, Calibrator
 from tinyshift.modelling.tsf.distribution import (
     GammaPredictiveDistribution,
     NegativeBinomialPredictiveDistribution,
@@ -235,15 +236,67 @@ def test_estimate_r_rejects_non_finite_lambdas():
         wrapper._estimate_r(np.array([1.0]), np.array([np.nan]))
 
 
-def test_compute_time_decay_weights(sample_train_data):
-    wrapper = TwoStageForecasterWrapper(fcst=None)
-    weights = wrapper._compute_time_decay_weights(
-        sample_train_data, time_col="ds", gamma=0.5
+def test_log_dispersion_fit_returns_finite_local_variance():
+    family = NegativeBinomialFamily()
+    y = np.array([0, 1, 2, 3, 5, 1, 0, 4])
+    means = np.array([1.0, 1.2, 1.5, 2.0, 2.5, 1.8, 1.0, 3.0])
+
+    dispersion, theta, variance = family.fit_log_dispersion(y, means)
+
+    assert dispersion == pytest.approx(np.exp(theta))
+    assert np.isfinite(variance)
+    assert variance > 0
+
+
+def test_zero_between_group_variance_collapses_to_parent():
+    fitted = pd.DataFrame(
+        {
+            "theta_raw": [0.0, 2.0],
+            "variance": [0.5, 0.5],
+            "parent": [1.0, 1.0],
+        }
     )
-    assert isinstance(weights, np.ndarray)
-    assert len(weights) == len(sample_train_data)
-    assert np.all(weights > 0)
-    assert np.all(weights <= 1.0)
+
+    shrunk = Calibrator._shrink(fitted, tau2=0.0)
+
+    assert np.allclose(shrunk["weight"], 0.0)
+    assert np.allclose(shrunk["theta"], fitted["parent"])
+
+
+def test_prediction_uses_horizon_dispersion_then_series_fallback():
+    wrapper = TwoStageForecasterWrapper(fcst=None)
+    wrapper.id_col = "unique_id"
+    wrapper.distribution_family_ = NegativeBinomialFamily()
+    wrapper.calibration_ = Calibration(
+        dispersion={
+            "global": 8.0,
+            "global_horizon": {1: 6.0},
+            "series": {"A": 4.0},
+            "series_horizon": {("A", 1): 2.0},
+        },
+        tau2={},
+    )
+    frame = pd.DataFrame({"unique_id": ["A", "A", "unseen"]})
+
+    dispersions = wrapper._prediction_dispersions(frame)
+
+    assert np.allclose(dispersions, [2.0, 4.0, 6.0])
+
+
+def test_resolve_dispersion_uses_global_for_unknown_uncalibrated_horizon():
+    calibration = Calibration(
+        dispersion={
+            "global": 8.0,
+            "global_horizon": {1: 6.0},
+            "series": {"A": 4.0},
+            "series_horizon": {},
+        },
+        tau2={},
+    )
+
+    assert calibration.resolve("A", 2) == 4.0
+    assert calibration.resolve("unseen", 1) == 6.0
+    assert calibration.resolve("unseen", 2) == 8.0
 
 
 def test_compute_critical_quantile():
@@ -937,7 +990,7 @@ def test_predict_distribution_uses_fallback_for_unknown_series(
     frame = wrapper.predict_distribution(h=1).to_frame()
 
     assert frame.loc[frame.index[0], "r_dispersion"] == pytest.approx(
-        wrapper.dispersion_fallback_
+        wrapper.calibration_.dispersion["global_horizon"][1]
     )
 
 
@@ -1012,8 +1065,7 @@ def test_wrapper_joblib_round_trip(sample_train_data, tmp_path):
 
     pd.testing.assert_frame_equal(actual, expected)
     assert isinstance(restored.distribution_family_, NegativeBinomialFamily)
-    assert restored.dispersion_dict_ == wrapper.dispersion_dict_
-    assert restored.dispersion_fallback_ == wrapper.dispersion_fallback_
+    assert restored.calibration_ == wrapper.calibration_
 
 
 def test_gamma_wrapper_joblib_round_trip(sample_continuous_data, tmp_path):
@@ -1031,7 +1083,7 @@ def test_gamma_wrapper_joblib_round_trip(sample_continuous_data, tmp_path):
         _predict(restored, h=2, quantiles=(0.1, 0.9)), expected
     )
     assert isinstance(restored.distribution_family_, GammaFamily)
-    assert restored.dispersion_dict_ == wrapper.dispersion_dict_
+    assert restored.calibration_ == wrapper.calibration_
 
 
 def test_continuous_optimize_accepts_cost_only_x_df(sample_continuous_data):
@@ -1209,15 +1261,6 @@ def test_wrapper_supports_custom_column_names():
     result = _predict(wrapper, h=2, quantiles=(0.5,))
 
     assert {"series", "date", "q_50"}.issubset(result.columns)
-
-
-@pytest.mark.parametrize("gamma", [-1.0, np.nan, np.inf])
-def test_fit_rejects_invalid_time_decay_gamma(sample_train_data, gamma):
-    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
-    wrapper = TwoStageForecasterWrapper(fcst)
-
-    with pytest.raises(ValueError, match="gamma"):
-        wrapper.fit(sample_train_data, gamma=gamma)
 
 
 def test_fit_reports_empty_cross_validation(sample_train_data, monkeypatch):

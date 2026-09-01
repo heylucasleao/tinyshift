@@ -10,7 +10,7 @@ evaluation helpers, and Newsvendor decisions exported from
 
 | Object | Responsibility |
 |---|---|
-| `TwoStageForecasterWrapper` | Fit the point forecaster and calibrate one dispersion parameter per series |
+| `TwoStageForecasterWrapper` | Fit the point forecaster and calibrate hierarchical dispersion |
 | `NegativeBinomialFamily` | Model non-negative integer counts |
 | `GammaFamily` | Model strictly positive continuous targets |
 | `PanelPredictiveForecast` | Expose CDFs, quantiles and central intervals on the forecast panel |
@@ -56,6 +56,7 @@ forecasts intentionally do not expose `pmf`.
 |---|---|
 | `wrapper.py` | Estimator lifecycle, temporal calibration and forecast construction |
 | `family.py` | Target support, likelihood optimization and distribution factories |
+| `calibration.py` | Hierarchical shrinkage state and fallback policy |
 | `distribution.py` | Row-aligned parametric CDF, PPF, interval, sampling and PMF mathematics |
 | `forecast.py` | DataFrame facade that keeps distribution outputs aligned with panel rows |
 | `decision.py` | Newsvendor critical-ratio and marginal-benefit policies |
@@ -70,11 +71,18 @@ lifecycle.
 ## Fitting flow
 
 `fit` validates the selected family and obtains rolling temporal
-cross-validation predictions from MLForecast. For each series, the family fits
-its dispersion parameter by bounded maximum likelihood against those
-out-of-fold conditional means. The median fitted dispersion is retained as a
-fallback for series not seen during calibration. MLForecast is then fitted on
-all training rows.
+cross-validation predictions from MLForecast. Dispersion is fitted by bounded
+maximum likelihood globally, per series, and per series×horizon. Estimates are
+shrunk in `log(dispersion)` toward their parent using weights inferred from the
+likelihood curvature and empirical between-group variance. No regularization
+constant is required from the user. The global fit is retained as the fallback
+for series not seen during calibration. MLForecast is then fitted on all rows.
+
+Fitted layers are stored in `calibration_.dispersion`: `global`,
+`global_horizon`, `series`, and `series_horizon`. Prediction resolves known
+series through `series_horizon -> series -> global`. For an unknown series it
+uses `global_horizon -> global`. The corresponding between-group variances are
+available in `calibration_.tau2`.
 
 ```text
 training panel
@@ -85,9 +93,11 @@ rolling temporal cross-validation
       v
 out-of-fold conditional means by series
       |
-      +--> family-specific dispersion calibration
-      +--> per-series dispersion mapping
-      `--> global median fallback
+      +--> global family-specific dispersion
+      +--> shrunk global-horizon dispersion
+      +--> shrunk per-series dispersion
+      +--> shrunk per-series×horizon dispersion
+      `--> global fallback
                     |
                     v
 full point-forecaster fit
@@ -98,10 +108,6 @@ point means + aligned dispersions
                     v
 panel-aligned predictive forecast
 ```
-
-When `gamma` is provided, exponentially decaying sample weights prioritize
-recent observations during cross-validation and the final point-forecaster fit.
-The decay scale is annual and therefore independent of the panel frequency.
 
 ## Distribution semantics
 
@@ -138,7 +144,7 @@ preserve the original forecast row order.
 - Keep `wrapper.py` focused on orchestration and MLForecast integration.
 - Keep column formatting in `forecast.py` and decision policies in `decision.py`.
 - Validate all distribution parameters and forecast means as finite and positive.
-- Preserve the per-series fallback when extending dispersion calibration.
+- Preserve the series and global fallbacks when extending dispersion calibration.
 
 Tests for this package live in `tinyshift/tests/test_tsf.py`. Run them with:
 
