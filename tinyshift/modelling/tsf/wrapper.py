@@ -114,36 +114,37 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         distribution_family.validate_target(target)
         return target
 
+    @staticmethod
+    def _single_model(models_dict, missing_message: str):
+        """Return the only configured model or reject invalid containers."""
+        if not models_dict:
+            raise ValueError(missing_message)
+        if len(models_dict) > 1:
+            raise ValueError(
+                "TwoStageForecasterWrapper supports exactly 1 model, but found: "
+                f"{list(models_dict.keys())}"
+            )
+        return next(iter(models_dict.items()))
+
     @property
     def model_name(self) -> str:
         """Extracts the name/key of the underlying model from MLForecast."""
         models_dict = getattr(self.fcst, "models_", None)
         if not models_dict:
             models_dict = getattr(self.fcst, "models", None)
-
-        if not models_dict:
-            raise ValueError("The MLForecast object has no models configured.")
-
-        if len(models_dict) > 1:
-            raise ValueError(
-                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(models_dict.keys())}"
-            )
-
-        return next(iter(models_dict.keys()))
+        name, _ = self._single_model(
+            models_dict, "The MLForecast object has no models configured."
+        )
+        return name
 
     @property
     def model(self):
         """Extracts and validates the underlying trained estimator from the MLForecast container."""
         models_dict = getattr(self.fcst, "models_", None)
-        if not models_dict:
-            raise ValueError("The MLForecast object has not been fitted yet.")
-
-        if len(models_dict) > 1:
-            raise ValueError(
-                f"TwoStageForecasterWrapper supports exactly 1 model, but found: {list(models_dict.keys())}"
-            )
-
-        return next(iter(models_dict.values()))
+        _, model = self._single_model(
+            models_dict, "The MLForecast object has not been fitted yet."
+        )
+        return model
 
     def _nbinom_log_likelihood(
         self,
@@ -325,6 +326,50 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         return self.fcst.ts.features_order_
 
+    def _set_fit_state(
+        self,
+        id_col: str,
+        time_col: str,
+        target_col: str,
+        static_features: list | None,
+    ) -> None:
+        """Store the panel schema used by fitting and prediction."""
+        self.id_col = id_col
+        self.time_col = time_col
+        self.target_col = target_col
+        self.static_features = static_features or []
+
+    def _resolve_distribution_family(self) -> DistributionFamily:
+        """Return the configured family, defaulting to Negative Binomial."""
+        family = (
+            NegativeBinomialFamily() if self.distribution is None else self.distribution
+        )
+        if not isinstance(family, DistributionFamily):
+            raise TypeError(
+                "distribution must be a DistributionFamily instance or None."
+            )
+        return family
+
+    def _prepare_fit_data(
+        self, df_train: pd.DataFrame, gamma: float | None
+    ) -> tuple[pd.DataFrame, dict[str, Any]]:
+        """Copy training data and attach optional recency weights."""
+        df_fit = df_train.copy()
+        fit_kwargs = {}
+        if gamma is None:
+            return df_fit, fit_kwargs
+        df_fit["_temp_weight"] = self._compute_time_decay_weights(
+            df_fit, time_col=self.time_col, gamma=gamma
+        )
+        fit_kwargs["weight_col"] = "_temp_weight"
+        return df_fit, fit_kwargs
+
+    def _store_legacy_dispersion_attributes(self) -> None:
+        """Expose historical fitted names for the default family."""
+        if isinstance(self.distribution_family_, NegativeBinomialFamily):
+            self.r_dict_ = self.dispersion_dict_
+            self.r_fallback_ = self.dispersion_fallback_
+
     @requires_extra("series")
     def fit(
         self,
@@ -343,11 +388,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         Process
         -------
-        1. Runs temporal cross-validation to generate out-of-fold point predictions (lambda_t).
-        2. Iterates over each unique ID and executes `_estimate_r` via MLE.
-        3. Computes `r_fallback` as the global median of estimated 'r' values for cold-start prediction.
-        4. Fits the MLForecast pipeline on the complete training dataset, optionally using
-           time-decay weights.
+        Runs temporal cross-validation, calibrates the selected distribution
+        family per series, and then fits MLForecast on all training rows.
 
         Parameters
         ----------
@@ -370,20 +412,9 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             Fitted instance of the TwoStageForecasterWrapper class.
         """
 
-        self.id_col = id_col
-        self.time_col = time_col
-        self.target_col = target_col
-        self.static_features = static_features or []
-
+        self._set_fit_state(id_col, time_col, target_col, static_features)
         self._validate_fit_parameters(h, n_windows, step_size, gamma)
-
-        self.distribution_family_ = (
-            NegativeBinomialFamily() if self.distribution is None else self.distribution
-        )
-        if not isinstance(self.distribution_family_, DistributionFamily):
-            raise TypeError(
-                "distribution must be a DistributionFamily instance or None."
-            )
+        self.distribution_family_ = self._resolve_distribution_family()
         numeric_label = "numeric counts" if self.distribution is None else "numeric"
         self._validate_training_target(
             df_train,
@@ -391,32 +422,55 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             self.distribution_family_,
             numeric_label,
         )
-        df_fit = df_train.copy()
-
-        fit_kwargs = {}
-        if gamma is not None:
-            weights_array = self._compute_time_decay_weights(
-                df_fit, time_col=time_col, gamma=gamma
-            )
-            df_fit["_temp_weight"] = weights_array
-            fit_kwargs["weight_col"] = "_temp_weight"
-
+        df_fit, fit_kwargs = self._prepare_fit_data(df_train, gamma)
         self.dispersion_dict_, self.dispersion_fallback_ = (
             self._calibrate_dispersion_cv(
                 df_fit, h, n_windows, step_size, refit, fit_kwargs
             )
         )
-        # Backwards-compatible fitted attributes for the default family.
-        if isinstance(self.distribution_family_, NegativeBinomialFamily):
-            self.r_dict_ = self.dispersion_dict_
-            self.r_fallback_ = self.dispersion_fallback_
-
-        self.exog_cols_ = self._fit_base_forecaster(
-            df=df_fit,
-            fit_kwargs=fit_kwargs,
-        )
+        self._store_legacy_dispersion_attributes()
+        self.exog_cols_ = self._fit_base_forecaster(df_fit, fit_kwargs)
 
         return self
+
+    def _prediction_frame(self, h: int, X_df: pd.DataFrame | None) -> pd.DataFrame:
+        """Predict and normalize conditional means on the panel grid."""
+        frame = self.fcst.predict(h=h, X_df=X_df)
+        frame = frame.rename(columns={self.model_name: "lambda_t"})
+        means = frame["lambda_t"].to_numpy(dtype=float)
+        if not np.all(np.isfinite(means)):
+            raise ValueError("Predicted mean values must be finite.")
+        frame["lambda_t"] = np.maximum(means, 1e-6)
+        return frame
+
+    def _prediction_dispersions(self, frame: pd.DataFrame) -> np.ndarray:
+        """Align calibrated dispersions with forecast series."""
+        dispersions = (
+            frame[self.id_col]
+            .map(self.dispersion_dict_)
+            .fillna(self.dispersion_fallback_)
+            .to_numpy(dtype=float)
+        )
+        frame[self.distribution_family_.parameter_column] = dispersions
+        return dispersions
+
+    def _build_forecast(self, frame: pd.DataFrame):
+        """Construct the predictive distribution and its panel facade."""
+        means = frame["lambda_t"].to_numpy(dtype=float)
+        dispersions = self._prediction_dispersions(frame)
+        predictive = self.distribution_family_.distribution(means, dispersions)
+        forecast_type = (
+            DiscretePanelPredictiveForecast
+            if self.distribution_family_.is_discrete
+            else PanelPredictiveForecast
+        )
+        return forecast_type(
+            frame,
+            predictive,
+            model="lambda_t",
+            id_col=self.id_col,
+            time_col=self.time_col,
+        )
 
     @requires_extra("series")
     def predict_distribution(
@@ -458,31 +512,4 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         ``forecast.interval(0.9)``
         """
-        df_pred = self.fcst.predict(h=h, X_df=X_df)
-        df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
-        means = df_pred["lambda_t"].to_numpy(dtype=float)
-        if not np.all(np.isfinite(means)):
-            raise ValueError("Predicted mean values must be finite.")
-        means = np.maximum(means, 1e-6)
-        df_pred["lambda_t"] = means
-        parameter_column = self.distribution_family_.parameter_column
-        df_pred[parameter_column] = (
-            df_pred[self.id_col]
-            .map(self.dispersion_dict_)
-            .fillna(self.dispersion_fallback_)
-        )
-        predictive = self.distribution_family_.distribution(
-            means, df_pred[parameter_column].to_numpy(dtype=float)
-        )
-        forecast_type = (
-            DiscretePanelPredictiveForecast
-            if self.distribution_family_.is_discrete
-            else PanelPredictiveForecast
-        )
-        return forecast_type(
-            df_pred,
-            predictive,
-            model="lambda_t",
-            id_col=self.id_col,
-            time_col=self.time_col,
-        )
+        return self._build_forecast(self._prediction_frame(h, X_df))
