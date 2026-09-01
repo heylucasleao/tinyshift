@@ -444,7 +444,8 @@ print(preds.head())
 
 `TwoStageForecasterWrapper` separates the point forecast from uncertainty
 calibration. An `MLForecast` model estimates the conditional mean (`lambda_t`),
-while temporal cross-validation fits a per-series distribution parameter. The
+while temporal cross-validation calibrates global, horizon, series, and
+series-by-horizon distribution parameters with hierarchical shrinkage. The
 default Negative Binomial family supports discrete demand and inventory
 decisions; `GammaFamily` supports strictly positive continuous targets.
 
@@ -475,35 +476,36 @@ model.fit(
     n_windows=5,
 )
 
-# Forecast once and derive all probabilistic views from the distribution
-forecast, distribution = model.predict_distribution(h=14)
-forecast["q_50"] = distribution.ppf(0.50)
-forecast["q_95"] = distribution.ppf(0.95)
+# Forecast once and derive all probabilistic views from the same object
+forecast = model.predict_distribution(h=14)
+forecast_df = forecast.to_frame()
+quantiles = forecast.ppf([0.50, 0.95])
+distribution = forecast.distribution
 
 # Newsvendor-optimal inventory using shortage and holding costs
 stock_plan = NewsvendorOptimizer.optimize(
-    forecast, distribution, underage_cost=10.0, overage_cost=2.0
+    forecast_df, distribution, underage_cost=10.0, overage_cost=2.0
 )
 
-# Exact probabilities P(Y=k), including the remaining upper tail
-probabilities = distribution.pmf(range(11))
+# Exact probabilities from P(Y=0) through P(Y=10)
+probabilities = forecast.pmf(range(11))
 
 # Expected value of stocking each additional discrete inventory unit
 marginal_value = NewsvendorOptimizer.marginal_benefit(
-    forecast,
+    forecast_df,
     distribution,
     underage_cost=10.0,
     overage_cost=2.0,
     max_k=10,
 )
 
-probability_below_five = distribution.cdf(5)
-median = distribution.ppf(0.50)
+probability_below_five = forecast.cdf(5)
+median = forecast.ppf(0.50)
 
 # Cost columns may be supplied without exogenous forecast features.
 costs = pd.DataFrame({"cu": [10.0] * len(forecast), "co": [2.0] * len(forecast)})
 stock_plan = NewsvendorOptimizer.optimize(
-    forecast,
+    forecast_df,
     distribution,
     underage_cost="cu",
     overage_cost="co",
