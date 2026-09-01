@@ -1,17 +1,28 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
+from numbers import Real
+
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.linear_model import LinearRegression
-from sklearn.utils.validation import check_is_fitted
-from sklearn.utils.validation import check_array
+from sklearn.utils.validation import check_array, check_is_fitted
 
 
 class FeatureResidualizer(BaseEstimator, TransformerMixin):
-    def __init__(self):
+    """Reduce linear collinearity by replacing selected features with residuals.
+
+    Parameters
+    ----------
+    corrcoef : float, default=0.8
+        Correlation threshold in ``(0, 1]`` used to select predictors.
+    corr_type : {"abs", "pos"}, default="abs"
+        Use absolute correlations or positive correlations only.
+    """
+
+    def __init__(self, corrcoef: float = 0.8, corr_type: str = "abs"):
         """Feature transformer that reduces multicollinearity by residualizing highly correlated features.
 
         For each feature strongly correlated (above `corrcoef` threshold) with others, this class:
@@ -49,11 +60,10 @@ class FeatureResidualizer(BaseEstimator, TransformerMixin):
         - Only removes linear relationships between features
 
         """
-        self.models_ = None
-        self.feature_names_in_ = None
-        self.n_features_in_ = None
+        self.corrcoef = corrcoef
+        self.corr_type = corr_type
 
-    def fit(self, X: np.ndarray, corrcoef: float = 0.8, corr_type: str = "abs"):
+    def fit(self, X: np.ndarray, y=None):
         """
         Identify feature pairs with absolute correlation ≥ `corrcoef` and prepare residualization models.
 
@@ -61,13 +71,8 @@ class FeatureResidualizer(BaseEstimator, TransformerMixin):
         ----------
         X : array-like of shape (n_samples, n_features)
             Input data. Can be a pandas DataFrame (preserves column names) or numpy array.
-        corrcoef : float, default=0.8
-            Absolute correlation threshold for triggering residualization.
-            Features with |ρ| ≥ this value will be residualized.
-        corr_type : str, default="abs"
-            Type of correlation to consider:
-            - "abs": absolute correlation (default)
-            - "pos": only positive correlation
+        y : ignored
+            Present for compatibility with scikit-learn pipelines.
 
         Returns
         -------
@@ -75,33 +80,42 @@ class FeatureResidualizer(BaseEstimator, TransformerMixin):
             Fitted transformer.
         """
 
-        if not 0 <= corrcoef <= 1:
-            raise ValueError("corrcoef must be between 0 and 1")
+        if (
+            isinstance(self.corrcoef, (bool, np.bool_))
+            or not isinstance(self.corrcoef, Real)
+            or not np.isfinite(self.corrcoef)
+            or not 0 < float(self.corrcoef) <= 1
+        ):
+            raise ValueError("corrcoef must be finite and lie in (0, 1]")
 
-        if corr_type not in ["abs", "pos"]:
+        if self.corr_type not in ["abs", "pos"]:
             raise ValueError("corr_type must be either 'abs' or 'pos'")
 
         self.models_ = {}
-        self.feature_names_in_ = getattr(X, "columns", None)
+        if hasattr(self, "feature_names_in_"):
+            del self.feature_names_in_
+        if hasattr(X, "columns"):
+            self.feature_names_in_ = np.asarray(X.columns, dtype=object)
         X = check_array(X, ensure_2d=True, dtype=np.float64, copy=True)
         self.n_features_in_ = X.shape[1]
         corr = np.corrcoef(X, rowvar=False)
+        corr = np.nan_to_num(corr, nan=0.0)
 
-        if corr_type == "abs":
+        if self.corr_type == "abs":
             corr = np.abs(corr)
-            processing_order = np.argsort(-np.sum(corr, axis=1))
-        elif corr_type == "pos":
+        else:
             corr = np.where(corr < 0, 0, corr)
-            processing_order = np.argsort(-np.sum(corr, axis=1))
 
         np.fill_diagonal(corr, 0)
+        processing_order = np.argsort(-np.sum(corr, axis=1))
         residualized = []
 
         for i in processing_order:
             corr_feature = corr[i]
             mask = np.ones(corr_feature.shape, dtype=bool)
             mask[residualized] = False
-            indexes = np.argwhere((corr_feature >= corrcoef) & mask).flatten()
+            mask[i] = False
+            indexes = np.flatnonzero((corr_feature >= float(self.corrcoef)) & mask)
 
             if len(indexes) > 0:
                 model = LinearRegression()
@@ -136,6 +150,14 @@ class FeatureResidualizer(BaseEstimator, TransformerMixin):
         """
 
         check_is_fitted(self, "models_")
+        if (
+            hasattr(self, "feature_names_in_")
+            and hasattr(X, "columns")
+            and X.columns.tolist() != self.feature_names_in_.tolist()
+        ):
+            raise ValueError(
+                "The columns of X do not match the columns seen during fit."
+            )
         X = check_array(X, ensure_2d=True, dtype=np.float64, copy=True)
 
         if X.shape[1] != self.n_features_in_:
@@ -144,13 +166,6 @@ class FeatureResidualizer(BaseEstimator, TransformerMixin):
             )
 
         for i, model_info in self.models_.items():
-            model_info = self.models_[i]
             X[:, i] -= model_info["model"].predict(X[:, model_info["features"]])
 
         return X
-
-    def fit_transform(
-        self, X: np.ndarray, corrcoef: float = 0.8, corr_type: str = "abs"
-    ) -> np.ndarray:
-        """Convenience method for fit().transform()."""
-        return self.fit(X, corrcoef=corrcoef, corr_type=corr_type).transform(X)

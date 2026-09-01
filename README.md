@@ -359,8 +359,8 @@ from tinyshift.preprocessing import FeatureResidualizer, filter_features_by_vif
 from tinyshift.stats import bootstrap_bca_interval
 
 #Residualizer
-residualizer = FeatureResidualizer()
-residualizer.fit(X_train[preprocess_columns], corrcoef=0.70)
+residualizer = FeatureResidualizer(corrcoef=0.70)
+residualizer.fit(X_train[preprocess_columns])
 
 #Train
 X_train = X_train.astype({x: float for x in preprocess_columns})

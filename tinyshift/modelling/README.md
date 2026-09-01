@@ -86,12 +86,11 @@ import numpy as np
 X = np.exp(np.random.randn(1000, 5))
 X[0, :] = 1000
 
-scaler = RobustGaussianScaler()
-X_scaled = scaler.fit_transform(
-    X,
+scaler = RobustGaussianScaler(
     winsorize_method="mad",
     power_method="yeo-johnson",
 )
+X_scaled = scaler.fit_transform(X)
 ```
 
 **When to use:**
