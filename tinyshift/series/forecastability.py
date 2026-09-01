@@ -1,14 +1,12 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
-import numpy as np
 from scipy.signal import periodogram
 from collections import Counter
 import math
 from .diagnostic import trend_significance
-from scipy import signal
 from typing import List, Literal, Tuple, Union, Optional
 import numpy as np
 import scipy.signal as signal
@@ -53,8 +51,19 @@ def foreca(
     - Manokhin (2025), "Mastering Modern Time Series Forecasting: The Complete Guide to
         Statistical, Machine Learning & Deep Learning Models in Python", Ch. 2.4.12
     """
+    X = np.asarray(X, dtype=np.float64)
+    if X.ndim != 1:
+        raise ValueError("Input data must be 1-dimensional")
+    if X.size < 2:
+        raise ValueError("Input data must contain at least two observations")
+    if not np.isfinite(X).all():
+        raise ValueError("Input data must contain only finite values")
+
     _, psd = periodogram(X)
-    psd = psd / np.sum(psd)
+    total_power = np.sum(psd)
+    if total_power == 0:
+        return 1.0
+    psd = psd / total_power
     entropy = -np.sum(psd * np.log2(psd + 1e-12))
     max_entropy = np.log2(len(psd))
     omega = 1 - (entropy / max_entropy)
@@ -115,10 +124,16 @@ def adi_cv(
     if X.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
 
+    if X.size < 2:
+        raise ValueError("Input data must contain at least two observations")
+    if not np.isfinite(X).all():
+        raise ValueError("Input data must contain only finite values")
+
     n = X.shape[0]
     n_nonzero = np.count_nonzero(X)
-    adi = n / n_nonzero
-    cv = (np.std(X, ddof=1) / np.mean(X)) ** 2
+    adi = np.inf if n_nonzero == 0 else n / n_nonzero
+    mean = np.mean(X)
+    cv = np.nan if mean == 0 else (np.std(X, ddof=1) / mean) ** 2
 
     return adi, cv
 
@@ -173,6 +188,8 @@ def sample_entropy(
 
     if X.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
+    if not np.isfinite(X).all():
+        raise ValueError("Input data must contain only finite values")
 
     if detrend:
         r_squared, p_value = trend_significance(X)
@@ -192,12 +209,12 @@ def sample_entropy(
     if tolerance <= 0:
         raise ValueError("tolerance must be a positive float")
 
-    if m > n:
-        raise ValueError("m must be less or equal to length of the time series")
+    if m >= n:
+        raise ValueError("m must be smaller than the length of the time series")
 
-    Xm = np.array([X[i : i + m] for i in range(n - m)])
+    Xm = np.array([X[i : i + m] for i in range(n - m + 1)])
 
-    Xm1 = np.array([X[i : i + m + 1] for i in range(n - m - 1)])
+    Xm1 = np.array([X[i : i + m + 1] for i in range(n - m)])
 
     def count_matches(X_templates, tol):
         """

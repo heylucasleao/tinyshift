@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
@@ -444,7 +444,7 @@ def forecast_instability(
             .add_suffix("_prev")
         )
 
-        paired_df = pd.concat([df_curr, df_prev], axis=1).dropna()
+        paired_df = pd.concat([df_curr, df_prev], axis=1)
 
         return paired_df
 
@@ -464,7 +464,11 @@ def forecast_instability(
                     "target": paired_df[target_col_name],
                     model: paired_df[model],
                 }
-            )
+            ).dropna(subset=["target", model])
+
+            if df_eval.empty:
+                scores_dict[model] = pd.Series(dtype=float)
+                continue
 
             df_raw_score = score(
                 df=df_eval,

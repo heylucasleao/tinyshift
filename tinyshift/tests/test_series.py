@@ -301,11 +301,23 @@ class TestForecastability:
         omega = foreca(x)
         assert 0.0 <= omega <= 1.0 + 1e-12
 
+    def test_foreca_handles_constant_series(self):
+        assert foreca(np.ones(8)) == pytest.approx(1.0)
+
+    def test_foreca_rejects_non_finite_values(self):
+        with pytest.raises(ValueError, match="finite"):
+            foreca([1.0, np.nan, 2.0])
+
     def test_adi_cv(self):
         x = np.array([0, 0, 1, 2, 0, 0, 1, 1], dtype=float)
         adi, cv = adi_cv(x)
         assert adi > 0.0
         assert cv >= 0.0
+
+    def test_adi_cv_returns_infinite_interval_for_all_zero_demand(self):
+        adi, cv = adi_cv(np.zeros(4))
+        assert adi == np.inf
+        assert np.isnan(cv)
 
     def test_sample_entropy(self):
         x = np.array([0.0, 0.5, 1.0, 0.0, 0.5, 1.0], dtype=float)
@@ -470,6 +482,11 @@ class TestInterpolation:
         fc = vi(np.array([1.0, 2.0]), np.array([3.0, 4.0]), 0.0)
         np.testing.assert_allclose(fc, np.array([1.0, 2.0]))
 
+    def test_vi_accepts_lists_and_rejects_different_shapes(self):
+        np.testing.assert_allclose(vi([1.0, 2.0], [3.0, 4.0], 0.5), [2.0, 3.0])
+        with pytest.raises(ValueError, match="same shape"):
+            vi([1.0], [2.0, 3.0], 0.5)
+
     def test_hpi(self):
         fc = hpi(np.array([1.0, 2.0, 3.0]), 0.5)
         np.testing.assert_allclose(fc, np.array([1.0, 1.5, 2.5]))
@@ -477,6 +494,10 @@ class TestInterpolation:
     def test_hfi(self):
         fc = hfi(np.array([1.0, 2.0, 3.0]), 0.5)
         np.testing.assert_allclose(fc, np.array([1.0, 1.5, 2.25]))
+
+    def test_horizontal_interpolation_preserves_fractional_results(self):
+        np.testing.assert_allclose(hpi([0, 3], 0.5), [0.0, 1.5])
+        np.testing.assert_allclose(hfi([0, 3, 3], 0.5), [0.0, 1.5, 2.25])
 
 
 class TestMetric:
@@ -543,6 +564,21 @@ class TestMetric:
         assert result["metric"].eq("forecast_instability").all()
         assert result["model_a"].notna().all()
 
+    def test_forecast_instability_isolates_missing_values_by_model(self):
+        df = pd.DataFrame(
+            {
+                "unique_id": ["A"] * 4,
+                "ds": [1, 2, 3, 4],
+                "model_a": [10.0, np.nan, 12.0, 13.0],
+                "model_b": [10.0, 11.0, 12.0, 13.0],
+            }
+        )
+
+        result = forecast_instability(df, models=["model_a", "model_b"])
+
+        assert result.loc[0, "model_a"] == pytest.approx(16.0)
+        assert result.loc[0, "model_b"] == pytest.approx(17.3913043478)
+
 
 class TestOutlier:
     def test_hampel_filter(self):
@@ -550,6 +586,20 @@ class TestOutlier:
         outliers = hampel_filter(x, window_size=3)
         assert outliers.dtype == bool
         assert outliers.sum() >= 1
+
+    def test_hampel_filter_always_returns_series(self):
+        result = hampel_filter([1.0, 2.0], window_size=3)
+        assert isinstance(result, pd.Series)
+        assert result.tolist() == [False, False]
+
+    def test_hampel_filter_uses_nan_aware_rolling_statistics(self):
+        result = hampel_filter([1.0, np.nan, 1.0, 1.0, 100.0], window_size=3)
+        assert result.tolist() == [False, False, False, False, True]
+
+    @pytest.mark.parametrize("window_size", [True, 2, 3.5])
+    def test_hampel_filter_rejects_invalid_window_size(self, window_size):
+        with pytest.raises(ValueError, match="integer"):
+            hampel_filter([1.0, 2.0, 3.0], window_size=window_size)
 
     def test_bollinger_bands(self):
         x = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=float)
@@ -587,6 +637,20 @@ class TestStability:
         y_hat_prev = np.array([0.0, 1.0, 2.0])
         value = rmsscv(y_train, y_hat, y_hat_prev, seasonality=2)
         assert np.isfinite(value)
+
+    def test_rmsscv_rejects_non_vector_previous_forecast(self):
+        with pytest.raises(ValueError, match="1D"):
+            rmsscv(
+                np.arange(6.0),
+                np.arange(3.0).reshape(1, 3),
+                np.arange(3.0).reshape(1, 3),
+                seasonality=2,
+            )
+
+    @pytest.mark.parametrize("seasonality", [True, 1.5, 0])
+    def test_scaled_stability_rejects_invalid_seasonality(self, seasonality):
+        with pytest.raises(ValueError, match="positive integer"):
+            masch(np.arange(6.0), np.arange(3.0), seasonality=seasonality)
 
     def test_rmssch(self):
         y_train = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0], dtype=float)

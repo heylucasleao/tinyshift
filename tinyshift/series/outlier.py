@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
@@ -15,7 +15,7 @@ def hampel_filter(
     window_size: int = 3,
     factor: float = 3.0,
     scale: float = 1.4826,
-) -> np.ndarray:
+) -> pd.Series:
     """
     Identify outliers using a vectorized implementation of the Hampel filter.
 
@@ -29,7 +29,7 @@ def hampel_filter(
     X : ndarray of shape (n_samples,) or list of float
         Input 1D data to be filtered.
     window_size : int, default=3
-        Size of the rolling window (must be odd and >= 3).
+        Size of the trailing rolling window (must be >= 3).
     factor : float, default=3.0
         Recommended values for common distributions (95% confidence):
         - Normal distribution: 3.0 (default)
@@ -57,7 +57,7 @@ def hampel_filter(
     Raises
     ------
     ValueError
-        If window_size is even or too small.
+        If window_size is not an integer greater than or equal to 3.
         If input data is not 1-dimensional.
 
     Notes
@@ -69,9 +69,17 @@ def hampel_filter(
     compared to the iterative version.
     """
 
-    if window_size < 3:
-        raise ValueError("window_size must be >= 3")
-    index = X.index if hasattr(X, "index") else list(range(len(X)))
+    if (
+        isinstance(window_size, (bool, np.bool_))
+        or not isinstance(window_size, (int, np.integer))
+        or window_size < 3
+    ):
+        raise ValueError("window_size must be an integer >= 3")
+    if not np.isfinite(factor) or factor <= 0:
+        raise ValueError("factor must be a positive finite number")
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError("scale must be a positive finite number")
+    index = X.index if isinstance(X, pd.Series) else pd.RangeIndex(len(X))
     X = np.asarray(X, dtype=np.float64)
     if X.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
@@ -85,12 +93,12 @@ def hampel_filter(
     window_indices = center_indices[:, None] + offsets[None, :]
 
     if window_indices.shape[0] == 0:
-        return is_outlier
+        return pd.Series(is_outlier, index=index)
 
     windows = X[window_indices]
 
-    medians = np.median(windows, axis=1)
-    mads = np.median(np.abs(windows - medians[:, None]), axis=1)
+    medians = np.nanmedian(windows, axis=1)
+    mads = np.nanmedian(np.abs(windows - medians[:, None]), axis=1)
     thresholds = factor * mads * scale
     is_outlier[center_indices] = np.abs(X[center_indices] - medians) > thresholds
 
@@ -103,7 +111,7 @@ def bollinger_bands(
     center: int = np.mean,
     spread: int = np.std,
     factor: int = 2,
-) -> np.ndarray:
+) -> pd.Series:
     """
     Feature transformer that computes the Bollinger Bands for a given time series.
     Bollinger Bands consist of a middle band (simple moving average) and two outer bands
@@ -133,11 +141,21 @@ def bollinger_bands(
     - The Bollinger Bands are calculated using a rolling window approach.
     - Outliers are points outside the upper or lower band.
     """
-    index = X.index if hasattr(X, "index") else list(range(len(X)))
+    index = X.index if isinstance(X, pd.Series) else pd.RangeIndex(len(X))
     X = np.asarray(X, dtype=np.float64)
 
     if X.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
+    if (
+        isinstance(window_size, (bool, np.bool_))
+        or not isinstance(window_size, (int, np.integer))
+        or window_size < 1
+    ):
+        raise ValueError("window_size must be a positive integer")
+    if not callable(center) or not callable(spread):
+        raise TypeError("center and spread must be callable")
+    if not np.isfinite(factor) or factor <= 0:
+        raise ValueError("factor must be a positive finite number")
 
     is_outlier = np.zeros(X.shape[0], dtype=bool)
     bounds = rolling_window(
