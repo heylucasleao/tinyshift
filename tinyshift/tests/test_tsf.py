@@ -8,16 +8,18 @@ from sklearn.linear_model import LinearRegression
 import tinyshift.modelling.tsf.family as tsf_family_module
 import tinyshift.modelling.tsf.wrapper as tsf_wrapper_module
 from tinyshift.modelling import (
-    DistributionFamily,
     FirstStageForecasterEvaluator,
     GammaFamily,
-    GammaPredictiveDistribution,
     NegativeBinomialFamily,
-    NegativeBinomialPredictiveDistribution,
     NewsvendorOptimizer,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
+from tinyshift.modelling.tsf.distribution import (
+    GammaPredictiveDistribution,
+    NegativeBinomialPredictiveDistribution,
+)
+from tinyshift.modelling.tsf.family import DistributionFamily
 
 
 def _predict(wrapper, h, X_df=None, quantiles=(0.05, 0.50, 0.95)):
@@ -148,6 +150,22 @@ def test_init():
     fcst = MLForecast(models=[base_model], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst)
     assert wrapper.fcst is fcst
+
+
+def test_tsf_public_api_hides_internal_distribution_implementations():
+    from tinyshift.modelling import tsf
+
+    assert "PanelPredictiveForecast" in tsf.__all__
+    assert "DiscretePanelPredictiveForecast" in tsf.__all__
+    for internal_name in (
+        "DistributionFamily",
+        "PredictiveDistribution",
+        "DiscretePredictiveDistribution",
+        "GammaPredictiveDistribution",
+        "NegativeBinomialPredictiveDistribution",
+    ):
+        assert internal_name not in tsf.__all__
+        assert not hasattr(tsf, internal_name)
 
 
 def test_model_property_unfitted():
