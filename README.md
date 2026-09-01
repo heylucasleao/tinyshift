@@ -349,8 +349,7 @@ These responsibilities are exposed through focused packages:
 
 Use `tinyshift.preprocessing` for data transforms, `tinyshift.features` for
 feature engineering and `tinyshift.forecasting` for estimators and predictive
-distributions. `tinyshift.modelling` remains available as a compatibility
-facade for existing code.
+distributions.
 
 ### 9. Advanced Modeling Tools
 
@@ -587,9 +586,6 @@ tinyshift/
 │   ├── dmstl/                   # Multi-seasonal decomposed forecasting
 │   ├── dtl/                     # LOWESS trend/residual forecasting
 │   └── probabilistic/           # Distributions, calibration and decisions
-├── modelling/                   # Backward-compatible import facade
-│   ├── README.md                # Migration and legacy documentation
-│   └── __init__.py              # Aliases for historical import paths
 ├── preprocessing/               # Sklearn-compatible data transforms
 │   ├── README.md                # Package documentation
 │   ├── __init__.py              # Package exports

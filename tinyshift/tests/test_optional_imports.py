@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from tinyshift.modelling.dmstl import DMSTLWrapper
+from tinyshift.forecasting.dmstl import DMSTLWrapper
 from tinyshift.plot.calibration import efficiency_curve
 from tinyshift.plot.correlation import corr_heatmap
 from tinyshift.plot.diagnostic import seasonal_decompose, stationarity_analysis

@@ -2,17 +2,17 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
-import tinyshift.modelling.tsf.family as tsf_family_module
+import tinyshift.forecasting.probabilistic.family as tsf_family_module
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
-from tinyshift.modelling.tsf.calibration import Calibration, Calibrator
-from tinyshift.modelling.tsf.distribution import (
+from tinyshift.forecasting.probabilistic.calibration import Calibration, Calibrator
+from tinyshift.forecasting.probabilistic.distribution import (
     GammaPredictiveDistribution,
     NegativeBinomialPredictiveDistribution,
 )
-from tinyshift.modelling.tsf.family import DistributionFamily
+from tinyshift.forecasting.probabilistic.family import DistributionFamily
 
-from tinyshift.modelling import (
+from tinyshift.forecasting import (
     FirstStageForecasterEvaluator,
     GammaFamily,
     NegativeBinomialFamily,
@@ -153,10 +153,10 @@ def test_init():
 
 
 def test_tsf_public_api_hides_internal_distribution_implementations():
-    from tinyshift.modelling import tsf
+    from tinyshift.forecasting import probabilistic
 
-    assert "PanelPredictiveForecast" in tsf.__all__
-    assert "DiscretePanelPredictiveForecast" in tsf.__all__
+    assert "PanelPredictiveForecast" in probabilistic.__all__
+    assert "DiscretePanelPredictiveForecast" in probabilistic.__all__
     for internal_name in (
         "DistributionFamily",
         "PredictiveDistribution",
@@ -164,8 +164,8 @@ def test_tsf_public_api_hides_internal_distribution_implementations():
         "GammaPredictiveDistribution",
         "NegativeBinomialPredictiveDistribution",
     ):
-        assert internal_name not in tsf.__all__
-        assert not hasattr(tsf, internal_name)
+        assert internal_name not in probabilistic.__all__
+        assert not hasattr(probabilistic, internal_name)
 
 
 def test_model_property_unfitted():

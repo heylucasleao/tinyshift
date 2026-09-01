@@ -9,10 +9,10 @@ import pytest
 from sklearn.base import clone
 from sklearn.exceptions import NotFittedError
 from sklearn.utils.validation import check_is_fitted
-from tinyshift.modelling.multicollinearity import filter_features_by_vif
-from tinyshift.modelling.residualizer import FeatureResidualizer
-from tinyshift.modelling.scaler import RobustGaussianScaler
-from tinyshift.modelling.ts_features import (
+from tinyshift.preprocessing.multicollinearity import filter_features_by_vif
+from tinyshift.preprocessing.residualizer import FeatureResidualizer
+from tinyshift.preprocessing.scaler import RobustGaussianScaler
+from tinyshift.features.time_series import (
     estimate_history_length,
     fourier_seasonality,
     relative_strength_index,

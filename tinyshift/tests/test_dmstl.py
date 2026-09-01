@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tinyshift.modelling import DMSTLWrapper
-from tinyshift.modelling.dmstl.global_ import DMSTLGlobalWrapper
-from tinyshift.modelling.dmstl.local_ import DMSTLLocalWrapper
+from tinyshift.forecasting import DMSTLWrapper
+from tinyshift.forecasting.dmstl.global_ import DMSTLGlobalWrapper
+from tinyshift.forecasting.dmstl.local_ import DMSTLLocalWrapper
 
 
 class TestDMSTLWrapper:
@@ -215,7 +215,7 @@ class TestDMSTLWrapper:
         ):
             wrapper._resolve_seasonal_periods("sku_303", series)
 
-    @patch("tinyshift.modelling.dmstl.base.detect_seasonal_periods")
+    @patch("tinyshift.forecasting.dmstl.base.detect_seasonal_periods")
     def test_auto_detection_failure_raises_value_error(self, mock_detect):
         mock_detect.return_value = []
         wrapper = DMSTLLocalWrapper(season_length="auto")

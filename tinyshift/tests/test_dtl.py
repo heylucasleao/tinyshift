@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tinyshift.modelling import DTLWrapper
-from tinyshift.modelling.dtl.global_ import DTLGlobalWrapper
-from tinyshift.modelling.dtl.local_ import DTLLocalWrapper
+from tinyshift.forecasting import DTLWrapper
+from tinyshift.forecasting.dtl.global_ import DTLGlobalWrapper
+from tinyshift.forecasting.dtl.local_ import DTLLocalWrapper
 
 
 class TestDTLWrapper:
@@ -112,7 +112,7 @@ class TestDTLWrapper:
                 index=frame.index,
             )
 
-        monkeypatch.setattr("tinyshift.modelling.dtl.base.detrend", fake_detrend)
+        monkeypatch.setattr("tinyshift.forecasting.dtl.base.detrend", fake_detrend)
         wrapper = DTLLocalWrapper(
             residual_model_callable=lambda nlags, freq: None,
             freq="MS",
