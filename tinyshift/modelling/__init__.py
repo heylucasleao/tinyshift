@@ -9,6 +9,7 @@ from .scaler import RobustGaussianScaler
 from .dtl import DTLWrapper
 from .dmstl import DMSTLWrapper
 from .tsf import (
+    DiscretePanelPredictiveForecast,
     DiscretePredictiveDistribution,
     DistributionFamily,
     FirstStageForecasterEvaluator,
@@ -17,6 +18,7 @@ from .tsf import (
     NegativeBinomialFamily,
     NegativeBinomialPredictiveDistribution,
     NewsvendorOptimizer,
+    PanelPredictiveForecast,
     PredictiveDistribution,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,

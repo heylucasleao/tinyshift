@@ -14,7 +14,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from tinyshift.utils.imports import requires_extra
 
 from .family import DistributionFamily, NegativeBinomialFamily
-from .forecast import _DiscretePanelPredictiveForecast, _PanelPredictiveForecast
+from .forecast import DiscretePanelPredictiveForecast, PanelPredictiveForecast
 
 
 class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
@@ -423,12 +423,40 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self,
         h: int,
         X_df: pd.DataFrame = None,
-    ) -> _PanelPredictiveForecast:
-        """Return a self-contained predictive forecast aligned to the panel.
+    ) -> PanelPredictiveForecast | DiscretePanelPredictiveForecast:
+        """Return predictive distributions aligned to the forecast panel.
 
-        The returned object exposes ``to_frame``, ``cdf``, ``ppf`` and
-        ``interval``. Forecasts using a discrete family additionally expose
-        ``pmf``. All of those methods return DataFrames on the same row grid.
+        Parameters
+        ----------
+        h : int
+            Number of future steps to forecast for each series.
+        X_df : pandas.DataFrame or None, default=None
+            Future exogenous features in MLForecast long format. Pass ``None``
+            when the fitted forecaster does not require future features.
+
+        Returns
+        -------
+        PanelPredictiveForecast or DiscretePanelPredictiveForecast
+            One self-contained distributional forecast per series-step pair.
+            Call :meth:`to_frame` for point forecasts, or call :meth:`cdf`,
+            :meth:`ppf`, and :meth:`interval` for probabilistic results. A
+            discrete family such as :class:`NegativeBinomialFamily` returns a
+            :class:`DiscretePanelPredictiveForecast`, which also exposes
+            :meth:`pmf`. Every method returns a DataFrame on the same row grid.
+
+        Raises
+        ------
+        ValueError
+            If predicted means are non-finite or the fitted forecast state is
+            invalid.
+
+        Examples
+        --------
+        ``forecast = model.predict_distribution(h=7)``
+
+        ``forecast.ppf([0.5, 0.9, 0.95])``
+
+        ``forecast.interval(0.9)``
         """
         df_pred = self.fcst.predict(h=h, X_df=X_df)
         df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
@@ -447,9 +475,9 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             means, df_pred[parameter_column].to_numpy(dtype=float)
         )
         forecast_type = (
-            _DiscretePanelPredictiveForecast
+            DiscretePanelPredictiveForecast
             if self.distribution_family_.is_discrete
-            else _PanelPredictiveForecast
+            else PanelPredictiveForecast
         )
         return forecast_type(
             df_pred,

@@ -12,9 +12,11 @@ from .distribution import (
 )
 from .eval import FirstStageForecasterEvaluator, TwoStageForecasterEvaluator
 from .family import DistributionFamily, GammaFamily, NegativeBinomialFamily
+from .forecast import DiscretePanelPredictiveForecast, PanelPredictiveForecast
 from .wrapper import TwoStageForecasterWrapper
 
 __all__ = [
+    "DiscretePanelPredictiveForecast",
     "DiscretePredictiveDistribution",
     "DistributionFamily",
     "FirstStageForecasterEvaluator",
@@ -23,6 +25,7 @@ __all__ = [
     "NegativeBinomialFamily",
     "NegativeBinomialPredictiveDistribution",
     "NewsvendorOptimizer",
+    "PanelPredictiveForecast",
     "PredictiveDistribution",
     "TwoStageForecasterEvaluator",
     "TwoStageForecasterWrapper",
