@@ -22,8 +22,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
     This model decouples conditional expectation from dispersion:
         1. Employs `MLForecast` regressors (e.g., LightGBM) with optional exponential time-decay weighting to forecast conditional expectation (lambda_t).
-        2. Calibrates a per-series distribution parameter via maximum likelihood
-           on out-of-sample temporal cross-validation predictions.
+        2. Calibrates global, per-series, and per-horizon distribution parameters
+           with empirical-Bayes shrinkage on temporal cross-validation predictions.
         3. Exposes a row-aligned predictive distribution and projects arbitrary
            quantiles or Newsvendor-optimal levels through its inverse CDF.
 
@@ -38,8 +38,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     Architecture & Key Features
     ---------------------------
     - **Decoupled Two-Stage Design**: Separates point expectation forecasting from variance and tail modeling.
-    - **Out-of-Sample Dispersion Calibration**: Optimizes a family-specific
-      parameter per series, backed by a global median fallback for cold starts.
+    - **Out-of-Sample Dispersion Calibration**: Shrinks family-specific
+      series×horizon parameters toward per-series and global estimates.
     - **Time-Decay Recency Weighting**: Supports exponential time-decay scaling (`gamma`) to prioritize recent historical dynamics during base model fitting.
     - **Distribution-first API**: Returns row-aligned predictive distributions
       that can be consumed by forecasting and decision utilities.
@@ -268,14 +268,35 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         step_size: int | None,
         refit: bool | int,
         fit_kwargs: dict[str, Any],
-    ) -> tuple[dict[Any, float], float]:
-        """Perform temporal cross-validation and calibrate the dispersion parameter (r) via OOF residuals.
+    ) -> tuple[dict[Any, float], dict[tuple[Any, int], float], float]:
+        """Calibrate hierarchical dispersion with empirical-Bayes shrinkage.
 
         Returns
         -------
-        Tuple[Dict[Any, float], float]
-            Dictionary mapping each series ID to its optimized r, and the global r_fallback.
+        tuple
+            Shrunk dispersions by series, by series and horizon, and the global
+            fallback.
         """
+        cv_df = self._dispersion_cv_predictions(
+            df, h, n_windows, step_size, refit, fit_kwargs
+        )
+        fallback, global_theta = self._global_dispersion(cv_df)
+        series_fit, dispersion_dict = self._calibrate_series_dispersions(
+            cv_df, global_theta
+        )
+        horizon_dict = self._calibrate_horizon_dispersions(cv_df, series_fit)
+        return dispersion_dict, horizon_dict, fallback
+
+    def _dispersion_cv_predictions(
+        self,
+        df: pd.DataFrame,
+        h: int,
+        n_windows: int,
+        step_size: int | None,
+        refit: bool | int,
+        fit_kwargs: dict[str, Any],
+    ) -> pd.DataFrame:
+        """Generate OOF means and identify their forecast horizons."""
         cv_df = self.fcst.cross_validation(
             df=df,
             h=h,
@@ -289,19 +310,98 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             **fit_kwargs,
         )
 
-        dispersion_dict = {}
-        for uid, group in cv_df.groupby(self.id_col):
-            y_obs = group[self.target_col].to_numpy()
-            lambdas_oof = group[self.model_name].to_numpy()
-            dispersion_dict[uid] = self.distribution_family_.fit_dispersion(
-                y_obs, lambdas_oof
-            )
-
-        if not dispersion_dict:
+        if cv_df.empty:
             raise RuntimeError("Dispersion calibration produced no series.")
-        dispersion_fallback = float(np.median(list(dispersion_dict.values())))
+        cv_df = cv_df.copy()
+        cv_df["_horizon"] = (
+            cv_df.groupby([self.id_col, "cutoff"], sort=False).cumcount() + 1
+        )
+        return cv_df
 
-        return dispersion_dict, dispersion_fallback
+    def _global_dispersion(self, cv_df: pd.DataFrame) -> tuple[float, float]:
+        """Fit the global fallback and return it with its logarithm."""
+        target = cv_df[self.target_col].to_numpy()
+        means = cv_df[self.model_name].to_numpy()
+        fallback, global_theta, _ = self.distribution_family_.fit_log_dispersion(
+            target, means
+        )
+        return fallback, global_theta
+
+    def _calibrate_series_dispersions(
+        self, cv_df: pd.DataFrame, global_theta: float
+    ) -> tuple[pd.DataFrame, dict[Any, float]]:
+        """Shrink per-series dispersions toward the global fit."""
+        series_fit = self._dispersion_fit_table(cv_df, [self.id_col])
+        series_fit["parent"] = global_theta
+        self.dispersion_tau2_series_ = self._between_group_variance(series_fit)
+        series_fit = self._shrink_dispersion(
+            series_fit, self.dispersion_tau2_series_
+        )
+        dispersion_dict = dict(
+            zip(series_fit[self.id_col], series_fit["dispersion"])
+        )
+        return series_fit, dispersion_dict
+
+    def _calibrate_horizon_dispersions(
+        self, cv_df: pd.DataFrame, series_fit: pd.DataFrame
+    ) -> dict[tuple[Any, int], float]:
+        """Shrink series×horizon dispersions toward their series fits."""
+        horizon_fit = self._dispersion_fit_table(
+            cv_df, [self.id_col, "_horizon"]
+        )
+        horizon_fit["parent"] = horizon_fit[self.id_col].map(
+            series_fit.set_index(self.id_col)["theta"]
+        )
+        self.dispersion_tau2_horizon_ = self._between_group_variance(horizon_fit)
+        horizon_fit = self._shrink_dispersion(
+            horizon_fit, self.dispersion_tau2_horizon_
+        )
+        horizon_dict = {
+            (row[self.id_col], int(row["_horizon"])): row["dispersion"]
+            for _, row in horizon_fit.iterrows()
+        }
+        return horizon_dict
+
+    def _dispersion_fit_table(
+        self, cv_df: pd.DataFrame, group_columns: list[str]
+    ) -> pd.DataFrame:
+        """Fit raw log-dispersion and its variance for calibration groups."""
+        rows = []
+        for keys, group in cv_df.groupby(group_columns, sort=False):
+            keys = keys if isinstance(keys, tuple) else (keys,)
+            fitted = self.distribution_family_.fit_log_dispersion(
+                group[self.target_col].to_numpy(),
+                group[self.model_name].to_numpy(),
+            )
+            rows.append((*keys, fitted[1], fitted[2]))
+        return pd.DataFrame(rows, columns=[*group_columns, "theta_raw", "variance"])
+
+    @staticmethod
+    def _between_group_variance(fitted: pd.DataFrame) -> float:
+        """Estimate genuine between-group variance after removing fit noise."""
+        finite = np.isfinite(fitted["theta_raw"]) & np.isfinite(fitted["variance"])
+        if finite.sum() < 2:
+            return 0.0
+        residuals = fitted.loc[finite, "theta_raw"] - fitted.loc[finite, "parent"]
+        observed = residuals.var(ddof=1)
+        estimation_noise = fitted.loc[finite, "variance"].mean()
+        return float(max(observed - estimation_noise, 0.0))
+
+    @staticmethod
+    def _shrink_dispersion(fitted: pd.DataFrame, tau2: float) -> pd.DataFrame:
+        """Shrink log-dispersions toward their hierarchical parent."""
+        fitted = fitted.copy()
+        fitted["weight"] = np.where(
+            np.isfinite(fitted["variance"]),
+            tau2 / (tau2 + fitted["variance"]),
+            0.0,
+        )
+        fitted["theta"] = (
+            fitted["weight"] * fitted["theta_raw"]
+            + (1.0 - fitted["weight"]) * fitted["parent"]
+        )
+        fitted["dispersion"] = np.exp(fitted["theta"])
+        return fitted
 
     def _fit_base_forecaster(
         self,
@@ -384,7 +484,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         step_size: int | None = None,
         refit: bool | int = True,
     ) -> "TwoStageForecasterWrapper":
-        """Fits the underlying MLForecast model and optimizes per-series dispersion parameters.
+        """Fit the point model and hierarchical shrinkage dispersions.
 
         Process
         -------
@@ -423,7 +523,11 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             numeric_label,
         )
         df_fit, fit_kwargs = self._prepare_fit_data(df_train, gamma)
-        self.dispersion_dict_, self.dispersion_fallback_ = (
+        (
+            self.dispersion_dict_,
+            self.horizon_dispersion_dict_,
+            self.dispersion_fallback_,
+        ) = (
             self._calibrate_dispersion_cv(
                 df_fit, h, n_windows, step_size, refit, fit_kwargs
             )
@@ -444,12 +548,18 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         return frame
 
     def _prediction_dispersions(self, frame: pd.DataFrame) -> np.ndarray:
-        """Align calibrated dispersions with forecast series."""
-        dispersions = (
-            frame[self.id_col]
-            .map(self.dispersion_dict_)
-            .fillna(self.dispersion_fallback_)
-            .to_numpy(dtype=float)
+        """Align horizon-shrunk dispersions with forecast rows."""
+        horizons = frame.groupby(self.id_col, sort=False).cumcount() + 1
+        horizon_dispersions = getattr(self, "horizon_dispersion_dict_", {})
+        dispersions = np.asarray(
+            [
+                horizon_dispersions.get(
+                    (uid, int(horizon)),
+                    self.dispersion_dict_.get(uid, self.dispersion_fallback_),
+                )
+                for uid, horizon in zip(frame[self.id_col], horizons)
+            ],
+            dtype=float,
         )
         frame[self.distribution_family_.parameter_column] = dispersions
         return dispersions

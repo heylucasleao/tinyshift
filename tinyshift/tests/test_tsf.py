@@ -235,6 +235,47 @@ def test_estimate_r_rejects_non_finite_lambdas():
         wrapper._estimate_r(np.array([1.0]), np.array([np.nan]))
 
 
+def test_log_dispersion_fit_returns_finite_local_variance():
+    family = NegativeBinomialFamily()
+    y = np.array([0, 1, 2, 3, 5, 1, 0, 4])
+    means = np.array([1.0, 1.2, 1.5, 2.0, 2.5, 1.8, 1.0, 3.0])
+
+    dispersion, theta, variance = family.fit_log_dispersion(y, means)
+
+    assert dispersion == pytest.approx(np.exp(theta))
+    assert np.isfinite(variance)
+    assert variance > 0
+
+
+def test_zero_between_group_variance_collapses_to_parent():
+    fitted = pd.DataFrame(
+        {
+            "theta_raw": [0.0, 2.0],
+            "variance": [0.5, 0.5],
+            "parent": [1.0, 1.0],
+        }
+    )
+
+    shrunk = TwoStageForecasterWrapper._shrink_dispersion(fitted, tau2=0.0)
+
+    assert np.allclose(shrunk["weight"], 0.0)
+    assert np.allclose(shrunk["theta"], fitted["parent"])
+
+
+def test_prediction_uses_horizon_dispersion_then_series_fallback():
+    wrapper = TwoStageForecasterWrapper(fcst=None)
+    wrapper.id_col = "unique_id"
+    wrapper.distribution_family_ = NegativeBinomialFamily()
+    wrapper.dispersion_dict_ = {"A": 4.0}
+    wrapper.horizon_dispersion_dict_ = {("A", 1): 2.0}
+    wrapper.dispersion_fallback_ = 8.0
+    frame = pd.DataFrame({"unique_id": ["A", "A", "unseen"]})
+
+    dispersions = wrapper._prediction_dispersions(frame)
+
+    assert np.allclose(dispersions, [2.0, 4.0, 8.0])
+
+
 def test_compute_time_decay_weights(sample_train_data):
     wrapper = TwoStageForecasterWrapper(fcst=None)
     weights = wrapper._compute_time_decay_weights(

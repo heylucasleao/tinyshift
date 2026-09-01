@@ -70,6 +70,29 @@ class DistributionFamily(BaseEstimator, ABC):
         )
         return self._fitted_dispersion(result)
 
+    def fit_log_dispersion(
+        self, y: np.ndarray, means: np.ndarray, epsilon: float = 0.05
+    ) -> tuple[float, float, float]:
+        """Estimate dispersion and the local variance of its logarithm."""
+        y, means = self._calibration_data(y, means)
+        dispersion = self.fit_dispersion(y, means)
+        log_dispersion = float(np.log(dispersion))
+
+        def objective(theta: float) -> float:
+            return self.negative_log_likelihood(np.exp(theta), y, means)
+
+        curvature = (
+            objective(log_dispersion + epsilon)
+            - 2.0 * objective(log_dispersion)
+            + objective(log_dispersion - epsilon)
+        ) / epsilon**2
+        variance = (
+            1.0 / curvature
+            if np.isfinite(curvature) and curvature > 1e-8
+            else np.inf
+        )
+        return dispersion, log_dispersion, float(variance)
+
 
 class NegativeBinomialFamily(DistributionFamily):
     """Negative Binomial family for non-negative integer counts."""
