@@ -266,14 +266,31 @@ def test_prediction_uses_horizon_dispersion_then_series_fallback():
     wrapper = TwoStageForecasterWrapper(fcst=None)
     wrapper.id_col = "unique_id"
     wrapper.distribution_family_ = NegativeBinomialFamily()
-    wrapper.dispersion_dict_ = {"A": 4.0}
-    wrapper.horizon_dispersion_dict_ = {("A", 1): 2.0}
-    wrapper.dispersion_fallback_ = 8.0
+    wrapper.dispersion_ = {
+        "global": 8.0,
+        "global_horizon": {1: 6.0},
+        "series": {"A": 4.0},
+        "series_horizon": {("A", 1): 2.0},
+    }
     frame = pd.DataFrame({"unique_id": ["A", "A", "unseen"]})
 
     dispersions = wrapper._prediction_dispersions(frame)
 
-    assert np.allclose(dispersions, [2.0, 4.0, 8.0])
+    assert np.allclose(dispersions, [2.0, 4.0, 6.0])
+
+
+def test_resolve_dispersion_uses_global_for_unknown_uncalibrated_horizon():
+    wrapper = TwoStageForecasterWrapper(fcst=None)
+    wrapper.dispersion_ = {
+        "global": 8.0,
+        "global_horizon": {1: 6.0},
+        "series": {"A": 4.0},
+        "series_horizon": {},
+    }
+
+    assert wrapper._resolve_dispersion("A", 2) == 4.0
+    assert wrapper._resolve_dispersion("unseen", 1) == 6.0
+    assert wrapper._resolve_dispersion("unseen", 2) == 8.0
 
 
 def test_compute_time_decay_weights(sample_train_data):
@@ -978,7 +995,7 @@ def test_predict_distribution_uses_fallback_for_unknown_series(
     frame = wrapper.predict_distribution(h=1).to_frame()
 
     assert frame.loc[frame.index[0], "r_dispersion"] == pytest.approx(
-        wrapper.dispersion_fallback_
+        wrapper.dispersion_["global_horizon"][1]
     )
 
 
@@ -1053,8 +1070,8 @@ def test_wrapper_joblib_round_trip(sample_train_data, tmp_path):
 
     pd.testing.assert_frame_equal(actual, expected)
     assert isinstance(restored.distribution_family_, NegativeBinomialFamily)
-    assert restored.dispersion_dict_ == wrapper.dispersion_dict_
-    assert restored.dispersion_fallback_ == wrapper.dispersion_fallback_
+    assert restored.dispersion_ == wrapper.dispersion_
+    assert restored.dispersion_tau2_ == wrapper.dispersion_tau2_
 
 
 def test_gamma_wrapper_joblib_round_trip(sample_continuous_data, tmp_path):
@@ -1072,7 +1089,8 @@ def test_gamma_wrapper_joblib_round_trip(sample_continuous_data, tmp_path):
         _predict(restored, h=2, quantiles=(0.1, 0.9)), expected
     )
     assert isinstance(restored.distribution_family_, GammaFamily)
-    assert restored.dispersion_dict_ == wrapper.dispersion_dict_
+    assert restored.dispersion_ == wrapper.dispersion_
+    assert restored.dispersion_tau2_ == wrapper.dispersion_tau2_
 
 
 def test_continuous_optimize_accepts_cost_only_x_df(sample_continuous_data):

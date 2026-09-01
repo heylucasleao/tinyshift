@@ -268,24 +268,39 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         step_size: int | None,
         refit: bool | int,
         fit_kwargs: dict[str, Any],
-    ) -> tuple[dict[Any, float], dict[tuple[Any, int], float], float]:
+    ) -> tuple[dict[str, Any], dict[str, float]]:
         """Calibrate hierarchical dispersion with empirical-Bayes shrinkage.
 
         Returns
         -------
         tuple
-            Shrunk dispersions by series, by series and horizon, and the global
-            fallback.
+            Nested dispersion layers and their between-group variances.
         """
         cv_df = self._dispersion_cv_predictions(
             df, h, n_windows, step_size, refit, fit_kwargs
         )
-        fallback, global_theta = self._global_dispersion(cv_df)
-        series_fit, dispersion_dict = self._calibrate_series_dispersions(
+        global_dispersion, global_theta = self._global_dispersion(cv_df)
+        global_horizon, tau2_global_horizon = (
+            self._calibrate_global_horizon_dispersions(cv_df, global_theta)
+        )
+        series_fit, series, tau2_series = self._calibrate_series_dispersions(
             cv_df, global_theta
         )
-        horizon_dict = self._calibrate_horizon_dispersions(cv_df, series_fit)
-        return dispersion_dict, horizon_dict, fallback
+        series_horizon, tau2_series_horizon = (
+            self._calibrate_horizon_dispersions(cv_df, series_fit)
+        )
+        dispersion = {
+            "global": global_dispersion,
+            "global_horizon": global_horizon,
+            "series": series,
+            "series_horizon": series_horizon,
+        }
+        tau2 = {
+            "global_horizon": tau2_global_horizon,
+            "series": tau2_series,
+            "series_horizon": tau2_series_horizon,
+        }
+        return dispersion, tau2
 
     def _dispersion_cv_predictions(
         self,
@@ -329,22 +344,34 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
     def _calibrate_series_dispersions(
         self, cv_df: pd.DataFrame, global_theta: float
-    ) -> tuple[pd.DataFrame, dict[Any, float]]:
+    ) -> tuple[pd.DataFrame, dict[Any, float], float]:
         """Shrink per-series dispersions toward the global fit."""
         series_fit = self._dispersion_fit_table(cv_df, [self.id_col])
         series_fit["parent"] = global_theta
-        self.dispersion_tau2_series_ = self._between_group_variance(series_fit)
-        series_fit = self._shrink_dispersion(
-            series_fit, self.dispersion_tau2_series_
-        )
+        tau2 = self._between_group_variance(series_fit)
+        series_fit = self._shrink_dispersion(series_fit, tau2)
         dispersion_dict = dict(
             zip(series_fit[self.id_col], series_fit["dispersion"])
         )
-        return series_fit, dispersion_dict
+        return series_fit, dispersion_dict, tau2
+
+    def _calibrate_global_horizon_dispersions(
+        self, cv_df: pd.DataFrame, global_theta: float
+    ) -> tuple[dict[int, float], float]:
+        """Shrink global horizon dispersions toward the global fit."""
+        horizon_fit = self._dispersion_fit_table(cv_df, ["_horizon"])
+        horizon_fit["parent"] = global_theta
+        tau2 = self._between_group_variance(horizon_fit)
+        horizon_fit = self._shrink_dispersion(horizon_fit, tau2)
+        dispersions = {
+            int(row["_horizon"]): row["dispersion"]
+            for _, row in horizon_fit.iterrows()
+        }
+        return dispersions, tau2
 
     def _calibrate_horizon_dispersions(
         self, cv_df: pd.DataFrame, series_fit: pd.DataFrame
-    ) -> dict[tuple[Any, int], float]:
+    ) -> tuple[dict[tuple[Any, int], float], float]:
         """Shrink series×horizon dispersions toward their series fits."""
         horizon_fit = self._dispersion_fit_table(
             cv_df, [self.id_col, "_horizon"]
@@ -352,15 +379,13 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         horizon_fit["parent"] = horizon_fit[self.id_col].map(
             series_fit.set_index(self.id_col)["theta"]
         )
-        self.dispersion_tau2_horizon_ = self._between_group_variance(horizon_fit)
-        horizon_fit = self._shrink_dispersion(
-            horizon_fit, self.dispersion_tau2_horizon_
-        )
+        tau2 = self._between_group_variance(horizon_fit)
+        horizon_fit = self._shrink_dispersion(horizon_fit, tau2)
         horizon_dict = {
             (row[self.id_col], int(row["_horizon"])): row["dispersion"]
             for _, row in horizon_fit.iterrows()
         }
-        return horizon_dict
+        return horizon_dict, tau2
 
     def _dispersion_fit_table(
         self, cv_df: pd.DataFrame, group_columns: list[str]
@@ -464,12 +489,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         fit_kwargs["weight_col"] = "_temp_weight"
         return df_fit, fit_kwargs
 
-    def _store_legacy_dispersion_attributes(self) -> None:
-        """Expose historical fitted names for the default family."""
-        if isinstance(self.distribution_family_, NegativeBinomialFamily):
-            self.r_dict_ = self.dispersion_dict_
-            self.r_fallback_ = self.dispersion_fallback_
-
     @requires_extra("series")
     def fit(
         self,
@@ -523,16 +542,9 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             numeric_label,
         )
         df_fit, fit_kwargs = self._prepare_fit_data(df_train, gamma)
-        (
-            self.dispersion_dict_,
-            self.horizon_dispersion_dict_,
-            self.dispersion_fallback_,
-        ) = (
-            self._calibrate_dispersion_cv(
-                df_fit, h, n_windows, step_size, refit, fit_kwargs
-            )
+        self.dispersion_, self.dispersion_tau2_ = self._calibrate_dispersion_cv(
+            df_fit, h, n_windows, step_size, refit, fit_kwargs
         )
-        self._store_legacy_dispersion_attributes()
         self.exog_cols_ = self._fit_base_forecaster(df_fit, fit_kwargs)
 
         return self
@@ -547,19 +559,51 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         frame["lambda_t"] = np.maximum(means, 1e-6)
         return frame
 
+    def _resolve_dispersion(self, uid: Any, horizon: int) -> float:
+        """Resolve one dispersion through the fitted fallback hierarchy.
+
+        Resolution distinguishes known series from cold starts. A known
+        ``(series, horizon)`` uses the most specific shrunk estimate. When that
+        horizon was not calibrated, the series-level estimate is preferred
+        because it retains information learned for that series. For an unknown
+        series, no series-level evidence exists, so the shrunk global-horizon
+        estimate is used. The global estimate is the final fallback when
+        neither dimension has a calibrated value.
+
+        The resulting precedence is::
+
+            known series:   series×horizon -> series -> global
+            unknown series: global×horizon -> global
+
+        All non-global layers have already been regularized toward their
+        statistical parent during fitting; this method only selects a fitted
+        value and does not perform additional shrinkage.
+        """
+        layers = self.dispersion_
+        series_horizon = layers["series_horizon"]
+        if (uid, horizon) in series_horizon:
+            return float(series_horizon[uid, horizon])
+
+        series = layers["series"]
+        if uid in series:
+            return float(series[uid])
+
+        global_horizon = layers["global_horizon"]
+        if horizon in global_horizon:
+            return float(global_horizon[horizon])
+
+        return float(layers["global"])
+
     def _prediction_dispersions(self, frame: pd.DataFrame) -> np.ndarray:
-        """Align horizon-shrunk dispersions with forecast rows."""
+        """Resolve and attach dispersions for all forecast rows."""
         horizons = frame.groupby(self.id_col, sort=False).cumcount() + 1
-        horizon_dispersions = getattr(self, "horizon_dispersion_dict_", {})
-        dispersions = np.asarray(
-            [
-                horizon_dispersions.get(
-                    (uid, int(horizon)),
-                    self.dispersion_dict_.get(uid, self.dispersion_fallback_),
-                )
+        dispersions = np.fromiter(
+            (
+                self._resolve_dispersion(uid, int(horizon))
                 for uid, horizon in zip(frame[self.id_col], horizons)
-            ],
+            ),
             dtype=float,
+            count=len(frame),
         )
         frame[self.distribution_family_.parameter_column] = dispersions
         return dispersions

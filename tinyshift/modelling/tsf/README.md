@@ -77,6 +77,12 @@ likelihood curvature and empirical between-group variance. No regularization
 constant is required from the user. The global fit is retained as the fallback
 for series not seen during calibration. MLForecast is then fitted on all rows.
 
+Fitted layers are stored together in `dispersion_`: `global`,
+`global_horizon`, `series`, and `series_horizon`. Prediction resolves known
+series through `series_horizon -> series -> global`. For an unknown series it
+uses `global_horizon -> global`. The corresponding between-group variances are
+available in `dispersion_tau2_`.
+
 ```text
 training panel
       |
@@ -87,6 +93,7 @@ rolling temporal cross-validation
 out-of-fold conditional means by series
       |
       +--> global family-specific dispersion
+      +--> shrunk global-horizon dispersion
       +--> shrunk per-series dispersion
       +--> shrunk per-series×horizon dispersion
       `--> global fallback
