@@ -13,8 +13,8 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.utils.imports import requires_extra
 
-from .distribution import PredictiveDistribution
 from .family import DistributionFamily, NegativeBinomialFamily
+from .forecast import _DiscretePanelPredictiveForecast, _PanelPredictiveForecast
 
 
 class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
@@ -423,8 +423,13 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         self,
         h: int,
         X_df: pd.DataFrame = None,
-    ) -> tuple[pd.DataFrame, PredictiveDistribution]:
-        """Return the forecast frame and its aligned predictive distributions."""
+    ) -> _PanelPredictiveForecast:
+        """Return a self-contained predictive forecast aligned to the panel.
+
+        The returned object exposes ``to_frame``, ``cdf``, ``ppf`` and
+        ``interval``. Forecasts using a discrete family additionally expose
+        ``pmf``. All of those methods return DataFrames on the same row grid.
+        """
         df_pred = self.fcst.predict(h=h, X_df=X_df)
         df_pred = df_pred.rename(columns={self.model_name: "lambda_t"})
         means = df_pred["lambda_t"].to_numpy(dtype=float)
@@ -441,4 +446,15 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         predictive = self.distribution_family_.distribution(
             means, df_pred[parameter_column].to_numpy(dtype=float)
         )
-        return df_pred, predictive
+        forecast_type = (
+            _DiscretePanelPredictiveForecast
+            if self.distribution_family_.is_discrete
+            else _PanelPredictiveForecast
+        )
+        return forecast_type(
+            df_pred,
+            predictive,
+            model="lambda_t",
+            id_col=self.id_col,
+            time_col=self.time_col,
+        )

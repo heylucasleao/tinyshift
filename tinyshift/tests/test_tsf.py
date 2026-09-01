@@ -21,7 +21,8 @@ from tinyshift.modelling import (
 
 
 def _predict(wrapper, h, X_df=None, quantiles=(0.05, 0.50, 0.95)):
-    frame, distribution = wrapper.predict_distribution(h=h, X_df=X_df)
+    forecast = wrapper.predict_distribution(h=h, X_df=X_df)
+    frame, distribution = forecast.to_frame(), forecast._distribution
     seen = set()
     for quantile in sorted(quantiles):
         if not np.isfinite(quantile) or not 0 < quantile < 1:
@@ -53,7 +54,8 @@ def _optimize(wrapper, h, underage_cost="cu", overage_cost="co", X_df=None, **kw
     prediction_df, cost_df = _split_prediction_and_cost_frames(
         wrapper, X_df, underage_cost, overage_cost
     )
-    frame, distribution = wrapper.predict_distribution(h=h, X_df=prediction_df)
+    forecast = wrapper.predict_distribution(h=h, X_df=prediction_df)
+    frame, distribution = forecast.to_frame(), forecast._distribution
     return NewsvendorOptimizer.optimize(
         frame,
         distribution,
@@ -67,7 +69,8 @@ def _optimize(wrapper, h, underage_cost="cu", overage_cost="co", X_df=None, **kw
 
 
 def _pmf(wrapper, h, max_k=10, X_df=None):
-    frame, distribution = wrapper.predict_distribution(h=h, X_df=X_df)
+    forecast = wrapper.predict_distribution(h=h, X_df=X_df)
+    frame, distribution = forecast.to_frame(), forecast._distribution
     if not hasattr(distribution, "pmf"):
         raise TypeError("pmf is available only for discrete distributions.")
     units = np.arange(max_k + 1)
@@ -92,7 +95,8 @@ def _marginal_benefit(
     prediction_df, cost_df = _split_prediction_and_cost_frames(
         wrapper, X_df, underage_cost, overage_cost
     )
-    frame, distribution = wrapper.predict_distribution(h=h, X_df=prediction_df)
+    forecast = wrapper.predict_distribution(h=h, X_df=prediction_df)
+    frame, distribution = forecast.to_frame(), forecast._distribution
     return NewsvendorOptimizer.marginal_benefit(
         frame,
         distribution,
@@ -335,11 +339,12 @@ def test_default_family_returns_negative_binomial_distribution(sample_train_data
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst=fcst).fit(sample_train_data)
 
-    frame, distribution = wrapper.predict_distribution(h=2)
+    forecast = wrapper.predict_distribution(h=2)
+    frame, distribution = forecast.to_frame(), forecast._distribution
 
     assert isinstance(distribution, NegativeBinomialPredictiveDistribution)
     assert len(distribution) == len(frame)
-    assert distribution.cdf(frame["lambda_t"].to_numpy()).shape == (len(frame),)
+    assert distribution.cdf(frame[["lambda_t"]].to_numpy()).shape == (len(frame),)
     assert distribution.pmf(np.arange(3)).shape == (len(frame), 3)
 
 
@@ -350,7 +355,8 @@ def test_gamma_family_supports_continuous_targets(sample_continuous_data):
     )
 
     frame = _predict(wrapper, h=2, quantiles=[0.1, 0.5, 0.9])
-    distribution_frame, distribution = wrapper.predict_distribution(h=2)
+    forecast = wrapper.predict_distribution(h=2)
+    distribution_frame, distribution = forecast.to_frame(), forecast._distribution
 
     assert "shape_dispersion" in frame
     assert np.issubdtype(frame["q_50"].dtype, np.floating)
@@ -559,7 +565,8 @@ def test_marginal_benefit_grid_can_match_forecast_row_count(sample_train_data):
     wrapper = TwoStageForecasterWrapper(
         MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     ).fit(sample_train_data)
-    frame, distribution = wrapper.predict_distribution(h=2)
+    forecast = wrapper.predict_distribution(h=2)
+    frame, distribution = forecast.to_frame(), forecast._distribution
     units = [0, 1, 2, 3]
 
     result = NewsvendorOptimizer.marginal_benefit(
@@ -767,14 +774,44 @@ def count_distribution():
 
 def test_distribution_aligns_scalar_row_grid_and_matrix(gamma_distribution):
     assert gamma_distribution.cdf(2.0).shape == (2,)
-    assert gamma_distribution.cdf([2.0, 4.0]).shape == (2,)
+    assert gamma_distribution.cdf([2.0, 4.0]).shape == (2, 2)
     assert gamma_distribution.cdf([1.0, 2.0, 3.0]).shape == (2, 3)
     assert gamma_distribution.cdf([[1.0, 2.0], [3.0, 4.0]]).shape == (2, 2)
 
-    with pytest.raises(ValueError, match="scalar, a grid"):
+    with pytest.raises(ValueError, match="scalar, a one-dimensional grid"):
         gamma_distribution.cdf(np.ones((3, 2)))
     with pytest.raises(ValueError, match="finite values"):
         gamma_distribution.cdf(np.nan)
+
+
+def test_predict_distribution_returns_self_contained_panel_forecast(sample_train_data):
+    wrapper = TwoStageForecasterWrapper(
+        MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    ).fit(sample_train_data)
+
+    forecast = wrapper.predict_distribution(h=2)
+
+    assert len(forecast) == len(forecast.to_frame()) == 4
+    assert {"lambda_t-q-10", "lambda_t-q-50", "lambda_t-q-90"} <= set(
+        forecast.ppf([0.1, 0.5, 0.9])
+    )
+    assert {"lambda_t-lo-90", "lambda_t-hi-90"} <= set(forecast.interval(0.9))
+    assert {"lambda_t-pmf-0", "lambda_t-pmf-1"} <= set(forecast.pmf([0, 1]))
+
+    with pytest.raises(TypeError, match="cannot unpack"):
+        _frame, _distribution = forecast
+
+
+def test_continuous_panel_forecast_does_not_expose_pmf(sample_continuous_data):
+    wrapper = TwoStageForecasterWrapper(
+        MLForecast(models=[LinearRegression()], freq="D", lags=[1]),
+        distribution=GammaFamily(),
+    ).fit(sample_continuous_data)
+
+    forecast = wrapper.predict_distribution(h=1)
+
+    assert not hasattr(forecast, "pmf")
+    assert "lambda_t-cdf-1" in forecast.cdf(1.0)
 
 
 @pytest.mark.parametrize("quantile", [-0.01, 1.01])
@@ -879,7 +916,7 @@ def test_predict_distribution_uses_fallback_for_unknown_series(
     raw[wrapper.model_name] = 2.0
     monkeypatch.setattr(fcst, "predict", lambda **kwargs: raw.copy())
 
-    frame, _ = wrapper.predict_distribution(h=1)
+    frame = wrapper.predict_distribution(h=1).to_frame()
 
     assert frame.loc[frame.index[0], "r_dispersion"] == pytest.approx(
         wrapper.dispersion_fallback_
