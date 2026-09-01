@@ -8,6 +8,8 @@ from numpy.typing import ArrayLike
 
 from .distribution import PredictiveDistribution
 
+__all__ = ["DiscretePanelPredictiveForecast", "PanelPredictiveForecast"]
+
 
 class PanelPredictiveForecast:
     """Panel-aligned facade over a batch of TSF predictive distributions.
