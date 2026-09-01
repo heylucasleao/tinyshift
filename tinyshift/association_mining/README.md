@@ -18,6 +18,9 @@ It encodes transactions to a one-hot matrix (via `TransactionEncoder`) and compu
 - Correlation matrix generation via `correlation_matrix(row_items, column_items, metric="...")`
 - Model persistence: `save(filename)` / `load(filename)` (pickle)
 
+The analyzer follows scikit-learn fitted-state conventions: learned attributes
+such as `encoder_`, `columns_`, and `transactions_` are created by `fit()`.
+
 ## Usage
 
 1. Fit the analyzer on a dataset of transactions:
@@ -54,6 +57,10 @@ matrix = analyzer.correlation_matrix(
 print(matrix)
 ```
 
+`row_items` and `column_items` must be non-empty and cannot contain duplicates.
+Items may be any hashable values supported by the fitted analyzer, not only
+strings.
+
 ## Association Metrics
 
 Each metric measures different aspects of the relationship between items
@@ -69,5 +76,12 @@ in transactions. Use the metric that best matches the question you're asking.
 | **Yule’s Q**            | -1 → 1 | Odds ratio-based association                  | “Do `A` and `B` strongly reinforce or oppose each other?”          | Best when interpreting direction and strength of association  |
 | **Hypergeom p-value**   | 0 → 1  | Statistical significance of co-occurrence     | “Is the co-occurrence of `A` and `B` statistically significant?”   | Use when testing whether an association is unlikely by chance |
 
+Yule's Q is computed directly from the binary contingency table. Degenerate
+tables with no concordant or discordant pairs return `0.0`, because the data do
+not identify a direction of association.
+
+`save()` only accepts a fitted analyzer. Because loading pickle can execute
+arbitrary code, call `load()` only with files from trusted sources. The loaded
+object is validated as a `TransactionAnalyzer` after deserialization.
 
 

@@ -3,14 +3,17 @@
 # Licensed under the MIT License
 
 
-from typing import List, Any, Optional
-import pandas as pd
-import numpy as np
 import pickle
-from itertools import product
-from sklearn.base import BaseEstimator, TransformerMixin
-from .encoder import TransactionEncoder
+from os import PathLike
+from typing import Any
+
+import numpy as np
+import pandas as pd
 from scipy.stats import hypergeom
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_is_fitted
+
+from .encoder import TransactionEncoder
 
 
 class TransactionAnalyzer(BaseEstimator, TransformerMixin):
@@ -41,18 +44,11 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
     """
 
     def __init__(self) -> None:
-        """Initialize TransactionAnalyzer.
+        """Initialize an unfitted transaction analyzer."""
 
-        Attributes:
-            encoder (TransactionEncoder): Encoder for transaction data
-            columns_ (List[str]): Column names after encoding
-            transactions (pd.DataFrame): Encoded transactions dataframe
-        """
-        self.encoder_: Optional[TransactionEncoder] = None
-        self.columns_: Optional[List[str]] = None
-        self.transactions_: Optional[pd.DataFrame] = None
-
-    def fit(self, transactions: List[List[Any]]) -> "TransactionAnalyzer":
+    def fit(
+        self, transactions: list[list[Any]], y=None
+    ) -> "TransactionAnalyzer":
         """
         Fit the encoder to transactions and create encoded dataframe.
 
@@ -76,33 +72,40 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
         )
         return self
 
-    def transform(self, transactions: List[List[Any]]) -> np.ndarray:
+    def transform(self, transactions: list[list[Any]]) -> np.ndarray:
         """Transform transactions to one-hot encoding."""
-        if self.encoder_ is None:
-            raise ValueError("Analyzer must be fitted before transforming data")
+        check_is_fitted(self, ["encoder_", "columns_", "transactions_"])
         return self.encoder_.transform(transactions)
 
-    def fit_transform(self, transactions: List[List[Any]]) -> np.ndarray:
+    def fit_transform(
+        self, transactions: list[list[Any]], y=None
+    ) -> np.ndarray:
         """Fit and transform transactions."""
-        self.fit(transactions)
+        self.fit(transactions, y=y)
         return self.transform(transactions)
 
-    def save(self, filename: str) -> None:
+    def save(self, filename: str | PathLike) -> None:
         """Save analyzer to file using pickle."""
+        check_is_fitted(self, ["encoder_", "columns_", "transactions_"])
         with open(filename, "wb") as f:
             pickle.dump(self, f)
 
     @classmethod
-    def load(cls, filename: str) -> "TransactionAnalyzer":
-        """Load analyzer from file."""
+    def load(cls, filename: str | PathLike) -> "TransactionAnalyzer":
+        """Load an analyzer from a trusted pickle file."""
         with open(filename, "rb") as f:
-            return pickle.load(f)
+            analyzer = pickle.load(f)
+        if not isinstance(analyzer, cls):
+            raise TypeError(
+                f"Expected a {cls.__name__} pickle, got {type(analyzer).__name__}."
+            )
+        return analyzer
 
-    def _get_support(self, items: pd.Series) -> float:
+    def _get_support(self, items: pd.Series | np.ndarray) -> float:
         """Calculate support for an itemset."""
         return items.mean()
 
-    def _get_counts(self, items: pd.Series) -> int:
+    def _get_counts(self, items: pd.Series | np.ndarray) -> int:
         """
         Get counts needed for various association measures.
         """
@@ -140,8 +143,7 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
             If either antecedent or consequent item is not found in the
             encoded transaction columns
         """
-        if self.transactions_ is None:
-            raise ValueError("Analyzer must be fitted before calculating the metric")
+        check_is_fitted(self, ["transactions_"])
 
         try:
             antecedent_series = self.transactions_[antecedent]
@@ -298,7 +300,7 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
 
         return numerator / denominator if denominator != 0 else 0.0
 
-    def hypergeom(self, antecedent: str, consequent: str):
+    def hypergeom(self, antecedent: Any, consequent: Any) -> float:
         """
         Calculate the hypergeometric p-value for the association rule.
 
@@ -357,16 +359,21 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
         nY = self._get_counts(consequent_series)
         nXY = self._get_counts(np.logical_and(antecedent_series, consequent_series))
 
-        odds_ratio = (nXY * (len(self.transactions_) - nX - nY + nXY)) / (
-            (nX - nXY) * (nY - nXY)
-        )
-
-        return (odds_ratio - 1) / (odds_ratio + 1)
+        both = nXY
+        antecedent_only = nX - nXY
+        consequent_only = nY - nXY
+        neither = len(self.transactions_) - nX - nY + nXY
+        concordant = both * neither
+        discordant = antecedent_only * consequent_only
+        denominator = concordant + discordant
+        if denominator == 0:
+            return 0.0
+        return float((concordant - discordant) / denominator)
 
     def correlation_matrix(
         self,
-        row_items: List[str],
-        column_items: List[str],
+        row_items: list[Any],
+        column_items: list[Any],
         metric: str = "lift",
     ) -> pd.DataFrame:
         """
@@ -390,10 +397,13 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
         ValueError
             If analyzer has not been fitted
         """
-        if self.transactions_ is None:
-            raise ValueError(
-                "Analyzer must be fitted before creating correlation matrix"
-            )
+        check_is_fitted(self, ["transactions_"])
+        if not row_items or not column_items:
+            raise ValueError("row_items and column_items must be non-empty.")
+        if len(set(row_items)) != len(row_items):
+            raise ValueError("row_items must not contain duplicates.")
+        if len(set(column_items)) != len(column_items):
+            raise ValueError("column_items must not contain duplicates.")
 
         metric_mapping = {
             "lift": self.lift,
@@ -405,21 +415,15 @@ class TransactionAnalyzer(BaseEstimator, TransformerMixin):
             "hypergeom": self.hypergeom,
         }
 
-        callable_function = metric_mapping.get(metric, None)
+        callable_function = metric_mapping.get(metric)
 
         if not callable_function:
             raise ValueError(
                 f"Unknown metric: '{metric}'. Available metrics: {metric_mapping.keys()}"
             )
 
-        pairs = list(product(row_items, column_items))
-
-        metric_values = [callable_function(row, columns) for row, columns in pairs]
-
-        index = pd.MultiIndex.from_tuples(pairs)
-
-        metric = pd.DataFrame(metric_values, index=index).unstack()
-
-        metric.columns = metric.columns.droplevel()
-
-        return metric
+        values = [
+            [callable_function(row, column) for column in column_items]
+            for row in row_items
+        ]
+        return pd.DataFrame(values, index=row_items, columns=column_items)
