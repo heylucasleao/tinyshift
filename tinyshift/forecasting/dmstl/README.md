@@ -1,6 +1,6 @@
-# Decomposed Multi-Seasonal Forecasting (`modelling.dmstl`)
+# Decomposed Multi-Seasonal Forecasting (`forecasting.dmstl`)
 
-The `modelling.dmstl` package forecasts panels by decomposing each series into
+The `forecasting.dmstl` package forecasts panels by decomposing each series into
 trend, one or more seasonal components, and residual dynamics with MSTL. Trend
 and seasonal components are forecast with StatsForecast; residuals are modeled
 with MLForecast. The public `DMSTLWrapper` facade selects a local or global
@@ -9,12 +9,12 @@ residual strategy.
 ## Public API
 
 Only `DMSTLWrapper` is public. Users should import it from
-`tinyshift.modelling`:
+`tinyshift.forecasting`:
 
 ```python
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
-from tinyshift.modelling import DMSTLWrapper
+from tinyshift.forecasting import DMSTLWrapper
 
 
 def residual_model(nlags, freq):

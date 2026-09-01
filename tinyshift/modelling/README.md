@@ -1,4 +1,18 @@
-# ML Modeling Utilities Module (`modelling`)
+# Legacy Modelling Namespace (`tinyshift.modelling`)
+
+This namespace is retained for backward compatibility. New code should use:
+
+- `tinyshift.preprocessing` for scaling, residualization and VIF filtering;
+- `tinyshift.features` for feature engineering;
+- `tinyshift.forecasting` for DTL, DMSTL and probabilistic forecasting.
+
+Existing imports continue to resolve, including historical submodule paths such
+as `tinyshift.modelling.tsf`. The documentation for each implementation now
+lives in the README of its canonical package.
+
+---
+
+# Previous combined documentation
 
 The `modelling` module provides sklearn-compatible preprocessing, feature engineering, and decomposed forecasting utilities for robust machine learning workflows. It includes multicollinearity reduction, feature residualization, robust scaling, LOWESS and MSTL decomposition with forecasting, and time-series feature generation.
 
