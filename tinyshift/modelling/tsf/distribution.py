@@ -69,6 +69,17 @@ class _ParametricDistribution(PredictiveDistribution):
     def __len__(self) -> int:
         return self.means.size
 
+    @staticmethod
+    def _validate_quantiles(quantiles) -> None:
+        """Require probability levels in the closed unit interval."""
+        if np.any((quantiles < 0.0) | (quantiles > 1.0)):
+            raise ValueError("quantiles must lie in [0, 1].")
+
+    @staticmethod
+    def _finalize(result, squeeze: bool):
+        """Collapse a single row-wise output column when requested."""
+        return result[:, 0] if squeeze and result.ndim == 2 else result
+
     def _align(self, values, name: str):
         array = np.asarray(values, dtype=float)
         if not np.all(np.isfinite(array)):
@@ -104,18 +115,17 @@ class NegativeBinomialPredictiveDistribution(
         values, means, sizes, squeeze = self._align(values, "values")
         probabilities = sizes / (sizes + means)
         result = nbinom.cdf(np.floor(values), sizes, probabilities)
-        return result[:, 0] if squeeze and result.ndim == 2 else result
+        return self._finalize(result, squeeze)
 
     def ppf(self, quantiles):
         quantiles, means, sizes, squeeze = self._align(quantiles, "quantiles")
-        if np.any((quantiles < 0.0) | (quantiles > 1.0)):
-            raise ValueError("quantiles must lie in [0, 1].")
+        self._validate_quantiles(quantiles)
         probabilities = sizes / (sizes + means)
         projected = np.ceil(nbinom.ppf(quantiles, sizes, probabilities))
         projected = np.where(quantiles == 0.0, 0.0, projected)
         if np.all(np.isfinite(projected)):
             projected = projected.astype(int)
-        return projected[:, 0] if squeeze and projected.ndim == 2 else projected
+        return self._finalize(projected, squeeze)
 
 
 class GammaPredictiveDistribution(_ParametricDistribution):
@@ -124,11 +134,10 @@ class GammaPredictiveDistribution(_ParametricDistribution):
     def cdf(self, values):
         values, means, shapes, squeeze = self._align(values, "values")
         result = gamma.cdf(values, a=shapes, scale=means / shapes)
-        return result[:, 0] if squeeze and result.ndim == 2 else result
+        return self._finalize(result, squeeze)
 
     def ppf(self, quantiles):
         quantiles, means, shapes, squeeze = self._align(quantiles, "quantiles")
-        if np.any((quantiles < 0.0) | (quantiles > 1.0)):
-            raise ValueError("quantiles must lie in [0, 1].")
+        self._validate_quantiles(quantiles)
         result = gamma.ppf(quantiles, a=shapes, scale=means / shapes)
-        return result[:, 0] if squeeze and result.ndim == 2 else result
+        return self._finalize(result, squeeze)

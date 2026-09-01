@@ -49,25 +49,44 @@ class PanelPredictiveForecast:
         """
         return self._frame.copy()
 
+    def _output_frame(self) -> pd.DataFrame:
+        """Return an isolated frame for distribution outputs."""
+        return self._frame.copy()
+
     @staticmethod
     def _label(value) -> str:
+        """Format a numeric value for use in a column name."""
         return np.format_float_positional(float(value), precision=12, trim="-")
 
-    def _apply(self, method: str, inputs, prefix: str) -> pd.DataFrame:
+    def _single_output_column(self, inputs, prefix, label_transform) -> str:
+        """Name a one-dimensional distribution result."""
+        if inputs.ndim != 0:
+            return f"{self.model}-{prefix}"
+        label = inputs if label_transform is None else label_transform(inputs)
+        return f"{self.model}-{prefix}-{self._label(label)}"
+
+    def _matrix_output_labels(self, inputs, n_columns, label_transform):
+        """Resolve labels for the columns of a matrix result."""
+        labels = np.ravel(inputs)
+        if labels.size != n_columns:
+            return np.arange(n_columns)
+        return labels if label_transform is None else label_transform(labels)
+
+    def _apply(
+        self, method: str, inputs, prefix: str, label_transform=None
+    ) -> pd.DataFrame:
+        """Evaluate a distribution method and append its output to the panel."""
         inputs_array = np.asarray(inputs)
         values = np.asarray(getattr(self._distribution, method)(inputs))
-        result = self.to_frame()
+        result = self._output_frame()
         if values.ndim == 1:
-            if inputs_array.ndim == 0:
-                column = f"{self.model}-{prefix}-{self._label(inputs_array)}"
-            else:
-                column = f"{self.model}-{prefix}"
+            column = self._single_output_column(inputs_array, prefix, label_transform)
             result[column] = values
             return result
 
-        labels = np.ravel(inputs_array)
-        if labels.size != values.shape[1]:
-            labels = np.arange(values.shape[1])
+        labels = self._matrix_output_labels(
+            inputs_array, values.shape[1], label_transform
+        )
         for index, label in enumerate(labels):
             result[f"{self.model}-{prefix}-{self._label(label)}"] = values[:, index]
         return result
@@ -132,24 +151,7 @@ class PanelPredictiveForecast:
         ``forecast.ppf([0.1, 0.5, 0.9])`` returns the 10th percentile, median,
         and 90th percentile for every forecast row.
         """
-        quantiles_array = np.asarray(quantiles, dtype=float)
-        result = self._apply("ppf", quantiles, "q")
-        if quantiles_array.ndim == 0:
-            return result.rename(
-                columns={
-                    f"{self.model}-q-{self._label(quantiles_array)}":
-                    f"{self.model}-q-{self._label(100.0 * quantiles_array)}"
-                }
-            )
-        if quantiles_array.ndim == 1:
-            return result.rename(
-                columns={
-                    f"{self.model}-q-{self._label(q)}":
-                    f"{self.model}-q-{self._label(100.0 * q)}"
-                    for q in quantiles_array
-                }
-            )
-        return result
+        return self._apply("ppf", quantiles, "q", label_transform=lambda q: 100.0 * q)
 
     def interval(self, coverage: float = 0.95) -> pd.DataFrame:
         """Return an equal-tailed central predictive interval.
@@ -176,7 +178,7 @@ class PanelPredictiveForecast:
         """
         bounds = np.asarray(self._distribution.interval(coverage))
         level = self._label(100.0 * float(coverage))
-        result = self.to_frame()
+        result = self._output_frame()
         result[f"{self.model}-lo-{level}"] = bounds[:, 0]
         result[f"{self.model}-hi-{level}"] = bounds[:, 1]
         return result

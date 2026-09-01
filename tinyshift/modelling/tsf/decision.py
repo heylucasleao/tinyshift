@@ -30,12 +30,13 @@ class NewsvendorOptimizer:
     ) -> pd.DataFrame:
         """Return the critical-fractile decision for every forecast row."""
         cls._validate_alignment(forecast_df, distribution)
-        costs = cls._align_cost_frame(forecast_df, cost_df, id_col, time_col)
-        cu = cls._extract_cost_array(
-            costs, underage_cost, id_col, time_col, len(forecast_df)
-        )
-        co = cls._extract_cost_array(
-            costs, overage_cost, id_col, time_col, len(forecast_df)
+        cu, co = cls._resolve_costs(
+            forecast_df,
+            underage_cost,
+            overage_cost,
+            cost_df,
+            id_col,
+            time_col,
         )
         ratio = cls._critical_ratio(cu, co)
 
@@ -64,23 +65,54 @@ class NewsvendorOptimizer:
                 "marginal_benefit is available only for discrete distributions."
             )
         unit_values = cls._resolve_units(max_k, units)
+        cu, co = cls._resolve_costs(
+            forecast_df,
+            underage_cost,
+            overage_cost,
+            cost_df,
+            id_col,
+            time_col,
+        )
+        values = cls._marginal_values(distribution, unit_values, cu, co)
+        return cls._append_marginal_columns(forecast_df, unit_values, values)
+
+    @classmethod
+    def _resolve_costs(
+        cls,
+        forecast_df: pd.DataFrame,
+        underage_cost: CostInput,
+        overage_cost: CostInput,
+        cost_df: pd.DataFrame | None,
+        id_col: str,
+        time_col: str,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Resolve underage and overage costs on the forecast row grid."""
         costs = cls._align_cost_frame(forecast_df, cost_df, id_col, time_col)
-        cu = cls._extract_cost_array(
-            costs, underage_cost, id_col, time_col, len(forecast_df)
-        )
-        co = cls._extract_cost_array(
-            costs, overage_cost, id_col, time_col, len(forecast_df)
-        )
-        thresholds = np.broadcast_to(
-            unit_values - 1, (len(forecast_df), len(unit_values))
-        )
-        probability_below = np.asarray(distribution.cdf(thresholds))
-        values = (
-            cu[:, None] * (1.0 - probability_below) - co[:, None] * probability_below
+        n_rows = len(forecast_df)
+        return (
+            cls._extract_cost_array(costs, underage_cost, id_col, time_col, n_rows),
+            cls._extract_cost_array(costs, overage_cost, id_col, time_col, n_rows),
         )
 
+    @staticmethod
+    def _marginal_values(
+        distribution: DiscretePredictiveDistribution,
+        units: np.ndarray,
+        cu: np.ndarray,
+        co: np.ndarray,
+    ) -> np.ndarray:
+        """Calculate the net benefit of each additional unit."""
+        thresholds = np.broadcast_to(units - 1, (len(distribution), len(units)))
+        probability_below = np.asarray(distribution.cdf(thresholds))
+        return cu[:, None] * (1.0 - probability_below) - co[:, None] * probability_below
+
+    @staticmethod
+    def _append_marginal_columns(
+        forecast_df: pd.DataFrame, units: np.ndarray, values: np.ndarray
+    ) -> pd.DataFrame:
+        """Append marginal-benefit columns to a forecast copy."""
         result = forecast_df.copy()
-        for index, unit in enumerate(unit_values):
+        for index, unit in enumerate(units):
             result[f"MB(k={unit})"] = values[:, index]
         return result
 
@@ -176,18 +208,9 @@ class NewsvendorOptimizer:
                 raise ValueError(f"Cost column not found: {cost!r}.")
             values = frame[cost].to_numpy(dtype=float)
         elif isinstance(cost, Mapping):
-            if not cost:
-                raise ValueError("Cost dictionary cannot be empty.")
-            first_key = next(iter(cost))
-            if isinstance(first_key, tuple):
-                keys = zip(frame[id_col].to_numpy(), frame[time_col].to_numpy())
-                values = np.fromiter(
-                    (cost.get(key, np.nan) for key in keys),
-                    dtype=float,
-                    count=n_rows,
-                )
-            else:
-                values = frame[id_col].map(cost).to_numpy(dtype=float)
+            values = NewsvendorOptimizer._mapping_costs(
+                frame, cost, id_col, time_col, n_rows
+            )
         else:
             raise TypeError(
                 "Cost input must be a column name, numeric scalar, or mapping."
@@ -195,3 +218,21 @@ class NewsvendorOptimizer:
         if values.shape != (n_rows,):
             raise ValueError("Cost inputs must have one row per forecast row.")
         return values
+
+    @staticmethod
+    def _mapping_costs(
+        frame: pd.DataFrame,
+        cost: Mapping,
+        id_col: str,
+        time_col: str,
+        n_rows: int,
+    ) -> np.ndarray:
+        """Resolve series or series-time cost mappings."""
+        if not cost:
+            raise ValueError("Cost dictionary cannot be empty.")
+        if not isinstance(next(iter(cost)), tuple):
+            return frame[id_col].map(cost).to_numpy(dtype=float)
+        keys = zip(frame[id_col].to_numpy(), frame[time_col].to_numpy())
+        return np.fromiter(
+            (cost.get(key, np.nan) for key in keys), dtype=float, count=n_rows
+        )
