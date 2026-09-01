@@ -217,7 +217,6 @@ model.fit(
     target_col="y",
     h=14,
     n_windows=5,
-    gamma=0.01,
 )
 
 # Evaluate held-out or rolling-origin first-stage predictions

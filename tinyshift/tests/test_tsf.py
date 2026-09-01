@@ -299,17 +299,6 @@ def test_resolve_dispersion_uses_global_for_unknown_uncalibrated_horizon():
     assert calibration.resolve("unseen", 2) == 8.0
 
 
-def test_compute_time_decay_weights(sample_train_data):
-    wrapper = TwoStageForecasterWrapper(fcst=None)
-    weights = wrapper._compute_time_decay_weights(
-        sample_train_data, time_col="ds", gamma=0.5
-    )
-    assert isinstance(weights, np.ndarray)
-    assert len(weights) == len(sample_train_data)
-    assert np.all(weights > 0)
-    assert np.all(weights <= 1.0)
-
-
 def test_compute_critical_quantile():
     cu = np.array([10.0, 5.0, 0.0])
     co = np.array([2.0, 5.0, 0.0])
@@ -1272,15 +1261,6 @@ def test_wrapper_supports_custom_column_names():
     result = _predict(wrapper, h=2, quantiles=(0.5,))
 
     assert {"series", "date", "q_50"}.issubset(result.columns)
-
-
-@pytest.mark.parametrize("gamma", [-1.0, np.nan, np.inf])
-def test_fit_rejects_invalid_time_decay_gamma(sample_train_data, gamma):
-    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
-    wrapper = TwoStageForecasterWrapper(fcst)
-
-    with pytest.raises(ValueError, match="gamma"):
-        wrapper.fit(sample_train_data, gamma=gamma)
 
 
 def test_fit_reports_empty_cross_validation(sample_train_data, monkeypatch):

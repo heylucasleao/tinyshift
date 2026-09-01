@@ -109,10 +109,6 @@ point means + aligned dispersions
 panel-aligned predictive forecast
 ```
 
-When `gamma` is provided, exponentially decaying sample weights prioritize
-recent observations during cross-validation and the final point-forecaster fit.
-The decay scale is annual and therefore independent of the panel frequency.
-
 ## Distribution semantics
 
 Every predictive-distribution row corresponds positionally to one row returned

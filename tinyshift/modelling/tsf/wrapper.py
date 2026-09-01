@@ -22,7 +22,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     """Two-stage probabilistic forecasting wrapper using MLForecast.
 
     This model decouples conditional expectation from dispersion:
-        1. Employs `MLForecast` regressors (e.g., LightGBM) with optional exponential time-decay weighting to forecast conditional expectation (lambda_t).
+        1. Employs an `MLForecast` regressor to forecast the conditional
+           expectation (lambda_t).
         2. Calibrates global, per-series, and per-horizon distribution parameters
            with empirical-Bayes shrinkage on temporal cross-validation predictions.
         3. Exposes a row-aligned predictive distribution and projects arbitrary
@@ -41,7 +42,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     - **Decoupled Two-Stage Design**: Separates point expectation forecasting from variance and tail modeling.
     - **Out-of-Sample Dispersion Calibration**: Shrinks family-specific
       series×horizon parameters toward per-series and global estimates.
-    - **Time-Decay Recency Weighting**: Supports exponential time-decay scaling (`gamma`) to prioritize recent historical dynamics during base model fitting.
     - **Distribution-first API**: Returns row-aligned predictive distributions
       that can be consumed by forecasting and decision utilities.
 
@@ -68,9 +68,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         h: int,
         n_windows: int,
         step_size: int | None,
-        gamma: float | None,
     ) -> None:
-        """Validate temporal calibration and recency-weighting parameters."""
+        """Validate temporal calibration parameters."""
         if (
             isinstance(h, (bool, np.bool_))
             or not isinstance(h, (int, np.integer))
@@ -89,10 +88,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             or step_size < 1
         ):
             raise ValueError("step_size must be None or a positive integer.")
-        if gamma is not None and (
-            isinstance(gamma, (bool, np.bool_)) or not np.isfinite(gamma) or gamma < 0
-        ):
-            raise ValueError("gamma must be a finite, non-negative number.")
 
     @staticmethod
     def _validate_training_target(
@@ -225,42 +220,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             raise RuntimeError(f"Dispersion optimization failed: {res.message}")
         return float(res.x)
 
-    def _compute_time_decay_weights(
-        self,
-        df: pd.DataFrame,
-        time_col: str = "ds",
-        gamma: float = 0.5,
-    ) -> np.ndarray:
-        """Generates an exponential time-decay weight vector based on date recency.
-
-        The gamma scale is ANNUAL (e.g., gamma=0.5 reduces weight to ~60% after 1 year),
-        regardless of series frequency (daily, weekly, monthly, or hourly).
-
-        Parameters
-        ----------
-        df : pandas.DataFrame
-            DataFrame containing the timestamp column.
-        time_col : str, default='ds'
-            Column name containing timestamps.
-        gamma : float, default=0.5
-            Exponential decay parameter for recency weighting (scale is annual).
-            Applies larger weights to recent historical samples.
-
-        Returns
-        -------
-        numpy.ndarray
-            Vector of calculated exponential decay weights.
-        """
-
-        dates = pd.to_datetime(df[time_col])
-        max_date = dates.max()
-
-        seconds_in_year = 365.25 * 86400.0
-        delta_years = (max_date - dates).dt.total_seconds() / seconds_in_year
-
-        weights = np.exp(-gamma * delta_years).values
-        return weights
-
     def _calibrate_dispersion_cv(
         self,
         df: pd.DataFrame,
@@ -268,11 +227,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         n_windows: int,
         step_size: int | None,
         refit: bool | int,
-        fit_kwargs: dict[str, Any],
     ) -> Calibration:
         """Generate OOF predictions and fit hierarchical dispersion."""
         cv_df = self._dispersion_cv_predictions(
-            df, h, n_windows, step_size, refit, fit_kwargs
+            df, h, n_windows, step_size, refit
         )
         calibrator = Calibrator(
             family=self.distribution_family_,
@@ -289,7 +247,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         n_windows: int,
         step_size: int | None,
         refit: bool | int,
-        fit_kwargs: dict[str, Any],
     ) -> pd.DataFrame:
         """Generate OOF means and identify their forecast horizons."""
         cv_df = self.fcst.cross_validation(
@@ -302,7 +259,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             time_col=self.time_col,
             target_col=self.target_col,
             static_features=self.static_features,
-            **fit_kwargs,
         )
 
         if cv_df.empty:
@@ -316,7 +272,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     def _fit_base_forecaster(
         self,
         df: pd.DataFrame,
-        fit_kwargs: dict[str, Any],
     ) -> list[str]:
         """Fit the main estimator and extract the generated temporal features.
 
@@ -331,7 +286,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             time_col=self.time_col,
             target_col=self.target_col,
             static_features=self.static_features,
-            **fit_kwargs,
         )
 
         return self.fcst.ts.features_order_
@@ -360,20 +314,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             )
         return family
 
-    def _prepare_fit_data(
-        self, df_train: pd.DataFrame, gamma: float | None
-    ) -> tuple[pd.DataFrame, dict[str, Any]]:
-        """Copy training data and attach optional recency weights."""
-        df_fit = df_train.copy()
-        fit_kwargs = {}
-        if gamma is None:
-            return df_fit, fit_kwargs
-        df_fit["_temp_weight"] = self._compute_time_decay_weights(
-            df_fit, time_col=self.time_col, gamma=gamma
-        )
-        fit_kwargs["weight_col"] = "_temp_weight"
-        return df_fit, fit_kwargs
-
     @requires_extra("series")
     def fit(
         self,
@@ -382,7 +322,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         time_col: str = "ds",
         target_col: str = "y",
         static_features: list | None = None,
-        gamma: float | None = None,
         h: int = 14,
         n_windows: int = 10,
         step_size: int | None = None,
@@ -407,8 +346,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             Column name for target demand variable.
         static_features : list of str, optional
             List of static feature names to preserve.
-        gamma : float, optional
-            Exponential decay rate for recency weighting during fitting.
 
         Returns
         -------
@@ -417,7 +354,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         """
 
         self._set_fit_state(id_col, time_col, target_col, static_features)
-        self._validate_fit_parameters(h, n_windows, step_size, gamma)
+        self._validate_fit_parameters(h, n_windows, step_size)
         self.distribution_family_ = self._resolve_distribution_family()
         numeric_label = "numeric counts" if self.distribution is None else "numeric"
         self._validate_training_target(
@@ -426,11 +363,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             self.distribution_family_,
             numeric_label,
         )
-        df_fit, fit_kwargs = self._prepare_fit_data(df_train, gamma)
         self.calibration_ = self._calibrate_dispersion_cv(
-            df_fit, h, n_windows, step_size, refit, fit_kwargs
+            df_train, h, n_windows, step_size, refit
         )
-        self.exog_cols_ = self._fit_base_forecaster(df_fit, fit_kwargs)
+        self.exog_cols_ = self._fit_base_forecaster(df_train)
 
         return self
 
