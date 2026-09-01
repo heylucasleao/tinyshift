@@ -563,28 +563,35 @@ tinyshift/
 │   ├── categorical.py           # CatDrift for categorical features
 │   └── continuous.py            # ConDrift for numerical features
 ├── examples/                    # Jupyter notebook examples
-│   ├── decomp_mstl_ml.ipynb     # MSTL decomposition and ML examples
+│   ├── dmstl.ipynb              # Multi-seasonal forecasting example
+│   ├── dtl.ipynb                # Trend/residual forecasting example
 │   ├── drift.ipynb              # Drift detection examples
 │   ├── outlier.ipynb            # Outlier detection demos
+│   ├── power_analysis.ipynb     # Statistical power analysis
 │   ├── series.ipynb             # Time series analysis
+│   ├── solver.ipynb             # Probabilistic decision example
 │   ├── transaction_analyzer.ipynb  # Transaction analysis examples
-│   └── ts_diagnostics.ipynb     # Time series diagnostics
+│   ├── ts_diagnostics.ipynb     # Time series diagnostics
+│   └── tsf.ipynb                # Probabilistic forecasting example
 ├── features/                    # Feature-engineering helpers
-│   ├── README.md
-│   └── time_series.py
+│   ├── README.md                # Package documentation
+│   ├── __init__.py              # Package exports
+│   └── time_series.py           # Time-series feature functions
 ├── forecasting/                 # Forecasting estimators and distributions
-│   ├── README.md
-│   ├── dtl/                     # LOWESS trend/residual forecasting
+│   ├── README.md                # Package documentation
+│   ├── __init__.py              # Public forecasting API
 │   ├── dmstl/                   # Multi-seasonal decomposed forecasting
-│   └── probabilistic/           # Calibrated predictive distributions
+│   ├── dtl/                     # LOWESS trend/residual forecasting
+│   └── probabilistic/           # Distributions, calibration and decisions
 ├── modelling/                   # Backward-compatible import facade
-│   ├── README.md
-│   └── __init__.py
+│   ├── README.md                # Migration and legacy documentation
+│   └── __init__.py              # Aliases for historical import paths
 ├── preprocessing/               # Sklearn-compatible data transforms
-│   ├── README.md
-│   ├── multicollinearity.py
-│   ├── residualizer.py
-│   └── scaler.py
+│   ├── README.md                # Package documentation
+│   ├── __init__.py              # Package exports
+│   ├── multicollinearity.py     # VIF-based feature filtering
+│   ├── residualizer.py          # Correlated-feature residualization
+│   └── scaler.py                # Robust Gaussian scaling
 ├── outlier/                     # Outlier detection algorithms
 │   ├── README.md                # Module documentation
 │   ├── __init__.py              # Package exports
