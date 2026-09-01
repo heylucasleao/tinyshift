@@ -317,7 +317,7 @@ horizontal_stability = mach(y_hat)
 
 # Calculate period-over-period forecast variability (instability)
 # `df` should contain `unique_id`, `ds` (ordered dates) and model forecast columns.
-# Example: `variability(df, models=["model_a", "model_b"], ds_col="ds")`
+# Example: `forecast_instability(df, models=["model_a", "model_b"], ds_col="ds")`
 instability_scores = forecast_instability(df, models=["model_a"], ds_col="ds")
 
 # Scaled stability metrics
@@ -355,31 +355,27 @@ distributions.
 
 ```python
 from tinyshift.preprocessing import FeatureResidualizer, filter_features_by_vif
-from tinyshift.stats import bootstrap_bca_interval
-
-#Residualizer
-residualizer = FeatureResidualizer(corrcoef=0.70)
-residualizer.fit(X_train[preprocess_columns])
-
-#Train
-X_train = X_train.astype({x: float for x in preprocess_columns})
-X_train.loc[:, preprocess_columns] = residualizer.transform(X_train[preprocess_columns])
+from tinyshift.stats import BootstrapBCA
 
 # Detect multicollinearity
-mask = filter_features_by_vif(X_train, threshold=5, verbose=True)
-X_train.columns = X_train.columns[mask]
-X_test.columns = X_test.columns[mask]
+mask = filter_features_by_vif(X_train, threshold=5.0)
+selected_columns = X_train.columns[mask]
+X_train = X_train.loc[:, selected_columns].astype(float)
+X_test = X_test.loc[:, selected_columns].astype(float)
 
-#Test
-X_test = X_test.astype({x: float for x in preprocess_columns})
-X_test.loc[:, preprocess_columns] = residualizer.transform(X_test[preprocess_columns])
+# Residualize correlated features using the training fit
+residualizer = FeatureResidualizer(corrcoef=0.70)
+X_train.loc[:, :] = residualizer.fit_transform(X_train)
+
+X_test.loc[:, :] = residualizer.transform(X_test)
 
 # Bootstrap confidence intervals
-confidence_interval = bootstrap_bca_interval(
-    data, 
-    statistic=np.mean, 
-    alpha=0.05, 
-    n_bootstrap=1000
+confidence_interval = BootstrapBCA.compute_interval(
+    data,
+    confidence_level=0.95,
+    statistic=np.mean,
+    n_resamples=1000,
+    random_state=42,
 )
 ```
 
