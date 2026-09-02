@@ -4,13 +4,16 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 from scipy.optimize import minimize_scalar
-from scipy.stats import gamma, nbinom
+from scipy.special import gammaln
+from scipy.stats import gamma, lognorm, nbinom, weibull_min
 from sklearn.base import BaseEstimator
 
 from .distribution import (
     GammaPredictiveDistribution,
+    LogNormalPredictiveDistribution,
     NegativeBinomialPredictiveDistribution,
     PredictiveDistribution,
+    WeibullPredictiveDistribution,
 )
 
 
@@ -168,3 +171,73 @@ class GammaFamily(DistributionFamily):
 
     def distribution(self, conditional_means, dispersions):
         return GammaPredictiveDistribution(conditional_means, dispersions)
+
+
+class LogNormalFamily(DistributionFamily):
+    """Lognormal family for strictly positive continuous targets."""
+
+    parameter_column = "sigma_dispersion"
+
+    def __init__(self, min_sigma: float = 1e-3, max_sigma: float = 5.0):
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
+
+    @property
+    def dispersion_bounds(self) -> tuple[float, float]:
+        return (self.min_sigma, self.max_sigma)
+
+    def validate_target(self, y: np.ndarray) -> None:
+        if not np.all(np.isfinite(y)):
+            raise ValueError("Target values must be finite.")
+        if np.any(y <= 0.0):
+            raise ValueError(
+                "Target values must be strictly positive for the Lognormal model."
+            )
+
+    def negative_log_likelihood(self, dispersion, y, conditional_means) -> float:
+        if not np.isfinite(dispersion) or dispersion <= 0:
+            return 1e10
+        conditional_means = np.maximum(conditional_means, 1e-6)
+        scale = conditional_means * np.exp(-0.5 * dispersion**2)
+        log_density = lognorm.logpdf(y, s=dispersion, scale=scale)
+        if not np.all(np.isfinite(log_density)):
+            return 1e10
+        return float(-np.sum(log_density))
+
+    def distribution(self, conditional_means, dispersions):
+        return LogNormalPredictiveDistribution(conditional_means, dispersions)
+
+
+class WeibullFamily(DistributionFamily):
+    """Weibull family for strictly positive continuous targets."""
+
+    parameter_column = "weibull_shape"
+
+    def __init__(self, min_shape: float = 0.1, max_shape: float = 100.0):
+        self.min_shape = min_shape
+        self.max_shape = max_shape
+
+    @property
+    def dispersion_bounds(self) -> tuple[float, float]:
+        return (self.min_shape, self.max_shape)
+
+    def validate_target(self, y: np.ndarray) -> None:
+        if not np.all(np.isfinite(y)):
+            raise ValueError("Target values must be finite.")
+        if np.any(y <= 0.0):
+            raise ValueError(
+                "Target values must be strictly positive for the Weibull model."
+            )
+
+    def negative_log_likelihood(self, dispersion, y, conditional_means) -> float:
+        if not np.isfinite(dispersion) or dispersion <= 0:
+            return 1e10
+        conditional_means = np.maximum(conditional_means, 1e-6)
+        scale = conditional_means / np.exp(gammaln(1.0 + 1.0 / dispersion))
+        log_density = weibull_min.logpdf(y, c=dispersion, scale=scale)
+        if not np.all(np.isfinite(log_density)):
+            return 1e10
+        return float(-np.sum(log_density))
+
+    def distribution(self, conditional_means, dispersions):
+        return WeibullPredictiveDistribution(conditional_means, dispersions)

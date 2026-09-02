@@ -13,6 +13,8 @@ evaluation helpers, and Newsvendor decisions exported from
 | `TwoStageForecasterWrapper` | Fit the point forecaster and calibrate hierarchical dispersion |
 | `NegativeBinomialFamily` | Model non-negative integer counts |
 | `GammaFamily` | Model strictly positive continuous targets |
+| `LogNormalFamily` | Model positive continuous targets with a heavy right tail |
+| `WeibullFamily` | Model positive continuous targets with flexible shape |
 | `PanelPredictiveForecast` | Expose CDFs, quantiles and central intervals on the forecast panel |
 | `DiscretePanelPredictiveForecast` | Additionally expose probability masses and integer quantiles |
 | `NewsvendorOptimizer` | Convert predictive distributions into inventory decisions |
@@ -47,8 +49,9 @@ masses = forecast.pmf([0, 1, 2])
 ```
 
 The default family is Negative Binomial, so the returned forecast is discrete.
-Pass `distribution=GammaFamily()` for a continuous positive target; Gamma
-forecasts intentionally do not expose `pmf`.
+Pass `distribution=GammaFamily()`, `LogNormalFamily()`, or `WeibullFamily()`
+for a continuous positive target. Continuous forecasts intentionally do not
+expose `pmf`.
 
 ## Internal modules
 
@@ -142,6 +145,10 @@ parameter, with `p = size / (size + lambda_t)`. This gives
 distributions use the conditional mean and calibrated shape, with
 `scale = lambda_t / shape`, `E[Y] = lambda_t`, and
 `Var[Y] = lambda_t² / shape`.
+Lognormal distributions calibrate `sigma` and use
+`scale = lambda_t * exp(-sigma² / 2)`. Weibull distributions calibrate shape
+and use `scale = lambda_t / Gamma(1 + 1 / shape)`. Both parameterizations
+preserve `E[Y] = lambda_t`.
 Both expose `cdf`, `ppf`, and `interval` internally. Discrete
 distributions additionally define `pmf(k) = cdf(k) - cdf(k - 1)`.
 

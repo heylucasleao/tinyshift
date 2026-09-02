@@ -29,11 +29,14 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
     Default Negative Binomial Applicability
     ---------------------------------------
-    - **Intermittent Demand (Zero-Inflated)**: Highly recommended. Handles frequent zeros efficiently.
+    - **Intermittent Demand**: Supports frequent zeros when a standard
+      overdispersed count model is adequate, but does not model structural
+      zero inflation explicitly.
     - **Erratic / Lumpy Demand**: Highly recommended. Captures high variance (variance > mean) via 'r'.
     - **Smooth / Low-Variance Demand**: Supported. As r increases, it naturally converges to a Poisson regime.
     - **Continuous / High-Volume Demand**: Select an explicit continuous family,
-      such as :class:`GammaFamily`, instead of the default.
+      such as :class:`GammaFamily`, :class:`LogNormalFamily`, or
+      :class:`WeibullFamily`, instead of the default.
 
     Architecture & Key Features
     ---------------------------
@@ -49,7 +52,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         An un-fitted or fitted MLForecast instance configured with a single underlying regressor.
     distribution : DistributionFamily, optional
         Conditional distribution family for the second stage. Defaults to
-        :class:`NegativeBinomialFamily`; use :class:`GammaFamily` for strictly
+        :class:`NegativeBinomialFamily`; use :class:`GammaFamily`,
+        :class:`LogNormalFamily`, or :class:`WeibullFamily` for strictly
         positive continuous targets.
     """
 
@@ -149,9 +153,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         refit: bool | int,
     ) -> Calibration:
         """Generate OOF predictions and fit hierarchical dispersion."""
-        cv_df = self._dispersion_cv_predictions(
-            df, h, n_windows, step_size, refit
-        )
+        cv_df = self._dispersion_cv_predictions(df, h, n_windows, step_size, refit)
         calibrator = Calibrator(
             family=self.distribution_family_,
             id_col=self.id_col,

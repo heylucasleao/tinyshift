@@ -2,24 +2,28 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
-import tinyshift.forecasting.probabilistic.family as tsf_family_module
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
-from tinyshift.forecasting.probabilistic.calibration import Calibration, Calibrator
-from tinyshift.forecasting.probabilistic.distribution import (
-    GammaPredictiveDistribution,
-    NegativeBinomialPredictiveDistribution,
-)
-from tinyshift.forecasting.probabilistic.family import DistributionFamily
 
+import tinyshift.forecasting.probabilistic.family as tsf_family_module
 from tinyshift.forecasting import (
     FirstStageForecasterEvaluator,
     GammaFamily,
+    LogNormalFamily,
     NegativeBinomialFamily,
     NewsvendorOptimizer,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
+    WeibullFamily,
 )
+from tinyshift.forecasting.probabilistic.calibration import Calibration, Calibrator
+from tinyshift.forecasting.probabilistic.distribution import (
+    GammaPredictiveDistribution,
+    LogNormalPredictiveDistribution,
+    NegativeBinomialPredictiveDistribution,
+    WeibullPredictiveDistribution,
+)
+from tinyshift.forecasting.probabilistic.family import DistributionFamily
 
 
 def _predict(wrapper, h, X_df=None, quantiles=(0.05, 0.50, 0.95)):
@@ -401,6 +405,53 @@ def test_gamma_family_rejects_zero_and_has_no_pmf(sample_continuous_data):
     wrapper.fit(sample_continuous_data)
     with pytest.raises(TypeError, match="only for discrete"):
         _pmf(wrapper, h=1)
+
+
+@pytest.mark.parametrize(
+    ("family", "distribution_type", "parameter_column"),
+    [
+        (LogNormalFamily(), LogNormalPredictiveDistribution, "sigma_dispersion"),
+        (WeibullFamily(), WeibullPredictiveDistribution, "weibull_shape"),
+    ],
+)
+def test_positive_continuous_families_integrate_with_wrapper(
+    sample_continuous_data, family, distribution_type, parameter_column
+):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1, 7])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst, distribution=family).fit(
+        sample_continuous_data, h=7, n_windows=3
+    )
+
+    forecast = wrapper.predict_distribution(h=2)
+    frame = forecast.to_frame()
+
+    assert parameter_column in frame
+    assert isinstance(forecast.distribution, distribution_type)
+    assert forecast.distribution.interval(0.9).shape == (len(frame), 2)
+
+
+@pytest.mark.parametrize("family", [LogNormalFamily(), WeibullFamily()])
+def test_positive_continuous_families_reject_zero(sample_continuous_data, family):
+    invalid = sample_continuous_data.copy()
+    invalid.loc[invalid.index[0], "y"] = 0.0
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(ValueError, match="strictly positive"):
+        TwoStageForecasterWrapper(fcst=fcst, distribution=family).fit(invalid)
+
+
+@pytest.mark.parametrize(
+    "distribution",
+    [
+        LogNormalPredictiveDistribution([2.0, 4.0], [0.5, 1.0]),
+        WeibullPredictiveDistribution([2.0, 4.0], [1.5, 3.0]),
+    ],
+)
+def test_positive_continuous_distributions_preserve_configured_means(distribution):
+    quantiles = np.linspace(0.0005, 0.9995, 10000)
+    samples = distribution.ppf(quantiles)
+
+    assert np.mean(samples, axis=1) == pytest.approx(distribution.means, rel=2e-2)
 
 
 def test_optimize_uses_continuous_distribution_ppf(sample_continuous_data):
