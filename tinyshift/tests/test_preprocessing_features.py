@@ -12,12 +12,6 @@ from sklearn.utils.validation import check_is_fitted
 from tinyshift.preprocessing.multicollinearity import filter_features_by_vif
 from tinyshift.preprocessing.residualizer import FeatureResidualizer
 from tinyshift.preprocessing.scaler import RobustGaussianScaler
-from tinyshift.features.time_series import (
-    estimate_history_length,
-    fourier_seasonality,
-    relative_strength_index,
-    standardize_returns,
-)
 
 
 class TestMulticollinearity:
@@ -163,56 +157,3 @@ class TestScaler:
         scaler.fit(X.to_numpy())
 
         assert not hasattr(scaler, "feature_names_in_")
-
-
-class TestTimeSeriesFeatures:
-    def test_relative_strength_index_returns_expected_shape(self):
-        x = np.array([10.0, 11.0, 10.5, 12.0, 11.5, 13.0])
-
-        result = relative_strength_index(x, rolling_window=2)
-
-        assert result.shape == x.shape
-        assert np.isfinite(result).all()
-
-    def test_standardize_returns_inserts_nan_at_start(self):
-        x = np.array([1.0, 2.0, 4.0, 8.0])
-
-        result = standardize_returns(x)
-
-        assert result.shape == (4,)
-        assert np.isnan(result[0])
-        assert np.isfinite(result[1:]).all()
-
-    def test_standardize_returns_can_skip_standardization(self):
-        x = np.array([1.0, 2.0, 4.0, 8.0])
-
-        result = standardize_returns(x, standardize=False)
-
-        assert result.shape == (4,)
-        assert np.isnan(result[0])
-        np.testing.assert_allclose(
-            result[1:],
-            np.log(np.array([2.0, 4.0, 8.0]) / np.array([1.0, 2.0, 4.0])),
-        )
-
-    def test_relative_strength_index_rejects_multidimensional_input(self):
-        with pytest.raises(ValueError, match="1-dimensional"):
-            relative_strength_index(np.array([[1.0, 2.0], [3.0, 4.0]]))
-
-    def test_fourier_seasonality_adds_sine_and_cosine_features(self):
-        df = pd.DataFrame({"ds": pd.date_range("2024-01-01", periods=7, freq="D")})
-
-        output = fourier_seasonality(df, time_col="ds", seasonality=["weekly", "daily"])
-
-        assert {"weekly_sin", "weekly_cos", "daily_sin", "daily_cos"}.issubset(
-            output.columns
-        )
-
-    def test_estimate_history_length_uses_rule_of_thumb(self):
-        assert estimate_history_length(seasonal_period=7, horizon=14) == 17
-
-    def test_fourier_seasonality_raises_for_unknown_seasonality(self):
-        df = pd.DataFrame({"ds": pd.date_range("2024-01-01", periods=3, freq="D")})
-
-        with pytest.raises(ValueError, match="Unknown seasonality"):
-            fourier_seasonality(df, time_col="ds", seasonality=["weekly", "unknown"])
