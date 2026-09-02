@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
@@ -23,10 +23,11 @@ class BootstrapBCA:
         n = len(data)
         jackknife = np.array([statistic(np.delete(data, i)) for i in range(n)])
         jackknife_mean = jackknife.mean()
-        jackknife_deviation = jackknife - jackknife_mean
+        jackknife_deviation = jackknife_mean - jackknife
         skew = jackknife_deviation**3
         variance = jackknife_deviation**2
-        acceleration = np.sum(skew) / (6.0 * (np.sum(variance) ** (3 / 2)))
+        denominator = 6.0 * (np.sum(variance) ** 1.5)
+        acceleration = 0.0 if denominator == 0 else np.sum(skew) / denominator
         return acceleration
 
     def _bootstrap_statistics(
@@ -63,7 +64,23 @@ class BootstrapBCA:
         - tuple: A tuple containing the lower and upper bounds of the BCa confidence interval.
         """
         instance = cls(random_state=random_state)
-        data = np.asarray(data)
+        data = np.asarray(data, dtype=np.float64)
+        if data.ndim != 1 or data.size < 2:
+            raise ValueError(
+                "data must be a one-dimensional array with at least two values"
+            )
+        if not np.isfinite(data).all():
+            raise ValueError("data must contain only finite values")
+        if not callable(statistic):
+            raise TypeError("statistic must be callable")
+        if not 0 < confidence_level < 1:
+            raise ValueError("confidence_level must be between 0 and 1")
+        if (
+            isinstance(n_resamples, (bool, np.bool_))
+            or not isinstance(n_resamples, (int, np.integer))
+            or n_resamples < 2
+        ):
+            raise ValueError("n_resamples must be an integer >= 2")
 
         # Bootstrap resampling
         sample_statistics = instance._bootstrap_statistics(data, statistic, n_resamples)
@@ -73,7 +90,10 @@ class BootstrapBCA:
 
         # Bias correction
         observed_stat = statistic(data)
+        if not np.isfinite(sample_statistics).all() or not np.isfinite(observed_stat):
+            raise ValueError("statistic must return finite scalar values")
         bias = np.mean(sample_statistics < observed_stat)
+        bias = np.clip(bias, 0.5 / n_resamples, 1 - 0.5 / n_resamples)
         z0 = norm.ppf(bias)
 
         # Adjusting percentiles

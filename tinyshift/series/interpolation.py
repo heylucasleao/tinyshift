@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
@@ -58,13 +58,17 @@ def vi(
     if not (0 <= w_s <= 1):
         raise ValueError("Weight w_s must be between 0 and 1.")
 
-    y_hat = np.asarray(y_hat)
+    y_hat = np.asarray(y_hat, dtype=np.float64)
+    anchor = np.asarray(anchor, dtype=np.float64)
 
     if y_hat.ndim != 1:
         raise ValueError("The original forecast series must be one-dimensional.")
 
     if anchor.ndim != 1:
-        raise ValueError("The original forecast series must be one-dimensional.")
+        raise ValueError("The anchor forecast series must be one-dimensional.")
+
+    if y_hat.shape != anchor.shape:
+        raise ValueError("y_hat and anchor must have the same shape.")
 
     fc = (w_s * anchor) + ((1 - w_s) * y_hat)
     return fc
@@ -115,7 +119,7 @@ def hpi(
     if not (0 <= w_s <= 1):
         raise ValueError("Weight w_s must be between 0 and 1.")
 
-    y_hat = np.asarray(y_hat)
+    y_hat = np.asarray(y_hat, dtype=np.float64)
 
     if y_hat.ndim != 1:
         raise ValueError("The original forecast series must be one-dimensional.")
@@ -171,7 +175,7 @@ def hfi(
     if not (0 <= w_s <= 1):
         raise ValueError("Weight w_s must be between 0 and 1.")
 
-    y_hat = np.asarray(y_hat)
+    y_hat = np.asarray(y_hat, dtype=np.float64)
 
     if y_hat.ndim != 1:
         raise ValueError("The original forecast series must be one-dimensional.")

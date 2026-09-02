@@ -1,14 +1,15 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 from sklearn.utils import check_array
-from collections import Counter
+
 from .base import BaseHistogramModel
-from typing import Union
 
 
 class HBOS(BaseHistogramModel):
@@ -45,7 +46,7 @@ class HBOS(BaseHistogramModel):
     def fit(
         self,
         X: np.ndarray,
-        nbins: Union[int, str] = "auto",
+        nbins: int | str = "auto",
     ) -> "HBOS":
         """
         Fit the HBOS model according to the given training data.
@@ -82,14 +83,14 @@ class HBOS(BaseHistogramModel):
         - For continuous features, the data is discretized into bins and densities are computed.
         - The decision scores are computed and stored in `self.decision_scores_`.
         """
+        self._reset_fit_state()
         self._extract_feature_info(X)
 
         X = check_array(X)
-        _, self.n_features = X.shape
+        _, self.n_features_in_ = X.shape
+        self.n_features = self.n_features_in_
 
         for i in range(self.n_features):
-            nbins = self._check_bins(X[:, i], nbins)
-
             if isinstance(self.feature_dtypes[i], pd.CategoricalDtype):
                 value_counts = Counter(X[:, i])
                 total_values = sum(value_counts.values())
@@ -98,14 +99,20 @@ class HBOS(BaseHistogramModel):
                     for value, count in value_counts.items()
                 }
                 self.feature_distributions.append(relative_frequencies)
-            elif self.dynamic_bins:
-                percentiles = np.percentile(X[:, i], q=np.linspace(0, 100, nbins + 1))
-                bin_edges = np.unique(percentiles)
-                densities, _ = np.histogram(X[:, i], bins=bin_edges, density=True)
-                self.feature_distributions.append([densities, bin_edges])
             else:
-                densities, bin_edges = np.histogram(X[:, i], bins=nbins, density=True)
-                self.feature_distributions.append([densities, bin_edges])
+                feature_nbins = self._check_bins(X[:, i], nbins)
+                if self.dynamic_bins:
+                    bin_edges = np.unique(
+                        np.percentile(X[:, i], q=np.linspace(0, 100, feature_nbins + 1))
+                    )
+                    if bin_edges.size < 2:
+                        value = float(bin_edges[0])
+                        bin_edges = np.array([value - 0.5, value + 0.5])
+                else:
+                    bin_edges = np.histogram_bin_edges(X[:, i], bins=feature_nbins)
+                counts, _ = np.histogram(X[:, i], bins=bin_edges)
+                probabilities = (counts + 1.0) / (counts.sum() + counts.size)
+                self.feature_distributions.append([probabilities, bin_edges])
 
         self.decision_scores_ = self.decision_function(X)
         return self
@@ -118,6 +125,7 @@ class HBOS(BaseHistogramModel):
         self._check_columns(X)
 
         X = check_array(X)
+        self._validate_n_features(X)
         outlier_scores = np.zeros(shape=(X.shape[0], self.n_features))
 
         for i in range(self.n_features):

@@ -166,12 +166,14 @@ outlier_labels = spad.predict(X_test)
 # HBOS (Histogram-Based Outlier Score)
 hbos = HBOS(dynamic_bins=True)
 hbos.fit(X_train, nbins="fd")
-scores = hbos.predict(X_test)
+scores = hbos.decision_function(X_test)
+outlier_labels = hbos.predict(X_test)
 
 # PCA-based outlier detection
-pca_detector = PCAReconstructionError()
+pca_detector = PCAReconstructionError(n_components=None)
 pca_detector.fit(X_train)
-pca_scores = pca_detector.predict(X_test)
+pca_scores = pca_detector.decision_function(X_test)
+pca_outlier_labels = pca_detector.predict(X_test)
 ```
 ### 4. Binary Classification Model Evaluation
 
@@ -315,7 +317,7 @@ horizontal_stability = mach(y_hat)
 
 # Calculate period-over-period forecast variability (instability)
 # `df` should contain `unique_id`, `ds` (ordered dates) and model forecast columns.
-# Example: `variability(df, models=["model_a", "model_b"], ds_col="ds")`
+# Example: `forecast_instability(df, models=["model_a", "model_b"], ds_col="ds")`
 instability_scores = forecast_instability(df, models=["model_a"], ds_col="ds")
 
 # Scaled stability metrics
@@ -345,40 +347,34 @@ These responsibilities are exposed through focused packages:
 - `TwoStageForecasterWrapper` — configurable Negative Binomial or Gamma predictive distributions and inventory optimization on top of `MLForecast`
 - `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
 
-Use `tinyshift.preprocessing` for data transforms, `tinyshift.features` for
-feature engineering and `tinyshift.forecasting` for estimators and predictive
-distributions. `tinyshift.modelling` remains available as a compatibility
-facade for existing code.
+Use `tinyshift.preprocessing` for data transforms and `tinyshift.forecasting` for estimators and predictive
+distributions.
 
 ### 9. Advanced Modeling Tools
 
 ```python
 from tinyshift.preprocessing import FeatureResidualizer, filter_features_by_vif
-from tinyshift.stats import bootstrap_bca_interval
-
-#Residualizer
-residualizer = FeatureResidualizer()
-residualizer.fit(X_train[preprocess_columns], corrcoef=0.70)
-
-#Train
-X_train = X_train.astype({x: float for x in preprocess_columns})
-X_train.loc[:, preprocess_columns] = residualizer.transform(X_train[preprocess_columns])
+from tinyshift.stats import BootstrapBCA
 
 # Detect multicollinearity
-mask = filter_features_by_vif(X_train, threshold=5, verbose=True)
-X_train.columns = X_train.columns[mask]
-X_test.columns = X_test.columns[mask]
+mask = filter_features_by_vif(X_train, threshold=5.0)
+selected_columns = X_train.columns[mask]
+X_train = X_train.loc[:, selected_columns].astype(float)
+X_test = X_test.loc[:, selected_columns].astype(float)
 
-#Test
-X_test = X_test.astype({x: float for x in preprocess_columns})
-X_test.loc[:, preprocess_columns] = residualizer.transform(X_test[preprocess_columns])
+# Residualize correlated features using the training fit
+residualizer = FeatureResidualizer(corrcoef=0.70)
+X_train.loc[:, :] = residualizer.fit_transform(X_train)
+
+X_test.loc[:, :] = residualizer.transform(X_test)
 
 # Bootstrap confidence intervals
-confidence_interval = bootstrap_bca_interval(
-    data, 
-    statistic=np.mean, 
-    alpha=0.05, 
-    n_bootstrap=1000
+confidence_interval = BootstrapBCA.compute_interval(
+    data,
+    confidence_level=0.95,
+    statistic=np.mean,
+    n_resamples=1000,
+    random_state=42,
 )
 ```
 
@@ -444,7 +440,8 @@ print(preds.head())
 
 `TwoStageForecasterWrapper` separates the point forecast from uncertainty
 calibration. An `MLForecast` model estimates the conditional mean (`lambda_t`),
-while temporal cross-validation fits a per-series distribution parameter. The
+while temporal cross-validation calibrates global, horizon, series, and
+series-by-horizon distribution parameters with hierarchical shrinkage. The
 default Negative Binomial family supports discrete demand and inventory
 decisions; `GammaFamily` supports strictly positive continuous targets.
 
@@ -475,35 +472,36 @@ model.fit(
     n_windows=5,
 )
 
-# Forecast once and derive all probabilistic views from the distribution
-forecast, distribution = model.predict_distribution(h=14)
-forecast["q_50"] = distribution.ppf(0.50)
-forecast["q_95"] = distribution.ppf(0.95)
+# Forecast once and derive all probabilistic views from the same object
+forecast = model.predict_distribution(h=14)
+forecast_df = forecast.to_frame()
+quantiles = forecast.ppf([0.50, 0.95])
+distribution = forecast.distribution
 
 # Newsvendor-optimal inventory using shortage and holding costs
 stock_plan = NewsvendorOptimizer.optimize(
-    forecast, distribution, underage_cost=10.0, overage_cost=2.0
+    forecast_df, distribution, underage_cost=10.0, overage_cost=2.0
 )
 
-# Exact probabilities P(Y=k), including the remaining upper tail
-probabilities = distribution.pmf(range(11))
+# Exact probabilities from P(Y=0) through P(Y=10)
+probabilities = forecast.pmf(range(11))
 
 # Expected value of stocking each additional discrete inventory unit
 marginal_value = NewsvendorOptimizer.marginal_benefit(
-    forecast,
+    forecast_df,
     distribution,
     underage_cost=10.0,
     overage_cost=2.0,
     max_k=10,
 )
 
-probability_below_five = distribution.cdf(5)
-median = distribution.ppf(0.50)
+probability_below_five = forecast.cdf(5)
+median = forecast.ppf(0.50)
 
 # Cost columns may be supplied without exogenous forecast features.
 costs = pd.DataFrame({"cu": [10.0] * len(forecast), "co": [2.0] * len(forecast)})
 stock_plan = NewsvendorOptimizer.optimize(
-    forecast,
+    forecast_df,
     distribution,
     underage_cost="cu",
     overage_cost="co",
@@ -583,9 +581,6 @@ tinyshift/
 │   ├── dmstl/                   # Multi-seasonal decomposed forecasting
 │   ├── dtl/                     # LOWESS trend/residual forecasting
 │   └── probabilistic/           # Distributions, calibration and decisions
-├── modelling/                   # Backward-compatible import facade
-│   ├── README.md                # Migration and legacy documentation
-│   └── __init__.py              # Aliases for historical import paths
 ├── preprocessing/               # Sklearn-compatible data transforms
 │   ├── README.md                # Package documentation
 │   ├── __init__.py              # Package exports

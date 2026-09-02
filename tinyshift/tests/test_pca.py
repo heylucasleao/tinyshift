@@ -4,8 +4,9 @@
 
 
 import numpy as np
-from tinyshift.outlier.pca import PCAReconstructionError
 import pytest
+
+from tinyshift.outlier.pca import PCAReconstructionError
 
 
 class TestPCAReconstructionError:
@@ -15,7 +16,7 @@ class TestPCAReconstructionError:
     def test_fit_sets_attributes(self):
         X = np.array([[1, 2], [3, 4], [5, 6]])
         self.model.fit(X)
-        assert hasattr(self.model, "PCA")
+        assert hasattr(self.model, "pca_")
         assert hasattr(self.model, "decision_scores_")
 
     def test_score_output(self):
@@ -40,3 +41,25 @@ class TestPCAReconstructionError:
 
         with pytest.raises(ValueError, match="fitted"):
             self.model.decision_function(X)
+
+    def test_n_components_is_an_estimator_parameter(self):
+        model = PCAReconstructionError(n_components=1)
+        assert model.get_params()["n_components"] == 1
+        model.fit(np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]))
+        assert model.pca_.n_components == 1
+
+    def test_univariate_default_is_rejected(self):
+        with pytest.raises(ValueError, match="at least two features"):
+            self.model.fit(np.array([[0.0], [1.0], [2.0]]))
+
+    @pytest.mark.parametrize("n_components", [0, 2, -1, 1.5, True])
+    def test_invalid_n_components_is_rejected(self, n_components):
+        model = PCAReconstructionError(n_components=n_components)
+        with pytest.raises(ValueError, match="n_components"):
+            model.fit(np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]))
+
+    @pytest.mark.parametrize("quantile", [-0.1, 1.1, np.nan])
+    def test_predict_rejects_invalid_quantile(self, quantile):
+        self.model.fit(np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]]))
+        with pytest.raises(ValueError, match="quantile"):
+            self.model.predict(np.array([[1.0, 1.0]]), quantile=quantile)

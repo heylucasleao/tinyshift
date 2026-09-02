@@ -1,10 +1,55 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
 import numpy as np
 from typing import Union
+
+
+def _validate_seasonality(seasonality: int) -> None:
+    if (
+        isinstance(seasonality, (bool, np.bool_))
+        or not isinstance(seasonality, (int, np.integer))
+        or seasonality <= 0
+    ):
+        raise ValueError("Seasonality must be a positive integer.")
+
+
+def _seasonal_scale(
+    y_train: np.ndarray,
+    seasonality: int,
+    *,
+    squared: bool,
+    exclude_last: bool,
+) -> tuple[float, int]:
+    """Return the sum and count of seasonal training differences."""
+    stop = len(y_train) - int(exclude_last)
+    if stop <= seasonality:
+        return 0.0, 0
+
+    differences = y_train[seasonality:stop] - y_train[: stop - seasonality]
+    values = np.square(differences) if squared else np.abs(differences)
+    return float(np.sum(values)), len(values)
+
+
+def _scaled_change(
+    numerator: float,
+    n_changes: int,
+    scale_sum: float,
+    n_scale_terms: int,
+    *,
+    root: bool,
+) -> float:
+    if n_scale_terms == 0:
+        return np.inf
+
+    denominator = (n_changes / n_scale_terms) * scale_sum
+    if denominator == 0:
+        return 0.0 if numerator == 0 else np.inf
+
+    ratio = numerator / denominator
+    return float(np.sqrt(ratio) if root else ratio)
 
 
 def macv(
@@ -160,8 +205,7 @@ def mascv(
         raise ValueError("y_hat and y_hat_minus_1 must have the same length.")
     if y_train.ndim != 1 or y_hat.ndim != 1 or y_hat_minus_1.ndim != 1:
         raise ValueError("All inputs must be 1D arrays (vectors).")
-    if seasonality <= 0:
-        raise ValueError("Seasonality must be > 0.")
+    _validate_seasonality(seasonality)
 
     h = len(y_hat)
     n_overlap = h - 1
@@ -169,35 +213,11 @@ def mascv(
     if n_overlap <= 0:
         return np.nan
 
-    def scaling_factor(y_train: np.ndarray, seasonality: int) -> tuple[float, int]:
-        """
-        Calculate the vertical scaling factor using absolute differences.
-
-        Computes the sum of absolute differences between seasonal lags in the training data.
-        """
-
-        t_prime = len(y_train) - 1
-        if t_prime <= seasonality:
-            return 0.0, 0
-
-        y_current = y_train[seasonality:t_prime]
-        y_lagged = y_train[: t_prime - seasonality]
-        scaling_sum = np.sum(np.abs(y_current - y_lagged))
-        n_terms_in_sum = len(y_current)
-        return scaling_sum, n_terms_in_sum
-
     numerator = np.sum(np.abs(y_hat[:n_overlap] - y_hat_minus_1[1:h]))
-    scaling_sum, n_scale_terms = scaling_factor(y_train, seasonality)
-
-    if n_scale_terms == 0:
-        return np.inf
-    denominator_factor = n_overlap / n_scale_terms
-    denominator = denominator_factor * scaling_sum
-
-    if denominator == 0:
-        return 0.0 if numerator == 0 else np.inf
-
-    return numerator / denominator
+    scaling_sum, n_scale_terms = _seasonal_scale(
+        y_train, seasonality, squared=False, exclude_last=True
+    )
+    return _scaled_change(numerator, n_overlap, scaling_sum, n_scale_terms, root=False)
 
 
 def masch(y_train: np.ndarray, y_hat: np.ndarray, seasonality: int) -> float:
@@ -245,8 +265,7 @@ def masch(y_train: np.ndarray, y_hat: np.ndarray, seasonality: int) -> float:
 
     if y_train.ndim != 1 or y_hat.ndim != 1:
         raise ValueError("All inputs must be 1D arrays (vectors).")
-    if seasonality <= 0:
-        raise ValueError("Seasonality must be > 0.")
+    _validate_seasonality(seasonality)
 
     h = len(y_hat)
     n_differences = h - 1
@@ -254,35 +273,13 @@ def masch(y_train: np.ndarray, y_hat: np.ndarray, seasonality: int) -> float:
     if n_differences <= 0:
         return np.nan
 
-    def scaling_factor(y_train: np.ndarray, seasonality: int) -> tuple[float, int]:
-        """
-        Calculate the horizontal scaling factor using absolute differences.
-
-        Computes the sum of absolute differences between seasonal lags in the training data.
-        """
-        t = len(y_train)
-        if t <= seasonality:
-            return 0.0, 0
-
-        y_current = y_train[seasonality:t]
-        y_lagged = y_train[: t - seasonality]
-        scaling_sum = np.sum(np.abs(y_current - y_lagged))
-        n_terms_in_sum = len(y_current)
-        return scaling_sum, n_terms_in_sum
-
     numerator = np.sum(np.abs(y_hat[1:] - y_hat[:-1]))
-    scaling_sum, n_scale_terms = scaling_factor(y_train, seasonality)
-
-    if n_scale_terms == 0:
-        return np.inf
-
-    denominator_factor = n_differences / n_scale_terms
-    denominator = denominator_factor * scaling_sum
-
-    if denominator == 0:
-        return 0.0 if numerator == 0 else np.inf
-
-    return numerator / denominator
+    scaling_sum, n_scale_terms = _seasonal_scale(
+        y_train, seasonality, squared=False, exclude_last=False
+    )
+    return _scaled_change(
+        numerator, n_differences, scaling_sum, n_scale_terms, root=False
+    )
 
 
 def rmsscv(
@@ -336,10 +333,9 @@ def rmsscv(
 
     if y_hat.shape != y_hat_minus_1.shape:
         raise ValueError("y_hat and y_hat_minus_1 must have the same length.")
-    if y_train.ndim != 1 or y_hat.ndim != 1:
+    if y_train.ndim != 1 or y_hat.ndim != 1 or y_hat_minus_1.ndim != 1:
         raise ValueError("All inputs must be 1D arrays (vectors).")
-    if seasonality <= 0:
-        raise ValueError("Seasonality must be > 0.")
+    _validate_seasonality(seasonality)
 
     h = len(y_hat)
     n_overlap = h - 1
@@ -347,34 +343,13 @@ def rmsscv(
     if n_overlap <= 0:
         return np.nan
 
-    def scaling_factor(y_train: np.ndarray, seasonality: int) -> tuple[float, int]:
-        """
-        Calculate the vertical scaling factor using squared differences.
-
-        Computes the sum of squared differences between seasonal lags in the training data.
-        """
-        t_prime = len(y_train) - 1
-        if t_prime <= seasonality:
-            return 0.0, 0
-
-        y_current = y_train[seasonality:t_prime]
-        y_lagged = y_train[: t_prime - seasonality]
-        scaling_sum = np.sum(np.square(y_current - y_lagged))
-        n_terms_in_sum = len(y_current)
-        return scaling_sum, n_terms_in_sum
-
     diff_squared_sum_num = np.sum(np.square(y_hat[:n_overlap] - y_hat_minus_1[1:h]))
-    scaling_sum, n_scale_terms = scaling_factor(y_train, seasonality)
-
-    if n_scale_terms == 0:
-        return np.inf
-    denominator_factor = n_overlap / n_scale_terms
-    denominator = denominator_factor * scaling_sum
-
-    if denominator == 0:
-        return 0.0 if diff_squared_sum_num == 0 else np.inf
-
-    return np.sqrt(diff_squared_sum_num / denominator)
+    scaling_sum, n_scale_terms = _seasonal_scale(
+        y_train, seasonality, squared=True, exclude_last=True
+    )
+    return _scaled_change(
+        diff_squared_sum_num, n_overlap, scaling_sum, n_scale_terms, root=True
+    )
 
 
 def rmssch(y_train: np.ndarray, y_hat: np.ndarray, seasonality: int) -> float:
@@ -422,8 +397,7 @@ def rmssch(y_train: np.ndarray, y_hat: np.ndarray, seasonality: int) -> float:
 
     if y_train.ndim != 1 or y_hat.ndim != 1:
         raise ValueError("All inputs must be 1D arrays (vectors).")
-    if seasonality <= 0:
-        raise ValueError("Seasonality must be > 0.")
+    _validate_seasonality(seasonality)
 
     h = len(y_hat)
     n_differences = h - 1
@@ -433,31 +407,9 @@ def rmssch(y_train: np.ndarray, y_hat: np.ndarray, seasonality: int) -> float:
 
     diff_squared_sum_num = np.sum(np.square(y_hat[1:] - y_hat[:-1]))
 
-    def scaling_factor(y_train: np.ndarray, seasonality: int) -> tuple[float, int]:
-        """
-        Calculate the horizontal scaling factor using squared differences.
-
-        Computes the sum of squared differences between seasonal lags in the training data.
-        """
-        t = len(y_train)
-        if t <= seasonality:
-            return 0.0, 0
-
-        y_current = y_train[seasonality:t]
-        y_lagged = y_train[: t - seasonality]
-        scaling_sum = np.sum(np.square(y_current - y_lagged))
-        n_terms_in_sum = len(y_current)
-        return scaling_sum, n_terms_in_sum
-
-    scaling_sum, n_scale_terms = scaling_factor(y_train, seasonality)
-
-    if n_scale_terms == 0:
-        return np.inf
-
-    denominator_factor = n_differences / n_scale_terms
-    denominator = denominator_factor * scaling_sum
-
-    if denominator == 0:
-        return 0.0 if diff_squared_sum_num == 0 else np.inf
-
-    return np.sqrt(diff_squared_sum_num / denominator)
+    scaling_sum, n_scale_terms = _seasonal_scale(
+        y_train, seasonality, squared=True, exclude_last=False
+    )
+    return _scaled_change(
+        diff_squared_sum_num, n_differences, scaling_sum, n_scale_terms, root=True
+    )

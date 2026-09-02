@@ -1,12 +1,13 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
 import numpy as np
-from tinyshift.outlier.spad import SPAD
 import pandas as pd
 import pytest
+
+from tinyshift.outlier.spad import SPAD
 
 
 class TestSPAD:
@@ -22,6 +23,7 @@ class TestSPAD:
             ],
         ]
         self.spad.n_features = 2
+        self.spad.n_features_in_ = 2
 
     def test_compute_outlier_score_categorical(self):
         X = np.array([[1, 0], [2, 0], [3, 0], [4, 0]])
@@ -78,3 +80,22 @@ class TestSPAD:
 
         with pytest.raises(ValueError, match="columns"):
             spad.decision_function(pd.DataFrame({"x": [1, 2, 3], "y": [0.1, 0.2, 0.3]}))
+
+    def test_empty_bins_keep_probability_alignment(self):
+        X = np.array([[0.0], [0.0], [10.0], [10.0]])
+        spad = SPAD().fit(X, nbins=5, method=(0.0, 10.0))
+        occupied, empty = spad.decision_function(np.array([[0.0], [5.0]]))
+        assert empty > occupied
+        assert len(spad.feature_distributions[0][0]) == 5
+
+    def test_refit_replaces_learned_distributions(self):
+        spad = SPAD().fit(np.array([[0.0], [1.0], [2.0]]), nbins=2)
+        first_distribution = spad.feature_distributions[0]
+        spad.fit(np.array([[10.0], [11.0], [12.0]]), nbins=3)
+        assert len(spad.feature_distributions) == 1
+        assert spad.feature_distributions[0] is not first_distribution
+
+    def test_decision_function_rejects_wrong_feature_count(self):
+        spad = SPAD().fit(np.array([[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]]))
+        with pytest.raises(ValueError, match="was fitted with 2 features"):
+            spad.decision_function(np.array([[1.0]]))

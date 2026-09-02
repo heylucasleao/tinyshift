@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
@@ -38,10 +38,25 @@ def chebyshev_guaranteed_percentage(
     - If `upper` is None, the interval is unbounded on the right.
     """
 
-    X = np.asarray(X)
+    X = np.asarray(X, dtype=np.float64)
+    if X.ndim != 1 or X.size < 2:
+        raise ValueError("X must be a one-dimensional array with at least two values.")
+    if not np.isfinite(X).all():
+        raise ValueError("X must contain only finite values.")
+    if not isinstance(interval, (tuple, list, np.ndarray)) or len(interval) != 2:
+        raise ValueError("interval must contain exactly two bounds.")
+
+    lower, upper = interval
+    if lower is None and upper is None:
+        return 1.0
+    if lower is not None and upper is not None and lower > upper:
+        raise ValueError("The lower bound cannot exceed the upper bound.")
+
     mu = np.mean(X)
     std = np.std(X, ddof=1)
-    lower, upper = interval
+    if std == 0:
+        inside = (lower is None or lower <= mu) and (upper is None or mu <= upper)
+        return 1.0 if inside else 0.0
     k_values = []
     if lower is not None:
         k_lower = (mu - lower) / std
@@ -67,7 +82,7 @@ def rolling_window(
     X : array-like, shape (n_samples,)
         1D time series data (e.g., log-prices).
     window_size : int, optional (default=60)
-        Size of the rolling window (must be >= 3).
+        Size of the rolling window (must be >= 2).
     func : Callable
         Function to apply to each window. Must accept a 1D array as first argument.
     **kwargs
@@ -75,16 +90,24 @@ def rolling_window(
 
     Returns
     -------
-    result : ndarray, shape (n_samples - window_size + 1,)
-        Array of function values for each rolling window.
+    result : ndarray, shape (n_samples,)
+        Array of function values. Positions before the first complete window
+        repeat the result of that first window.
     """
-    if window_size < 2:
-        raise ValueError("window_size must be >= 2")
-
+    if (
+        isinstance(window_size, (bool, np.bool_))
+        or not isinstance(window_size, (int, np.integer))
+        or window_size < 2
+    ):
+        raise ValueError("window_size must be an integer >= 2")
     X = np.asarray(X, dtype=np.float64)
 
     if X.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
+    if window_size > len(X):
+        raise ValueError("window_size cannot be larger than the length of X")
+    if not callable(func):
+        raise TypeError("func must be callable")
 
     window_indices = [
         np.arange(i, i + window_size) for i in range(X.shape[0] - window_size + 1)
@@ -120,19 +143,27 @@ def expanding_window(
 
     Returns
     -------
-    result : ndarray, shape (n_samples - window_size + 1,)
-        Array of function values for each expanding window, starting from `window_size`.
+    result : ndarray, shape (n_samples,)
+        Array of function values. Positions before the first complete window
+        repeat the result of that first window.
     """
     X = np.asarray(X, dtype=np.float64)
 
     if X.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
 
-    if window_size < 1:
-        raise ValueError("window_size must be >= 1")
+    if (
+        isinstance(window_size, (bool, np.bool_))
+        or not isinstance(window_size, (int, np.integer))
+        or window_size < 1
+    ):
+        raise ValueError("window_size must be a positive integer")
 
     if window_size > len(X):
         raise ValueError("window_size cannot be larger than the length of X")
+
+    if not callable(func):
+        raise TypeError("func must be callable")
 
     result = np.array(
         [
@@ -144,7 +175,7 @@ def expanding_window(
     return np.concatenate(([result[0]] * (window_size - 1), result))
 
 
-def jacknife(
+def jackknife(
     X: Union[np.ndarray, List[float]],
     func: Callable = None,
     **kwargs,
@@ -168,10 +199,18 @@ def jacknife(
 
     if X.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
+    if X.size < 2:
+        raise ValueError("Input data must contain at least two values")
+    if not callable(func):
+        raise TypeError("func must be callable")
 
     result = np.array([func(np.delete(X, i), **kwargs) for i in range(X.shape[0])])
 
     return result
+
+
+# Backwards-compatible alias for the original misspelled public name.
+jacknife = jackknife
 
 
 def mad(x):
@@ -216,8 +255,17 @@ def generate_lag(
     """
     X = np.asarray(X, dtype=np.float64)
 
-    if X.ndim > 1:
+    if X.ndim != 1:
         raise ValueError("Input array must be one-dimensional.")
+
+    if (
+        isinstance(lag, (bool, np.bool_))
+        or not isinstance(lag, (int, np.integer))
+        or lag <= 0
+    ):
+        raise ValueError("lag must be a positive integer.")
+    if lag > len(X):
+        raise ValueError("lag cannot be larger than the length of X.")
 
     return np.concatenate((np.nan * np.ones(lag), (X[lag:] - X[:-lag])))
 
@@ -299,7 +347,10 @@ def remove_leading_zeros(group):
     pandas.DataFrame
         DataFrame with leading zeros removed, starting from the first non-zero value.
     """
-    first_non_zero_index = group["y"].ne(0).idxmax()
+    non_zero = group["y"].ne(0)
+    if not non_zero.any():
+        return group.iloc[0:0]
+    first_non_zero_index = non_zero.idxmax()
     return group.loc[first_non_zero_index:]
 
 
@@ -383,18 +434,27 @@ def assess_comparability(
     - 0.8: large effect
     """
 
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("Input data must be a pandas DataFrame.")
+    if isinstance(features, str):
+        features = [features]
+    if isinstance(treatment, str):
+        treatment = [treatment]
+
     if not all(feature in df.columns for feature in features):
         missing_features = [
             feature for feature in features if feature not in df.columns
         ]
         raise ValueError(f"Features not found in DataFrame columns: {missing_features}")
-    if not isinstance(df, pd.DataFrame):
-        raise ValueError("Input data must be a pandas DataFrame.")
+    if group_col not in df.columns:
+        raise ValueError(f"Group column not found in DataFrame: {group_col!r}")
 
-    if isinstance(features, str):
-        features = [features]
-    if isinstance(treatment, str):
-        treatment = [treatment]
+    available_groups = set(df[group_col].dropna().unique())
+    missing_groups = [
+        group for group in [control, *treatment] if group not in available_groups
+    ]
+    if missing_groups:
+        raise ValueError(f"Groups not found in DataFrame: {missing_groups}")
 
     results = []
 

@@ -3,9 +3,11 @@
 # Licensed under the MIT License
 
 
-import numpy as np
-import pandas as pd
+import pickle
+
 import pytest
+from sklearn.exceptions import NotFittedError
+from sklearn.utils.validation import check_is_fitted
 
 from tinyshift.association_mining.analyzer import TransactionAnalyzer
 from tinyshift.association_mining.encoder import TransactionEncoder
@@ -93,3 +95,71 @@ class TestTransactionAnalyzer:
 
         with pytest.raises(KeyError):
             analyzer.lift("apple", "milk")
+
+    def test_metrics_match_known_contingency_table(self):
+        analyzer = TransactionAnalyzer().fit(
+            [["a", "b"], ["a", "b"], ["a"], ["x"]]
+        )
+
+        assert analyzer.lift("a", "b") == pytest.approx(4 / 3)
+        assert analyzer.confidence("a", "b") == pytest.approx(2 / 3)
+        assert analyzer.kulczynski("a", "b") == pytest.approx(5 / 6)
+        assert analyzer.sorensen_dice("a", "b") == pytest.approx(0.8)
+        assert analyzer.zhang_metric("a", "b") == pytest.approx(1.0)
+        assert analyzer.hypergeom("a", "b") == pytest.approx(0.5)
+        assert analyzer.yules_q("a", "b") == pytest.approx(1.0)
+
+    def test_yules_q_handles_perfect_negative_and_degenerate_tables(self):
+        negative = TransactionAnalyzer().fit([["a"], ["b"], ["x"]])
+        degenerate = TransactionAnalyzer().fit([["a", "b"], ["a", "b"]])
+
+        assert negative.yules_q("a", "b") == pytest.approx(-1.0)
+        assert degenerate.yules_q("a", "b") == 0.0
+
+    def test_unfitted_state_is_visible_to_sklearn(self):
+        analyzer = TransactionAnalyzer()
+
+        with pytest.raises(NotFittedError):
+            check_is_fitted(analyzer)
+        analyzer.fit([["apple"]])
+        check_is_fitted(analyzer)
+
+    @pytest.mark.parametrize(
+        ("rows", "columns", "message"),
+        [
+            ([], ["beer"], "non-empty"),
+            (["apple"], [], "non-empty"),
+            (["apple", "apple"], ["beer"], "row_items"),
+            (["apple"], ["beer", "beer"], "column_items"),
+        ],
+    )
+    def test_correlation_matrix_rejects_invalid_axes(self, rows, columns, message):
+        analyzer = TransactionAnalyzer().fit([["apple", "beer"]])
+
+        with pytest.raises(ValueError, match=message):
+            analyzer.correlation_matrix(rows, columns)
+
+    def test_correlation_matrix_supports_non_string_items(self):
+        analyzer = TransactionAnalyzer().fit([[1, 2], [1], [2]])
+
+        result = analyzer.correlation_matrix([1], [2], metric="confidence")
+
+        assert result.loc[1, 2] == pytest.approx(0.5)
+
+    def test_save_and_load_require_an_analyzer(self, tmp_path):
+        path = tmp_path / "analyzer.pkl"
+        analyzer = TransactionAnalyzer().fit([["apple"], ["beer"]])
+        analyzer.save(path)
+
+        restored = TransactionAnalyzer.load(path)
+
+        assert restored.columns_ == analyzer.columns_
+
+        with (tmp_path / "wrong.pkl").open("wb") as stream:
+            pickle.dump({"not": "an analyzer"}, stream)
+        with pytest.raises(TypeError, match="TransactionAnalyzer"):
+            TransactionAnalyzer.load(tmp_path / "wrong.pkl")
+
+    def test_save_requires_fit(self, tmp_path):
+        with pytest.raises(NotFittedError):
+            TransactionAnalyzer().save(tmp_path / "analyzer.pkl")

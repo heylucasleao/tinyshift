@@ -1,18 +1,19 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
-from typing import Union
+from numbers import Integral, Real
+
 import numpy as np
-from sklearn.utils.validation import check_array
+import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.linear_model import LinearRegression
-import pandas as pd
+from sklearn.utils.validation import check_array
 
 
 def filter_features_by_vif(
-    X: Union[np.ndarray, "pd.DataFrame"],
+    X: np.ndarray | pd.DataFrame,
     threshold: float = 5,
     verbose: bool = False,
     n_jobs: int = -1,
@@ -29,7 +30,7 @@ def filter_features_by_vif(
         Input feature matrix of shape (n_samples, n_features).
         Should be numeric and not contain missing values.
     threshold : float, optional
-        VIF threshold for feature removal (default=15.0).
+        VIF threshold for feature removal (default=5.0).
         Typical interpretation:
         - 1: No correlation
         - 1-5: Moderate correlation
@@ -62,12 +63,19 @@ def filter_features_by_vif(
     >>> filtered_X = X[:, mask]
     """
 
-    if not isinstance(threshold, (int, float)) or threshold < 1:
-        raise ValueError("Threshold must be a numeric value >= 1.")
+    if (
+        isinstance(threshold, (bool, np.bool_))
+        or not isinstance(threshold, Real)
+        or not np.isfinite(threshold)
+        or threshold < 1
+    ):
+        raise ValueError("threshold must be a finite numeric value >= 1.")
     if not isinstance(verbose, bool):
         raise TypeError("Verbose must be a boolean value.")
-    if not isinstance(n_jobs, int):
-        raise TypeError("n_jobs must be an integer.")
+    if isinstance(n_jobs, (bool, np.bool_)) or not isinstance(n_jobs, Integral):
+        raise TypeError("n_jobs must be an integer other than zero.")
+    if n_jobs == 0:
+        raise ValueError("n_jobs must be an integer other than zero.")
 
     feature_names_in_ = getattr(X, "columns", None)
     X = check_array(X, ensure_2d=True, dtype=np.float64, copy=True)
@@ -84,6 +92,8 @@ def filter_features_by_vif(
     def _vif(X: np.ndarray, i: int) -> float:
         """Helper function to compute VIF for a single feature."""
         y = X[:, i]
+        if np.ptp(y) == 0:
+            return np.inf
         X = np.delete(X, i, axis=1)
         model = LinearRegression().fit(X, y)
         r_squared = model.score(X, y)

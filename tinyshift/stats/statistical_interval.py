@@ -1,13 +1,11 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
-from typing import Callable, Tuple, Union
 import numpy as np
 from scipy.stats import kurtosis, skew
-import numpy as np
-from typing import Union, Tuple
+from typing import Callable, Tuple, Union
 
 
 class StatisticalInterval:
@@ -29,6 +27,8 @@ class StatisticalInterval:
 
         if not callable(center) or not callable(spread):
             raise ValueError("center and spread must be callable functions")
+        if not np.isfinite(factor) or factor <= 0:
+            raise ValueError("factor must be a positive finite number")
 
         center_value = center(X)
         spread_value = spread(X)
@@ -44,7 +44,9 @@ class StatisticalInterval:
             q75, q25 = np.percentile(x, [75, 25])
             return q75 - q25
 
-        return StatisticalInterval.calculate_interval(X, np.median, iqr, factor=1.5)
+        q75, q25 = np.percentile(X, [75, 25])
+        spread = iqr(X)
+        return q25 - 1.5 * spread, q75 + 1.5 * spread
 
     @staticmethod
     def stddev_interval(X: np.ndarray) -> Tuple[float, float]:
@@ -62,6 +64,12 @@ class StatisticalInterval:
         X: np.ndarray, lower: float, upper: float
     ) -> Tuple[float, float]:
         """Calculates interval using quantiles."""
+        for name, value in (("lower", lower), ("upper", upper)):
+            if value is not None and not 0 <= value <= 1:
+                raise ValueError(f"{name} quantile must be between 0 and 1")
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError("lower quantile cannot exceed upper quantile")
+
         lower_bound = (
             np.quantile(X, lower, method="lower") if lower is not None else np.nan
         )
@@ -116,6 +124,10 @@ class StatisticalInterval:
             Tuple[float, float]: Lower and upper bounds.
         """
         X = np.asarray(X)
+        if X.ndim != 1 or X.size == 0:
+            raise ValueError("X must be a non-empty one-dimensional array")
+        if not np.issubdtype(X.dtype, np.number) or not np.isfinite(X).all():
+            raise ValueError("X must contain only finite numeric values")
 
         def _none_to_nan(value):
             return np.nan if value is None else value

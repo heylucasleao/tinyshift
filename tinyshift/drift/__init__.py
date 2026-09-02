@@ -2,5 +2,7 @@
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-from .continuous import *
-from .categorical import *
+from .categorical import CatDrift, chebyshev, psi
+from .continuous import ConDrift
+
+__all__ = ["CatDrift", "ConDrift", "chebyshev", "psi"]

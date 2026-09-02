@@ -32,7 +32,7 @@ drift_scores = detector.predict(analysis_df)
 - **`"chebyshev"`**: Maximum absolute difference between category probabilities
   - **Use case**: Robust to outlier categories, focuses on worst-case divergence
   - **Range**: [0, 1], where 1 = complete distribution change
-- **`"jensenshannon"`**: Jensen-Shannon divergence (symmetric, bounded)
+- **`"jensenshannon"`**: Jensen-Shannon distance (the square root of the divergence; symmetric and bounded)
   - **Use case**: Balanced sensitivity, probabilistically interpretable
   - **Range**: [0, 1], where 0 = identical distributions
 - **`"psi"`**: Population Stability Index (banking/credit risk standard)
@@ -72,7 +72,8 @@ drift_scores = detector.predict(analysis_df)
 - **`"ws"`**: Wasserstein distance (Earth Mover's Distance)
   - **Use case**: Captures shape, location, and scale changes
   - **Range**: [0, ∞], interpretable as "cost to transform distributions"
-  - **Advantages**: Robust to outliers, preserves metric properties
+  - **Advantages**: Preserves metric properties and compares empirical distributions directly
+  - **Caution**: Extreme values can materially increase the distance
 
 
 ---
@@ -83,12 +84,12 @@ Both detectors support automatic drift threshold determination:
 
 ```python
 # Automatic threshold methods
-detector = CatDrift(drift_limit="auto")      # Statistical interval estimation
-detector = CatDrift(drift_limit="mad")       # Median Absolute Deviation
-detector = CatDrift(drift_limit="stdev") 
+detector = CatDrift(freq="D", drift_limit="auto")   # Statistical interval estimation
+detector = CatDrift(freq="D", drift_limit="mad")    # Median Absolute Deviation
+detector = CatDrift(freq="D", drift_limit="stddev")
 
 # Manual threshold specification
-detector = CatDrift(drift_limit=(None, 0.95)) 
+detector = CatDrift(freq="D", drift_limit=(None, 0.95))
 ```
 
 **Threshold Methods:**
@@ -96,6 +97,17 @@ detector = CatDrift(drift_limit=(None, 0.95))
 - **`"mad"`**: Median Absolute Deviation (robust to outliers)
 - **`"stddev"`**: Standard deviation-based bounds (assumes normality)
 - **`(lower, upper)`**: Custom threshold tuple
+
+Thresholds are calibrated independently for each series. Both expanding and
+jackknife calibration require at least two reference periods per series. A
+period is classified as drift only when its metric is strictly greater than the
+upper threshold.
+
+Categorical scoring aligns the union of reference and current categories, so a
+previously unseen category contributes to the distance instead of being
+discarded. Prediction currently requires every series ID to have appeared in
+the reference data; unknown IDs raise a clear error rather than borrowing an
+unrelated threshold.
 
 ---
 
@@ -134,7 +146,7 @@ reference_df = pd.DataFrame({
 | **Interpretation** | Probability distribution shifts | Shape/location/scale changes |
 | **Sensitivity** | High (especially PSI) | Moderate, robust |
 | **Computational Cost** | Low (histogram-based) | Moderate (optimal transport) |
-| **Outlier Robustness** | Medium | High (Wasserstein) |
+| **Outlier Robustness** | Medium | Low to medium; extreme values affect Wasserstein distance |
 | **Best Use Cases** | Categorical features, fraud detection | Numerical features, sensor data |
 
 ---
@@ -146,7 +158,6 @@ reference_df = pd.DataFrame({
 | Metric | Symmetry | Bounded | Triangle Inequality | Interpretability |
 |--------|----------|---------|-------------------|------------------|
 | **Chebyshev** | ✅ | ✅ [0,1] | ❌ | Maximum single-category change |
-| **Jensen-Shannon** | ✅ | ✅ [0,1] | ✅ | Information-theoretic divergence |
+| **Jensen-Shannon** | ✅ | ✅ [0,1] | ✅ | Square root of an information-theoretic divergence |
 | **PSI** | ❌ | ❌ [0,∞) | ❌ | Banking industry standard |
 | **Wasserstein** | ✅ | ❌ [0,∞) | ✅ | Transportation cost |
-

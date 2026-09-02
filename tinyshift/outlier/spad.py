@@ -1,16 +1,18 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
+from collections import Counter
+
 import numpy as np
 import pandas as pd
-from sklearn.utils import check_array
-from collections import Counter
 from sklearn.decomposition import PCA
-from .base import BaseHistogramModel
-from typing import Union
+from sklearn.utils import check_array
+
 from tinyshift.stats import StatisticalInterval
+
+from .base import BaseHistogramModel
 
 
 class SPAD(BaseHistogramModel):
@@ -41,7 +43,7 @@ class SPAD(BaseHistogramModel):
 
     Notes
     -----
-    - Lower SPAD scores indicate more anomalous observations (log-probabilities)
+    - Higher SPAD scores indicate more anomalous observations (negative log-probabilities)
     - SPAD+ (plus=True) better detects multivariate anomalies by capturing feature correlations
     - Includes Laplace smoothing for probability estimation
     """
@@ -60,7 +62,7 @@ class SPAD(BaseHistogramModel):
     def fit(
         self,
         X: np.ndarray,
-        nbins: Union[int, str] = "auto",
+        nbins: int | str = "auto",
         random_state: int = 42,
         method="auto",
     ) -> "SPAD":
@@ -110,9 +112,11 @@ class SPAD(BaseHistogramModel):
         - For continuous features, discretizes into bins and estimates probabilities.
         - Computes and stores anomaly scores in `self.decision_scores_`.
         """
+        self._reset_fit_state()
         self._extract_feature_info(X)
 
         X = check_array(X)
+        self.n_features_in_ = X.shape[1]
 
         if self.plus:
             self.pca_model = PCA(random_state=random_state)
@@ -125,8 +129,6 @@ class SPAD(BaseHistogramModel):
         _, self.n_features = X.shape
 
         for i in range(self.n_features):
-            nbins = self._check_bins(X[:, i], nbins)
-
             if isinstance(self.feature_dtypes[i], pd.CategoricalDtype):
                 value_counts = Counter(X[:, i])
                 total_values = sum(value_counts.values())
@@ -136,17 +138,29 @@ class SPAD(BaseHistogramModel):
                 }
                 self.feature_distributions.append(relative_frequencies)
             else:
+                feature_nbins = self._check_bins(X[:, i], nbins)
                 lower_bound, upper_bound = StatisticalInterval.compute_interval(
                     X[:, i], method
                 )
-                bin_edges = np.linspace(lower_bound, upper_bound, nbins + 1)
-                digitized = np.digitize(X[:, i], bin_edges, right=True)
-                unique_bins, counts = np.unique(digitized, return_counts=True)
-                probabilities = (counts + 1) / (np.sum(counts) + len(unique_bins))
+                if not np.isfinite(lower_bound) or not np.isfinite(upper_bound):
+                    raise ValueError("Computed bin bounds must be finite.")
+                if lower_bound >= upper_bound:
+                    center = float(lower_bound)
+                    lower_bound, upper_bound = center - 0.5, center + 0.5
+                bin_edges = np.linspace(lower_bound, upper_bound, feature_nbins + 1)
+                counts, _ = np.histogram(X[:, i], bins=bin_edges)
+                probabilities = (counts + 1.0) / (counts.sum() + counts.size)
                 self.feature_distributions.append([probabilities, bin_edges])
 
-        self.decision_scores_ = self.decision_function(X)
+        self.decision_scores_ = self._score_array(X)
         return self
+
+    def _score_array(self, X: np.ndarray) -> np.ndarray:
+        """Score an already validated and optionally PCA-augmented array."""
+        outlier_scores = np.zeros(shape=(X.shape[0], self.n_features))
+        for i in range(self.n_features):
+            outlier_scores[:, i] = self._compute_outlier_score(X, i)
+        return np.sum(outlier_scores, axis=1).ravel()
 
     def decision_function(self, X: np.ndarray) -> np.ndarray:
         """
@@ -156,12 +170,9 @@ class SPAD(BaseHistogramModel):
         self._check_columns(X)
 
         X = check_array(X)
-        outlier_scores = np.zeros(shape=(X.shape[0], self.n_features))
+        self._validate_n_features(X)
 
-        if self.plus and X.shape[1] == self.n_features // 2:
+        if self.plus:
             X = np.concatenate((X, self.pca_model.transform(X)), axis=1)
 
-        for i in range(self.n_features):
-            outlier_scores[:, i] = self._compute_outlier_score(X, i)
-
-        return np.sum(outlier_scores, axis=1).ravel()
+        return self._score_array(X)
