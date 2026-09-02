@@ -86,8 +86,10 @@ class DistributionFamily(BaseEstimator, ABC):
         dispersion = self.fit_dispersion(y, conditional_means)
         log_dispersion = float(np.log(dispersion))
 
-        def objective(theta: float) -> float:
-            return self.negative_log_likelihood(np.exp(theta), y, conditional_means)
+        def objective(log_dispersion_value: float) -> float:
+            return self.negative_log_likelihood(
+                np.exp(log_dispersion_value), y, conditional_means
+            )
 
         curvature = (
             objective(log_dispersion + epsilon)

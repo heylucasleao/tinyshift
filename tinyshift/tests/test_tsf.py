@@ -199,26 +199,30 @@ def test_log_dispersion_fit_returns_finite_local_variance():
     y = np.array([0, 1, 2, 3, 5, 1, 0, 4])
     means = np.array([1.0, 1.2, 1.5, 2.0, 2.5, 1.8, 1.0, 3.0])
 
-    dispersion, theta, variance = family.fit_log_dispersion(y, means)
+    dispersion, log_dispersion, log_dispersion_estimation_variance = (
+        family.fit_log_dispersion(y, means)
+    )
 
-    assert dispersion == pytest.approx(np.exp(theta))
-    assert np.isfinite(variance)
-    assert variance > 0
+    assert dispersion == pytest.approx(np.exp(log_dispersion))
+    assert np.isfinite(log_dispersion_estimation_variance)
+    assert log_dispersion_estimation_variance > 0
 
 
 def test_zero_between_group_variance_collapses_to_parent():
     fitted = pd.DataFrame(
         {
-            "theta_raw": [0.0, 2.0],
-            "variance": [0.5, 0.5],
+            "log_dispersion_raw": [0.0, 2.0],
+            "log_dispersion_estimation_variance": [0.5, 0.5],
             "parent": [1.0, 1.0],
         }
     )
 
-    shrunk = Calibrator._shrink(fitted, tau2=0.0)
+    shrunk = Calibrator._shrink(
+        fitted, between_group_log_dispersion_variance=0.0
+    )
 
     assert np.allclose(shrunk["weight"], 0.0)
-    assert np.allclose(shrunk["theta"], fitted["parent"])
+    assert np.allclose(shrunk["log_dispersion"], fitted["parent"])
 
 
 def test_prediction_uses_horizon_dispersion_then_series_fallback():
@@ -232,7 +236,7 @@ def test_prediction_uses_horizon_dispersion_then_series_fallback():
             "series": {"A": 4.0},
             "series_horizon": {("A", 1): 2.0},
         },
-        tau2={},
+        between_group_variance={},
     )
     frame = pd.DataFrame({"unique_id": ["A", "A", "unseen"]})
 
@@ -249,7 +253,7 @@ def test_resolve_dispersion_uses_global_for_unknown_uncalibrated_horizon():
             "series": {"A": 4.0},
             "series_horizon": {},
         },
-        tau2={},
+        between_group_variance={},
     )
 
     assert calibration.resolve("A", 2) == 4.0

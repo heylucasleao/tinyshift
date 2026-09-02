@@ -11,10 +11,15 @@ from .family import DistributionFamily
 
 @dataclass
 class Calibration:
-    """Fitted dispersion layers and their fallback policy."""
+    """Fitted dispersion layers and their fallback policy.
+
+    ``between_group_variance`` stores the heterogeneity estimated for each
+    shrunk layer.  Its values are variances of log-dispersion, rather than
+    predictive variances of the calibrated distributions.
+    """
 
     dispersion: dict[str, Any]
-    tau2: dict[str, float]
+    between_group_variance: dict[str, float]
 
     def resolve(self, uid: Any, horizon: int) -> float:
         """Resolve one dispersion through the fitted fallback hierarchy.
@@ -69,14 +74,93 @@ class Calibrator:
         self.horizon_col = horizon_col
 
     def fit(self, cv_df: pd.DataFrame) -> Calibration:
-        """Fit and shrink every layer of the dispersion hierarchy."""
-        global_dispersion, global_theta = self._fit_global(cv_df)
-        global_horizon, tau2_global_horizon = self._fit_global_horizon(
-            cv_df, global_theta
+        """Estimate the dispersion hierarchy from out-of-fold forecasts.
+
+        ``cv_df`` is expected to contain one observed target and one predicted
+        conditional mean per cross-validation row.  The predictions should be
+        out-of-fold: using in-sample predictions would make the residual
+        variation too optimistic and, consequently, the predictive
+        distributions too narrow.  Each row must also identify its series and
+        forecast horizon through the columns configured in ``__init__``.
+
+        The fitting flow is:
+
+        1. Fit one **global** dispersion using every row.  Its logarithm is the
+           root (parent) of the hierarchy.
+        2. Fit a raw dispersion for each **horizon**, then shrink each log-fit
+           toward the global log-dispersion.
+        3. Fit a raw dispersion for each **series**, then shrink each log-fit
+           toward the same global log-dispersion.
+        4. Fit a raw dispersion for each **series x horizon** pair, then shrink
+           it toward that series' already-shrunk log-dispersion.
+
+        Shrinkage is performed on the log scale because dispersion parameters
+        must remain positive.  For a group with raw estimate
+        ``log_dispersion_raw``, estimation variance
+        ``log_dispersion_estimation_variance``, parent ``parent``, and
+        ``between_group_log_dispersion_variance``, the fitted value is::
+
+            weight = between_group_log_dispersion_variance / (
+                between_group_log_dispersion_variance
+                + log_dispersion_estimation_variance
+            )
+            log_dispersion = (weight * log_dispersion_raw
+                              + (1 - weight) * parent)
+            dispersion = exp(log_dispersion)
+
+        Thus, well-estimated groups retain more of their own value, while noisy
+        or unidentifiable groups fall back toward their parent.  If the layer
+        has fewer than two finite group fits, or its observed variation does
+        not exceed the estimated fitting noise,
+        ``between_group_log_dispersion_variance`` is zero and the whole layer
+        collapses to its parents.
+
+        Parameters
+        ----------
+        cv_df : pandas.DataFrame
+            Out-of-fold calibration rows.  It must contain ``id_col``,
+            ``target_col``, ``prediction_col``, and ``horizon_col``.  Target
+            values must satisfy the support of ``family`` and predicted means
+            must be finite.  Repeated rows for a group supply the observations
+            used by that group's maximum-likelihood dispersion fit.
+
+        Returns
+        -------
+        Calibration
+            Immutable-by-convention fitted state containing:
+
+            - ``dispersion['global']``: the unshrunk root estimate;
+            - ``dispersion['global_horizon']``: horizon estimates shrunk toward
+              the global estimate;
+            - ``dispersion['series']``: series estimates shrunk toward the
+              global estimate;
+            - ``dispersion['series_horizon']``: pair estimates shrunk toward
+              their corresponding series estimate;
+            - ``between_group_variance``: the estimated log-dispersion
+              variance between groups for each shrunk layer, useful for
+              inspecting how heterogeneous that layer was.
+
+            At prediction time, :meth:`Calibration.resolve` chooses the most
+            specific available estimate.  Known series use
+            series x horizon -> series -> global; unseen series use
+            global x horizon -> global.
+
+        Notes
+        -----
+        This method fits only the distribution's dispersion parameter.  The
+        conditional means in ``prediction_col`` are treated as fixed outputs
+        of the first-stage forecasting model; they are neither refitted nor
+        altered here.  The input frame is read but not mutated.
+        """
+        global_dispersion, global_log_dispersion = self._fit_global(cv_df)
+        global_horizon, global_horizon_between_group_variance = (
+            self._fit_global_horizon(cv_df, global_log_dispersion)
         )
-        series_fit, series, tau2_series = self._fit_series(cv_df, global_theta)
-        series_horizon, tau2_series_horizon = self._fit_series_horizon(
-            cv_df, series_fit
+        series_fit, series, series_between_group_variance = self._fit_series(
+            cv_df, global_log_dispersion
+        )
+        series_horizon, series_horizon_between_group_variance = (
+            self._fit_series_horizon(cv_df, series_fit)
         )
         return Calibration(
             dispersion={
@@ -85,43 +169,43 @@ class Calibrator:
                 "series": series,
                 "series_horizon": series_horizon,
             },
-            tau2={
-                "global_horizon": tau2_global_horizon,
-                "series": tau2_series,
-                "series_horizon": tau2_series_horizon,
+            between_group_variance={
+                "global_horizon": global_horizon_between_group_variance,
+                "series": series_between_group_variance,
+                "series_horizon": series_horizon_between_group_variance,
             },
         )
 
     def _fit_global(self, cv_df: pd.DataFrame) -> tuple[float, float]:
         """Fit the global fallback and return it with its logarithm."""
-        fitted, theta, _ = self.family.fit_log_dispersion(
+        fitted, log_dispersion, _ = self.family.fit_log_dispersion(
             cv_df[self.target_col].to_numpy(),
             cv_df[self.prediction_col].to_numpy(),
         )
-        return fitted, theta
+        return fitted, log_dispersion
 
     def _fit_global_horizon(
-        self, cv_df: pd.DataFrame, global_theta: float
+        self, cv_df: pd.DataFrame, global_log_dispersion: float
     ) -> tuple[dict[int, float], float]:
         """Shrink global-horizon dispersions toward the global fit."""
         fitted = self._fit_table(cv_df, [self.horizon_col])
-        fitted["parent"] = global_theta
-        fitted, tau2 = self._shrink_layer(fitted)
+        fitted["parent"] = global_log_dispersion
+        fitted, between_group_log_dispersion_variance = self._shrink_layer(fitted)
         values = {
             int(row[self.horizon_col]): row["dispersion"]
             for _, row in fitted.iterrows()
         }
-        return values, tau2
+        return values, between_group_log_dispersion_variance
 
     def _fit_series(
-        self, cv_df: pd.DataFrame, global_theta: float
+        self, cv_df: pd.DataFrame, global_log_dispersion: float
     ) -> tuple[pd.DataFrame, dict[Any, float], float]:
         """Shrink per-series dispersions toward the global fit."""
         fitted = self._fit_table(cv_df, [self.id_col])
-        fitted["parent"] = global_theta
-        fitted, tau2 = self._shrink_layer(fitted)
+        fitted["parent"] = global_log_dispersion
+        fitted, between_group_log_dispersion_variance = self._shrink_layer(fitted)
         values = dict(zip(fitted[self.id_col], fitted["dispersion"]))
-        return fitted, values, tau2
+        return fitted, values, between_group_log_dispersion_variance
 
     def _fit_series_horizon(
         self, cv_df: pd.DataFrame, series_fit: pd.DataFrame
@@ -129,14 +213,14 @@ class Calibrator:
         """Shrink series×horizon dispersions toward their series fits."""
         fitted = self._fit_table(cv_df, [self.id_col, self.horizon_col])
         fitted["parent"] = fitted[self.id_col].map(
-            series_fit.set_index(self.id_col)["theta"]
+            series_fit.set_index(self.id_col)["log_dispersion"]
         )
-        fitted, tau2 = self._shrink_layer(fitted)
+        fitted, between_group_log_dispersion_variance = self._shrink_layer(fitted)
         values = {
             (row[self.id_col], int(row[self.horizon_col])): row["dispersion"]
             for _, row in fitted.iterrows()
         }
-        return values, tau2
+        return values, between_group_log_dispersion_variance
 
     def _fit_table(
         self, cv_df: pd.DataFrame, group_columns: list[str]
@@ -145,41 +229,69 @@ class Calibrator:
         rows = []
         for keys, group in cv_df.groupby(group_columns, sort=False):
             keys = keys if isinstance(keys, tuple) else (keys,)
-            _, theta, variance = self.family.fit_log_dispersion(
-                group[self.target_col].to_numpy(),
-                group[self.prediction_col].to_numpy(),
+            _, log_dispersion, log_dispersion_estimation_variance = (
+                self.family.fit_log_dispersion(
+                    group[self.target_col].to_numpy(),
+                    group[self.prediction_col].to_numpy(),
+                )
             )
-            rows.append((*keys, theta, variance))
-        return pd.DataFrame(rows, columns=[*group_columns, "theta_raw", "variance"])
+            rows.append(
+                (*keys, log_dispersion, log_dispersion_estimation_variance)
+            )
+        return pd.DataFrame(
+            rows,
+            columns=[
+                *group_columns,
+                "log_dispersion_raw",
+                "log_dispersion_estimation_variance",
+            ],
+        )
 
     def _shrink_layer(self, fitted: pd.DataFrame) -> tuple[pd.DataFrame, float]:
         """Estimate between-group variance and shrink one fitted layer."""
-        tau2 = self._between_group_variance(fitted)
-        return self._shrink(fitted, tau2), tau2
+        between_group_log_dispersion_variance = (
+            self._between_group_log_dispersion_variance(fitted)
+        )
+        return (
+            self._shrink(fitted, between_group_log_dispersion_variance),
+            between_group_log_dispersion_variance,
+        )
 
     @staticmethod
-    def _between_group_variance(fitted: pd.DataFrame) -> float:
-        """Estimate genuine between-group variance after removing fit noise."""
-        finite = np.isfinite(fitted["theta_raw"]) & np.isfinite(fitted["variance"])
+    def _between_group_log_dispersion_variance(fitted: pd.DataFrame) -> float:
+        """Estimate log-dispersion variance between groups, net of fit noise."""
+        finite = np.isfinite(fitted["log_dispersion_raw"]) & np.isfinite(
+            fitted["log_dispersion_estimation_variance"]
+        )
         if finite.sum() < 2:
             return 0.0
-        residuals = fitted.loc[finite, "theta_raw"] - fitted.loc[finite, "parent"]
+        residuals = (
+            fitted.loc[finite, "log_dispersion_raw"] - fitted.loc[finite, "parent"]
+        )
         observed = residuals.var(ddof=1)
-        estimation_noise = fitted.loc[finite, "variance"].mean()
+        estimation_noise = fitted.loc[
+            finite, "log_dispersion_estimation_variance"
+        ].mean()
         return float(max(observed - estimation_noise, 0.0))
 
     @staticmethod
-    def _shrink(fitted: pd.DataFrame, tau2: float) -> pd.DataFrame:
+    def _shrink(
+        fitted: pd.DataFrame, between_group_log_dispersion_variance: float
+    ) -> pd.DataFrame:
         """Shrink log-dispersions toward their hierarchical parent."""
         fitted = fitted.copy()
         fitted["weight"] = np.where(
-            np.isfinite(fitted["variance"]),
-            tau2 / (tau2 + fitted["variance"]),
+            np.isfinite(fitted["log_dispersion_estimation_variance"]),
+            between_group_log_dispersion_variance
+            / (
+                between_group_log_dispersion_variance
+                + fitted["log_dispersion_estimation_variance"]
+            ),
             0.0,
         )
-        fitted["theta"] = (
-            fitted["weight"] * fitted["theta_raw"]
+        fitted["log_dispersion"] = (
+            fitted["weight"] * fitted["log_dispersion_raw"]
             + (1.0 - fitted["weight"]) * fitted["parent"]
         )
-        fitted["dispersion"] = np.exp(fitted["theta"])
+        fitted["dispersion"] = np.exp(fitted["log_dispersion"])
         return fitted

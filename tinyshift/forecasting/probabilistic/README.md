@@ -89,13 +89,14 @@ d_hat = argmin_d -sum_t log p(y_t | lambda_t, d)
 
 in which `lambda_t` is an out-of-fold conditional mean and `d` is the
 family-specific dispersion. The local variance is approximated from the inverse
-curvature of that objective in `theta = log(d)`. A raw group estimate is then
+curvature of that objective in `log_dispersion = log(d)`. A raw group estimate is then
 shrunk toward its hierarchical parent:
 
 ```text
 weight        = tau² / (tau² + local_variance)
-theta_shrunk  = weight * theta_raw + (1 - weight) * theta_parent
-dispersion    = exp(theta_shrunk)
+log_dispersion_shrunk = (weight * log_dispersion_raw
+                         + (1 - weight) * log_dispersion_parent)
+dispersion = exp(log_dispersion_shrunk)
 ```
 
 Consequently, noisy groups borrow more strength from their parent, while groups
@@ -105,7 +106,8 @@ Fitted layers are stored in `calibration_.dispersion`: `global`,
 `global_horizon`, `series`, and `series_horizon`. Prediction resolves known
 series through `series_horizon -> series -> global`. For an unknown series it
 uses `global_horizon -> global`. The corresponding between-group variances are
-available in `calibration_.tau2`.
+available in `calibration_.between_group_variance`. These values describe
+between-group variance on the log-dispersion scale, not predictive variance.
 
 ```text
 training panel
