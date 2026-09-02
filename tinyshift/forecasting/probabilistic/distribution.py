@@ -3,7 +3,8 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
-from scipy.stats import gamma, nbinom
+from scipy.special import gammaln
+from scipy.stats import gamma, lognorm, nbinom, weibull_min
 
 
 class PredictiveDistribution(ABC):
@@ -29,6 +30,7 @@ class PredictiveDistribution(ABC):
             np.array([alpha / 2.0, 1.0 - alpha / 2.0]), (len(self), 2)
         )
         return np.asarray(self.ppf(levels))
+
 
 class DiscretePredictiveDistribution(PredictiveDistribution):
     """Predictive distribution with ordered integer support."""
@@ -129,4 +131,42 @@ class GammaPredictiveDistribution(_ParametricDistribution):
         quantiles, means, shapes, squeeze = self._align(quantiles, "quantiles")
         self._validate_quantiles(quantiles)
         result = gamma.ppf(quantiles, a=shapes, scale=means / shapes)
+        return self._finalize(result, squeeze)
+
+
+class LogNormalPredictiveDistribution(_ParametricDistribution):
+    """Lognormal batches parameterized by conditional mean and log-scale."""
+
+    @staticmethod
+    def _scales(means, sigmas):
+        return means * np.exp(-0.5 * sigmas**2)
+
+    def cdf(self, values):
+        values, means, sigmas, squeeze = self._align(values, "values")
+        result = lognorm.cdf(values, s=sigmas, scale=self._scales(means, sigmas))
+        return self._finalize(result, squeeze)
+
+    def ppf(self, quantiles):
+        quantiles, means, sigmas, squeeze = self._align(quantiles, "quantiles")
+        self._validate_quantiles(quantiles)
+        result = lognorm.ppf(quantiles, s=sigmas, scale=self._scales(means, sigmas))
+        return self._finalize(result, squeeze)
+
+
+class WeibullPredictiveDistribution(_ParametricDistribution):
+    """Weibull batches parameterized by conditional mean and shape."""
+
+    @staticmethod
+    def _scales(means, shapes):
+        return means / np.exp(gammaln(1.0 + 1.0 / shapes))
+
+    def cdf(self, values):
+        values, means, shapes, squeeze = self._align(values, "values")
+        result = weibull_min.cdf(values, c=shapes, scale=self._scales(means, shapes))
+        return self._finalize(result, squeeze)
+
+    def ppf(self, quantiles):
+        quantiles, means, shapes, squeeze = self._align(quantiles, "quantiles")
+        self._validate_quantiles(quantiles)
+        result = weibull_min.ppf(quantiles, c=shapes, scale=self._scales(means, shapes))
         return self._finalize(result, squeeze)

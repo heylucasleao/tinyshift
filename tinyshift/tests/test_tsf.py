@@ -2,24 +2,28 @@ import joblib
 import numpy as np
 import pandas as pd
 import pytest
-import tinyshift.forecasting.probabilistic.family as tsf_family_module
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
-from tinyshift.forecasting.probabilistic.calibration import Calibration, Calibrator
-from tinyshift.forecasting.probabilistic.distribution import (
-    GammaPredictiveDistribution,
-    NegativeBinomialPredictiveDistribution,
-)
-from tinyshift.forecasting.probabilistic.family import DistributionFamily
 
+import tinyshift.forecasting.probabilistic.family as tsf_family_module
 from tinyshift.forecasting import (
     FirstStageForecasterEvaluator,
     GammaFamily,
+    LogNormalFamily,
     NegativeBinomialFamily,
     NewsvendorOptimizer,
     TwoStageForecasterEvaluator,
     TwoStageForecasterWrapper,
+    WeibullFamily,
 )
+from tinyshift.forecasting.probabilistic.calibration import Calibration, Calibrator
+from tinyshift.forecasting.probabilistic.distribution import (
+    GammaPredictiveDistribution,
+    LogNormalPredictiveDistribution,
+    NegativeBinomialPredictiveDistribution,
+    WeibullPredictiveDistribution,
+)
+from tinyshift.forecasting.probabilistic.family import DistributionFamily
 
 
 def _predict(wrapper, h, X_df=None, quantiles=(0.05, 0.50, 0.95)):
@@ -195,26 +199,30 @@ def test_log_dispersion_fit_returns_finite_local_variance():
     y = np.array([0, 1, 2, 3, 5, 1, 0, 4])
     means = np.array([1.0, 1.2, 1.5, 2.0, 2.5, 1.8, 1.0, 3.0])
 
-    dispersion, theta, variance = family.fit_log_dispersion(y, means)
+    dispersion, log_dispersion, log_dispersion_estimation_variance = (
+        family.fit_log_dispersion(y, means)
+    )
 
-    assert dispersion == pytest.approx(np.exp(theta))
-    assert np.isfinite(variance)
-    assert variance > 0
+    assert dispersion == pytest.approx(np.exp(log_dispersion))
+    assert np.isfinite(log_dispersion_estimation_variance)
+    assert log_dispersion_estimation_variance > 0
 
 
 def test_zero_between_group_variance_collapses_to_parent():
     fitted = pd.DataFrame(
         {
-            "theta_raw": [0.0, 2.0],
-            "variance": [0.5, 0.5],
+            "log_dispersion_raw": [0.0, 2.0],
+            "log_dispersion_estimation_variance": [0.5, 0.5],
             "parent": [1.0, 1.0],
         }
     )
 
-    shrunk = Calibrator._shrink(fitted, tau2=0.0)
+    shrunk = Calibrator._shrink(
+        fitted, between_group_log_dispersion_variance=0.0
+    )
 
     assert np.allclose(shrunk["weight"], 0.0)
-    assert np.allclose(shrunk["theta"], fitted["parent"])
+    assert np.allclose(shrunk["log_dispersion"], fitted["parent"])
 
 
 def test_prediction_uses_horizon_dispersion_then_series_fallback():
@@ -228,7 +236,7 @@ def test_prediction_uses_horizon_dispersion_then_series_fallback():
             "series": {"A": 4.0},
             "series_horizon": {("A", 1): 2.0},
         },
-        tau2={},
+        between_group_variance={},
     )
     frame = pd.DataFrame({"unique_id": ["A", "A", "unseen"]})
 
@@ -245,7 +253,7 @@ def test_resolve_dispersion_uses_global_for_unknown_uncalibrated_horizon():
             "series": {"A": 4.0},
             "series_horizon": {},
         },
-        tau2={},
+        between_group_variance={},
     )
 
     assert calibration.resolve("A", 2) == 4.0
@@ -401,6 +409,53 @@ def test_gamma_family_rejects_zero_and_has_no_pmf(sample_continuous_data):
     wrapper.fit(sample_continuous_data)
     with pytest.raises(TypeError, match="only for discrete"):
         _pmf(wrapper, h=1)
+
+
+@pytest.mark.parametrize(
+    ("family", "distribution_type", "parameter_column"),
+    [
+        (LogNormalFamily(), LogNormalPredictiveDistribution, "sigma_dispersion"),
+        (WeibullFamily(), WeibullPredictiveDistribution, "weibull_shape"),
+    ],
+)
+def test_positive_continuous_families_integrate_with_wrapper(
+    sample_continuous_data, family, distribution_type, parameter_column
+):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1, 7])
+    wrapper = TwoStageForecasterWrapper(fcst=fcst, distribution=family).fit(
+        sample_continuous_data, h=7, n_windows=3
+    )
+
+    forecast = wrapper.predict_distribution(h=2)
+    frame = forecast.to_frame()
+
+    assert parameter_column in frame
+    assert isinstance(forecast.distribution, distribution_type)
+    assert forecast.distribution.interval(0.9).shape == (len(frame), 2)
+
+
+@pytest.mark.parametrize("family", [LogNormalFamily(), WeibullFamily()])
+def test_positive_continuous_families_reject_zero(sample_continuous_data, family):
+    invalid = sample_continuous_data.copy()
+    invalid.loc[invalid.index[0], "y"] = 0.0
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(ValueError, match="strictly positive"):
+        TwoStageForecasterWrapper(fcst=fcst, distribution=family).fit(invalid)
+
+
+@pytest.mark.parametrize(
+    "distribution",
+    [
+        LogNormalPredictiveDistribution([2.0, 4.0], [0.5, 1.0]),
+        WeibullPredictiveDistribution([2.0, 4.0], [1.5, 3.0]),
+    ],
+)
+def test_positive_continuous_distributions_preserve_configured_means(distribution):
+    quantiles = np.linspace(0.0005, 0.9995, 10000)
+    samples = distribution.ppf(quantiles)
+
+    assert np.mean(samples, axis=1) == pytest.approx(distribution.means, rel=2e-2)
 
 
 def test_optimize_uses_continuous_distribution_ppf(sample_continuous_data):

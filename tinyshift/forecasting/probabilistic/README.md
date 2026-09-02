@@ -13,6 +13,8 @@ evaluation helpers, and Newsvendor decisions exported from
 | `TwoStageForecasterWrapper` | Fit the point forecaster and calibrate hierarchical dispersion |
 | `NegativeBinomialFamily` | Model non-negative integer counts |
 | `GammaFamily` | Model strictly positive continuous targets |
+| `LogNormalFamily` | Model positive continuous targets with a heavy right tail |
+| `WeibullFamily` | Model positive continuous targets with flexible shape |
 | `PanelPredictiveForecast` | Expose CDFs, quantiles and central intervals on the forecast panel |
 | `DiscretePanelPredictiveForecast` | Additionally expose probability masses and integer quantiles |
 | `NewsvendorOptimizer` | Convert predictive distributions into inventory decisions |
@@ -47,8 +49,9 @@ masses = forecast.pmf([0, 1, 2])
 ```
 
 The default family is Negative Binomial, so the returned forecast is discrete.
-Pass `distribution=GammaFamily()` for a continuous positive target; Gamma
-forecasts intentionally do not expose `pmf`.
+Pass `distribution=GammaFamily()`, `LogNormalFamily()`, or `WeibullFamily()`
+for a continuous positive target. Continuous forecasts intentionally do not
+expose `pmf`.
 
 ## Internal modules
 
@@ -86,13 +89,14 @@ d_hat = argmin_d -sum_t log p(y_t | lambda_t, d)
 
 in which `lambda_t` is an out-of-fold conditional mean and `d` is the
 family-specific dispersion. The local variance is approximated from the inverse
-curvature of that objective in `theta = log(d)`. A raw group estimate is then
+curvature of that objective in `log_dispersion = log(d)`. A raw group estimate is then
 shrunk toward its hierarchical parent:
 
 ```text
 weight        = tau² / (tau² + local_variance)
-theta_shrunk  = weight * theta_raw + (1 - weight) * theta_parent
-dispersion    = exp(theta_shrunk)
+log_dispersion_shrunk = (weight * log_dispersion_raw
+                         + (1 - weight) * log_dispersion_parent)
+dispersion = exp(log_dispersion_shrunk)
 ```
 
 Consequently, noisy groups borrow more strength from their parent, while groups
@@ -102,7 +106,8 @@ Fitted layers are stored in `calibration_.dispersion`: `global`,
 `global_horizon`, `series`, and `series_horizon`. Prediction resolves known
 series through `series_horizon -> series -> global`. For an unknown series it
 uses `global_horizon -> global`. The corresponding between-group variances are
-available in `calibration_.tau2`.
+available in `calibration_.between_group_variance`. These values describe
+between-group variance on the log-dispersion scale, not predictive variance.
 
 ```text
 training panel
@@ -142,6 +147,10 @@ parameter, with `p = size / (size + lambda_t)`. This gives
 distributions use the conditional mean and calibrated shape, with
 `scale = lambda_t / shape`, `E[Y] = lambda_t`, and
 `Var[Y] = lambda_t² / shape`.
+Lognormal distributions calibrate `sigma` and use
+`scale = lambda_t * exp(-sigma² / 2)`. Weibull distributions calibrate shape
+and use `scale = lambda_t / Gamma(1 + 1 / shape)`. Both parameterizations
+preserve `E[Y] = lambda_t`.
 Both expose `cdf`, `ppf`, and `interval` internally. Discrete
 distributions additionally define `pmf(k) = cdf(k) - cdf(k - 1)`.
 

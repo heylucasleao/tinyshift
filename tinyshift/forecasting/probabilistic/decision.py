@@ -13,7 +13,12 @@ CostInput = str | Real | Mapping[Any | tuple[Any, Any], Real]
 
 
 class NewsvendorOptimizer:
-    """Apply single-period Newsvendor decisions to predictive distributions."""
+    """Apply single-period Newsvendor policies to panel forecasts.
+
+    Costs may be numeric scalars, column names, mappings keyed by series ID,
+    or mappings keyed by ``(series ID, timestamp)``. Column names are resolved
+    from ``cost_df`` when supplied and from ``forecast_df`` otherwise.
+    """
 
     @classmethod
     def optimize(
@@ -28,7 +33,43 @@ class NewsvendorOptimizer:
         ratio_col: str = "critical_ratio",
         output_col: str = "y_optimal",
     ) -> pd.DataFrame:
-        """Return the critical-fractile decision for every forecast row."""
+        """Return the critical-fractile decision for every forecast row.
+
+        Parameters
+        ----------
+        forecast_df : pandas.DataFrame
+            Forecast panel whose row order matches ``distribution``.
+        distribution : PredictiveDistribution
+            One predictive distribution per row of ``forecast_df``.
+        underage_cost, overage_cost : float, str, or mapping
+            Non-negative shortage and excess costs. Each value may be a scalar,
+            a column name, a mapping keyed by series ID, or a mapping keyed by
+            ``(series ID, timestamp)``.
+        cost_df : pandas.DataFrame or None, default=None
+            Optional source for cost columns. When it contains ``id_col`` and
+            ``time_col``, rows are aligned by those keys; otherwise it must
+            already have the same row count and order as ``forecast_df``.
+        id_col, time_col : str
+            Series-ID and timestamp column names used to align costs.
+        ratio_col : str, default='critical_ratio'
+            Name of the appended critical-ratio column.
+        output_col : str, default='y_optimal'
+            Name of the appended decision column.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A copy of ``forecast_df`` with the critical ratio and corresponding
+            predictive quantile appended.
+
+        Raises
+        ------
+        TypeError
+            If a cost input has an unsupported type.
+        ValueError
+            If rows or costs cannot be aligned, or costs are negative or
+            non-finite.
+        """
         cls._validate_alignment(forecast_df, distribution)
         cu, co = cls._resolve_costs(
             forecast_df,
@@ -58,7 +99,48 @@ class NewsvendorOptimizer:
         id_col: str = "unique_id",
         time_col: str = "ds",
     ) -> pd.DataFrame:
-        """Return the expected net benefit of each additional inventory unit."""
+        """Return the expected net benefit of each additional inventory unit.
+
+        For unit ``k``, the appended value is the benefit of increasing stock
+        from ``k - 1`` to ``k``. This operation is defined only for discrete
+        predictive distributions.
+
+        Parameters
+        ----------
+        forecast_df : pandas.DataFrame
+            Forecast panel whose row order matches ``distribution``.
+        distribution : PredictiveDistribution
+            Discrete predictive distribution for each forecast row.
+        underage_cost, overage_cost : float, str, or mapping
+            Non-negative shortage and excess costs. Accepted forms are scalar,
+            column name, series-ID mapping, and series-timestamp mapping.
+        max_k : int or None, default=None
+            Largest non-negative unit to evaluate. Produces columns for every
+            integer from zero through ``max_k``. Defaults to 10 when neither
+            ``max_k`` nor ``units`` is supplied.
+        units : iterable of int or None, default=None
+            Explicit, unique non-negative units to evaluate. Mutually exclusive
+            with ``max_k``; input order determines output-column order.
+        cost_df : pandas.DataFrame or None, default=None
+            Optional source for cost columns, aligned by ``id_col`` and
+            ``time_col`` when both keys are present, or by row otherwise.
+        id_col, time_col : str
+            Series-ID and timestamp column names used to align costs.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A copy of ``forecast_df`` with one ``MB(k=<unit>)`` column per
+            requested unit.
+
+        Raises
+        ------
+        TypeError
+            If ``distribution`` is continuous or a cost input is unsupported.
+        ValueError
+            If rows or costs cannot be aligned, costs are invalid, or the unit
+            specification is invalid.
+        """
         cls._validate_alignment(forecast_df, distribution)
         if not isinstance(distribution, DiscretePredictiveDistribution):
             raise TypeError(
