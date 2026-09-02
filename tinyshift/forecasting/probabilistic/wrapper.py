@@ -122,7 +122,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
     @property
     def model_name(self) -> str:
-        """Extracts the name/key of the underlying model from MLForecast."""
+        """Return the name of the single model configured in MLForecast."""
         models_dict = getattr(self.fcst, "models_", None)
         if not models_dict:
             models_dict = getattr(self.fcst, "models", None)
@@ -133,7 +133,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
     @property
     def model(self):
-        """Extracts and validates the underlying trained estimator from the MLForecast container."""
+        """Return the fitted estimator stored by MLForecast."""
         models_dict = getattr(self.fcst, "models_", None)
         _, model = self._single_model(
             models_dict, "The MLForecast object has not been fitted yet."
@@ -249,11 +249,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     ) -> "TwoStageForecasterWrapper":
         """Fit the point model and hierarchical shrinkage dispersions.
 
-        Process
-        -------
-        Runs temporal cross-validation, calibrates the selected distribution
-        family per series, and then fits MLForecast on all training rows.
-
         Parameters
         ----------
         df_train : pandas.DataFrame
@@ -265,12 +260,52 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         target_col : str, default='y'
             Column name for target demand variable.
         static_features : list of str, optional
-            List of static feature names to preserve.
+            Static feature columns passed to MLForecast. An omitted or empty
+            list means that all features are treated as dynamic.
+        h : int, default=14
+            Forecast horizon of each temporal cross-validation window used for
+            distribution calibration.
+        n_windows : int, default=10
+            Number of temporal cross-validation windows used for calibration.
+        step_size : int or None, default=None
+            Number of observations between consecutive cross-validation
+            cutoffs. ``None`` delegates the default behavior to MLForecast.
+        refit : bool or int, default=True
+            MLForecast cross-validation refit policy. ``True`` refits at every
+            window, ``False`` reuses the first fitted model, and an integer
+            refits at that window interval.
 
         Returns
         -------
-        self : TwoStageForecasterWrapper
-            Fitted instance of the TwoStageForecasterWrapper class.
+        TwoStageForecasterWrapper
+            The fitted wrapper.
+
+        Raises
+        ------
+        TypeError
+            If ``distribution`` is not a distribution-family instance.
+        ValueError
+            If calibration parameters or target values are invalid, or the
+            wrapped MLForecast does not contain exactly one model.
+
+        Notes
+        -----
+        Fitting proceeds in two stages. First, MLForecast temporal
+        cross-validation generates out-of-fold conditional-mean predictions.
+        Each validation row is assigned a forecast horizon, and the selected
+        distribution family estimates its dispersion parameter from the
+        observed targets and those predicted means.
+
+        The calibration estimates global, global-by-horizon, per-series, and
+        series-by-horizon parameters. The more specific estimates are shrunk
+        toward their hierarchical parents on the log-parameter scale, reducing
+        instability in groups with limited validation data. At prediction time,
+        unavailable combinations fall back through this fitted hierarchy.
+
+        After calibration, the wrapped MLForecast model is fitted once more on
+        the complete training data. Consequently, the distribution parameters
+        are learned from out-of-fold errors, while future conditional means are
+        produced by the model trained on all available observations.
         """
 
         self._set_fit_state(id_col, time_col, target_col, static_features)
@@ -301,7 +336,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         return frame
 
     def _prediction_dispersions(self, frame: pd.DataFrame) -> np.ndarray:
-        """Resolve and attach dispersions for all forecast rows."""
+        """Resolve and attach family parameters for all forecast rows."""
         horizons = frame.groupby(self.id_col, sort=False).cumcount() + 1
         dispersions = np.fromiter(
             (
