@@ -347,8 +347,7 @@ These responsibilities are exposed through focused packages:
 - `TwoStageForecasterWrapper` — configurable Negative Binomial or Gamma predictive distributions and inventory optimization on top of `MLForecast`
 - `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
 
-Use `tinyshift.preprocessing` for data transforms, `tinyshift.features` for
-feature engineering and `tinyshift.forecasting` for estimators and predictive
+Use `tinyshift.preprocessing` for data transforms and `tinyshift.forecasting` for estimators and predictive
 distributions.
 
 ### 9. Advanced Modeling Tools
