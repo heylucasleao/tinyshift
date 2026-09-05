@@ -1,3 +1,4 @@
+from numbers import Real
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -177,14 +178,24 @@ class IntermittencyAnalyzer:
 
     def _validate_params(self) -> None:
         """Validate analyzer configuration."""
-        if self.adi_threshold <= 0:
+        if (
+            isinstance(self.adi_threshold, bool)
+            or not isinstance(self.adi_threshold, Real)
+            or not np.isfinite(self.adi_threshold)
+            or self.adi_threshold <= 0
+        ):
             raise ValueError(
-                "'adi_threshold' must be positive, " f"got {self.adi_threshold}."
+                f"'adi_threshold' must be positive, got {self.adi_threshold}."
             )
 
-        if self.cv2_threshold <= 0:
+        if (
+            isinstance(self.cv2_threshold, bool)
+            or not isinstance(self.cv2_threshold, Real)
+            or not np.isfinite(self.cv2_threshold)
+            or self.cv2_threshold <= 0
+        ):
             raise ValueError(
-                "'cv2_threshold' must be positive, " f"got {self.cv2_threshold}."
+                f"'cv2_threshold' must be positive, got {self.cv2_threshold}."
             )
 
     @staticmethod
@@ -222,14 +233,13 @@ class IntermittencyAnalyzer:
         """
         if self.unique_id_col not in data.columns:
             raise ValueError(
-                "DataFrame must contain the unique ID column "
-                f"{self.unique_id_col!r}."
+                f"DataFrame must contain the unique ID column {self.unique_id_col!r}."
             )
 
         if self.target_col is not None:
             if self.target_col not in data.columns:
                 raise ValueError(
-                    "DataFrame does not contain target column " f"{self.target_col!r}."
+                    f"DataFrame does not contain target column {self.target_col!r}."
                 )
 
             return self.target_col
@@ -461,6 +471,12 @@ class IntermittencyAnalyzer:
 
         target_col = self._resolve_target_column(X)
 
+        if X.empty:
+            raise ValueError("Panel input must contain at least one series.")
+
+        if X[self.unique_id_col].isna().any():
+            raise ValueError("Unique ID values must not be missing.")
+
         results = {
             unique_id: self._fit_single(group[target_col])
             for unique_id, group in X.groupby(
@@ -526,7 +542,7 @@ class IntermittencyAnalyzer:
             "_is_panel_",
         ):
             raise RuntimeError(
-                "The analyzer must be fitted before calling " "`profile()`."
+                "The analyzer must be fitted before calling `profile()`."
             )
 
         if not self._is_panel_:

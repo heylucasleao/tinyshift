@@ -6,36 +6,37 @@
 import numpy as np
 import pandas as pd
 import pytest
+from statsmodels.tsa.seasonal import DecomposeResult
 
+from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
+from tinyshift.series.decomposition import detrend, extract_mstl_components
 from tinyshift.series.diagnostic import (
     hurst_exponent,
-    trend_significance,
     seasonal_significance,
+    trend_significance,
 )
-from tinyshift.series.decomposition import detrend, extract_mstl_components
-from tinyshift.series import SeasonalPeriodDetector
 from tinyshift.series.forecastability import (
     foreca,
-    sample_entropy,
-    regularity_index,
-    permutation_entropy,
-    theoretical_limit,
     permutation_auto_mutual_information,
+    permutation_entropy,
+    regularity_index,
+    sample_entropy,
     select_pami_lag,
+    theoretical_limit,
 )
-from tinyshift.series.interpolation import vi, hpi, hfi
+from tinyshift.series.intermittency import IntermittencyAnalyzer as CanonicalAnalyzer
+from tinyshift.series.interpolation import hfi, hpi, vi
 from tinyshift.series.metric import (
-    wape,
-    pbias,
-    score,
-    rmae,
-    fva_rmae,
-    forecast_instability,
     economic_loss,
+    forecast_instability,
+    fva_rmae,
+    pbias,
+    rmae,
+    score,
+    wape,
 )
-from tinyshift.series.outlier import hampel_filter, bollinger_bands
-from tinyshift.series.stability import macv, mach, mascv, masch, rmsscv, rmssch
-from statsmodels.tsa.seasonal import DecomposeResult
+from tinyshift.series.outlier import bollinger_bands, hampel_filter
+from tinyshift.series.stability import mach, macv, masch, mascv, rmssch, rmsscv
 
 
 def test_economic_loss_aggregates_understock_and_overstock_by_id():
@@ -173,6 +174,11 @@ class TestDiagnostic:
         assert 8 in periods
         assert periods == sorted(set(periods))
 
+    def test_seasonal_period_detector_detects_period_two_at_nyquist(self):
+        x = (-1.0) ** np.arange(32)
+
+        assert SeasonalPeriodDetector(top_k=1).detect(x) == [2]
+
     def test_seasonal_period_detector_ignores_missing_values(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         x[[3, 17]] = np.nan
@@ -180,6 +186,13 @@ class TestDiagnostic:
         periods = SeasonalPeriodDetector(top_k=1).detect(pd.Series(x))
 
         assert periods == [8]
+
+    def test_seasonal_period_detector_preserves_length_when_interpolating_gaps(self):
+        x = np.sin(2 * np.pi * np.arange(32) / 8)
+        x[[3, 17]] = np.nan
+        detector = SeasonalPeriodDetector(top_k=1).fit(x)
+
+        assert len(detector.frequencies_) == 17
 
     @pytest.mark.parametrize(
         ("fallback", "expected"),
@@ -291,6 +304,32 @@ class TestDiagnostic:
                     }
                 )
             )
+
+    @pytest.mark.parametrize("fallback", [0, -1, True, [7, "30"]])
+    def test_seasonal_period_detector_rejects_invalid_fallback(self, fallback):
+        with pytest.raises(ValueError, match="fallback"):
+            SeasonalPeriodDetector(fallback=fallback)
+
+    @pytest.mark.parametrize("factor", [np.nan, np.inf, True])
+    def test_seasonal_period_detector_rejects_invalid_noise_factor(self, factor):
+        with pytest.raises(ValueError, match="noise_threshold_factor"):
+            SeasonalPeriodDetector(noise_threshold_factor=factor)
+
+
+class TestIntermittencyAnalyzer:
+    def test_is_available_from_public_series_api(self):
+        analyzer = IntermittencyAnalyzer().fit([0, 1, 0, 1])
+
+        assert analyzer.classification_ == "intermittent"
+        assert CanonicalAnalyzer is IntermittencyAnalyzer
+
+    @pytest.mark.parametrize("threshold", [np.nan, np.inf, True])
+    def test_rejects_invalid_thresholds(self, threshold):
+        with pytest.raises(ValueError, match="adi_threshold"):
+            IntermittencyAnalyzer(adi_threshold=threshold)
+
+        with pytest.raises(ValueError, match="cv2_threshold"):
+            IntermittencyAnalyzer(cv2_threshold=threshold)
 
 
 class TestForecastability:
@@ -488,7 +527,6 @@ class TestInterpolation:
 
 
 class TestMetric:
-
     def test_pbias(self):
         df = pd.DataFrame(
             {

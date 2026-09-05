@@ -3,11 +3,12 @@
 # Licensed under the MIT License
 
 
-from .outlier import *
+from .decomposition import *
+from .diagnostic import *
 from .forecastability import *
-from .stability import *
+from .intermittency import *
 from .interpolation import *
 from .metric import *
-from .diagnostic import *
-from .decomposition import *
+from .outlier import *
 from .seasonality import *
+from .stability import *

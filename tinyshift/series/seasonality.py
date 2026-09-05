@@ -3,6 +3,7 @@
 # Licensed under the MIT License
 
 
+from numbers import Real
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -209,20 +210,37 @@ class SeasonalPeriodDetector:
     def _validate_params(self) -> None:
         """Validate detector configuration."""
         if not isinstance(self.top_k, int) or self.top_k <= 0:
-            raise ValueError(
-                "'top_k' must be a positive integer, " f"got {self.top_k!r}."
-            )
+            raise ValueError(f"'top_k' must be a positive integer, got {self.top_k!r}.")
 
-        if self.noise_threshold_factor <= 0:
+        if (
+            isinstance(self.noise_threshold_factor, bool)
+            or not isinstance(self.noise_threshold_factor, Real)
+            or not np.isfinite(self.noise_threshold_factor)
+            or self.noise_threshold_factor <= 0
+        ):
             raise ValueError(
                 "'noise_threshold_factor' must be positive, "
                 f"got {self.noise_threshold_factor!r}."
             )
 
         if self.detrend not in {"linear", "constant", "none"}:
-            raise ValueError(
-                "'detrend' must be one of " "{'linear', 'constant', 'none'}."
+            raise ValueError("'detrend' must be one of {'linear', 'constant', 'none'}.")
+
+        if self.fallback is not None:
+            fallback = (
+                [self.fallback]
+                if isinstance(self.fallback, int)
+                and not isinstance(self.fallback, bool)
+                else self.fallback
             )
+            if not isinstance(fallback, (list, tuple)) or any(
+                isinstance(period, bool) or not isinstance(period, int) or period <= 1
+                for period in fallback
+            ):
+                raise ValueError(
+                    "'fallback' must be an integer greater than 1 or a list "
+                    "of integers greater than 1."
+                )
 
     def _normalize_fallback(self) -> List[int]:
         """Return the configured fallback as a list."""
@@ -243,14 +261,13 @@ class SeasonalPeriodDetector:
         """
         if self.unique_id_col not in data.columns:
             raise ValueError(
-                "DataFrame must contain the unique ID column "
-                f"{self.unique_id_col!r}."
+                f"DataFrame must contain the unique ID column {self.unique_id_col!r}."
             )
 
         if self.target_col is not None:
             if self.target_col not in data.columns:
                 raise ValueError(
-                    "DataFrame does not contain target column " f"{self.target_col!r}."
+                    f"DataFrame does not contain target column {self.target_col!r}."
                 )
 
             return self.target_col
@@ -317,6 +334,19 @@ class SeasonalPeriodDetector:
             prominence=background,
         )
 
+        # scipy.signal.find_peaks excludes endpoints. The last rFFT bin is
+        # the Nyquist frequency for even-length signals and represents the
+        # valid seasonal period 2, so evaluate that endpoint explicitly.
+        if power.size == 1:
+            if power[0] >= threshold:
+                peaks = np.array([0], dtype=int)
+        elif (
+            power[-1] >= threshold
+            and power[-1] > power[-2]
+            and power[-1] - power[-2] >= background
+        ):
+            peaks = np.append(peaks, power.size - 1)
+
         return peaks
 
     @staticmethod
@@ -380,8 +410,20 @@ class SeasonalPeriodDetector:
         """
         Fit the detector to a single time series.
         """
+        values = np.asarray(series, dtype=np.float64)
+        if values.ndim != 1:
+            raise ValueError("Input data must be 1-dimensional.")
+        if np.isinf(values).any():
+            raise ValueError("Input series must not contain infinite values.")
+        if np.isnan(values).any():
+            values = (
+                pd.Series(values)
+                .interpolate(method="linear", limit_direction="both")
+                .to_numpy()
+            )
+
         frequencies, power, n_observations = _prepare_spectrum(
-            series,
+            values,
             detrend=self.detrend,
             method="fft",
         )
@@ -451,6 +493,12 @@ class SeasonalPeriodDetector:
             return self
 
         target_col = self._resolve_target_column(series)
+
+        if series.empty:
+            raise ValueError("Panel input must contain at least one series.")
+
+        if series[self.unique_id_col].isna().any():
+            raise ValueError("Unique ID values must not be missing.")
 
         results = {
             unique_id: self._fit_single(group[target_col])
