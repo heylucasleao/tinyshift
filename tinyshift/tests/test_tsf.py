@@ -217,9 +217,7 @@ def test_zero_between_group_variance_collapses_to_parent():
         }
     )
 
-    shrunk = Calibrator._shrink(
-        fitted, between_group_log_dispersion_variance=0.0
-    )
+    shrunk = Calibrator._shrink(fitted, between_group_log_dispersion_variance=0.0)
 
     assert np.allclose(shrunk["weight"], 0.0)
     assert np.allclose(shrunk["log_dispersion"], fitted["parent"])
@@ -710,12 +708,12 @@ def test_first_stage_evaluator_metrics():
     )
     result = FirstStageForecasterEvaluator.evaluate(df)
 
-    assert result.loc["WAPE", "Metrics"] == pytest.approx(50.0)
-    assert result.loc["PBias", "Metrics"] == pytest.approx(16.67)
-    assert result.loc["Score", "Metrics"] == pytest.approx(66.6667)
-    assert result.loc["Forecast Instability", "Metrics"] == pytest.approx(200.0)
-    assert result.loc["False Demand on Zero-Days (Avg Pred)", "Metrics"] == 1.0
-    assert result.loc["Peak Demand Deviation (%)", "Metrics"] == 0.0
+    assert result.loc[0, "wape"] == pytest.approx(0.5)
+    assert result.loc[0, "pbias"] == pytest.approx(0.1667)
+    assert result.loc[0, "score"] == pytest.approx(0.6667)
+    assert result.loc[0, "forecast_instability"] == pytest.approx(2.0)
+    assert result.loc[0, "false_demand_on_zero_days_avg_pred"] == 1.0
+    assert result.loc[0, "peak_demand_deviation"] == 0.0
 
 
 def test_first_stage_forecast_instability_does_not_cross_series():
@@ -729,7 +727,7 @@ def test_first_stage_forecast_instability_does_not_cross_series():
     )
     result = FirstStageForecasterEvaluator.evaluate(df)
 
-    assert result.loc["Forecast Instability", "Metrics"] == pytest.approx(0.0)
+    assert result.loc[0, "forecast_instability"] == pytest.approx(0.0)
 
 
 def test_first_stage_calibration_table():
@@ -759,12 +757,16 @@ def test_first_stage_evaluator_rejects_non_positive_mean():
         FirstStageForecasterEvaluator.evaluate(df)
 
 
-def test_tsf_evaluator_ignores_nan_pairs_for_loss_and_coverage():
-    df = pd.DataFrame({"y": [1.0, 2.0, np.nan], "q_50": [1.0, 3.0, 0.0]})
-    result = TwoStageForecasterEvaluator.evaluate(df, quantiles=[0.5])
+def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
+    df = pd.DataFrame(
+        {"y": [1.0, 2.0, np.nan], "q_5": [0.0, 0.0, 0.0], "q_95": [1.5, 1.5, 1.5]}
+    )
+    result = TwoStageForecasterEvaluator.evaluate(df, quantiles=[0.05, 0.95])
 
-    assert result.loc["q_50", "Pinball Loss"] == pytest.approx(0.25)
-    assert result.loc["q_50", "Empirical Coverage"] == 1.0
+    assert result.loc[0, "level"] == pytest.approx(0.9)
+    assert result.loc[0, "coverage_rate"] == 0.5
+    assert result.loc[0, "interval_width_mean"] == pytest.approx(1.5)
+    assert result.loc[0, "mwis"] == pytest.approx(6.5)
 
 
 def test_tsf_evaluator_rejects_invalid_quantile():
@@ -1013,8 +1015,8 @@ def test_first_stage_evaluator_handles_all_zero_target():
 
     result = FirstStageForecasterEvaluator.evaluate(data)
 
-    assert np.isnan(result.loc["WAPE", "Metrics"])
-    assert np.isnan(result.loc["PBias", "Metrics"])
+    assert np.isnan(result.loc[0, "wape"])
+    assert np.isnan(result.loc[0, "pbias"])
 
 
 @pytest.mark.parametrize("n_bins", [1, 1.5])
@@ -1223,11 +1225,12 @@ def test_distributions_remain_finite_at_extreme_parameters(means, dispersions):
 
 def test_two_stage_evaluator_handles_all_nan_pairs():
     result = TwoStageForecasterEvaluator.evaluate(
-        pd.DataFrame({"y": [np.nan], "q_50": [np.nan]}), quantiles=(0.5,)
+        pd.DataFrame({"y": [np.nan], "q_5": [np.nan], "q_95": [np.nan]}),
+        quantiles=(0.05, 0.95),
     )
 
-    assert np.isnan(result.loc["q_50", "Pinball Loss"])
-    assert np.isnan(result.loc["q_50", "Empirical Coverage"])
+    assert np.isnan(result.loc[0, "mwis"])
+    assert np.isnan(result.loc[0, "coverage_rate"])
 
 
 def test_wrapper_supports_custom_column_names():

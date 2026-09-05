@@ -14,13 +14,13 @@ class FirstStageForecasterEvaluator:
     - **WAPE**: Total absolute error divided by total observed demand. Lower is better.
     - **Score**: Composite operational loss defined as WAPE + |PBias|. Lower is better.
     - **Forecast Instability**: Relative change between consecutive forecasts. Lower is better.
-    - **PBias (Percentage Bias)**: Measures the percentage global volume deviation ($\frac{\sum \hat{\lambda} - \sum y}{\sum y} \times 100$).
-      * *Interpretation*: Should be close to 0%. A negative bias indicates overall under-forecasting (risk of stockouts),
+        - **PBias (Bias)**: Measures the fractional global volume deviation ($\frac{\sum \hat{\lambda} - \sum y}{\sum y}$).
+            * *Interpretation*: Should be close to 0. A negative bias indicates overall under-forecasting (risk of stockouts),
         while a positive bias indicates over-forecasting (excess holding costs).
     - **False Demand on Zero-Days (Avg Pred)**: Average predicted $\lambda_t$ specifically on days where true demand is strictly zero ($y = 0$).
       * *Interpretation*: Measures the model's tendency to "smear" or leak intermittent demand into non-active periods,
         creating false expectations of activity.
-    - **Peak Demand Deviation (%)**: Percentage error of predicted values relative to true values restricted to periods of positive/peak demand ($y > 0$).
+    - **Peak Demand Deviation**: Fractional error of predicted values relative to true values restricted to periods of positive/peak demand ($y > 0$).
       * *Interpretation*: Tracks the model's smoothing bias on positive-demand days. Negative values indicate that the model
         under-forecasts realized peaks. Since this conditions on the observed target, it is an operational diagnostic rather
         than a direct test of conditional-mean calibration.
@@ -59,8 +59,8 @@ class FirstStageForecasterEvaluator:
         total_pred = np.sum(y_pred)
         total_abs_error = np.sum(np.abs(y_pred - y_true))
         if total_true > 0:
-            wape = total_abs_error / total_true * 100
-            pbias = (total_pred - total_true) / total_true * 100
+            wape = total_abs_error / total_true
+            pbias = (total_pred - total_true) / total_true
         else:
             wape = 0.0 if total_abs_error == 0 else np.nan
             pbias = 0.0 if total_pred == 0 else np.nan
@@ -72,32 +72,28 @@ class FirstStageForecasterEvaluator:
         peak_underestimation = (
             (np.mean(y_pred[pos_mask]) - np.mean(y_true[pos_mask]))
             / np.mean(y_true[pos_mask])
-            * 100
             if np.sum(pos_mask) > 0
             else 0.0
         )
 
-        report = {
-            "WAPE": wape,
-            "PBias": pbias,
-            "Score": wape + abs(pbias),
-            "Forecast Instability": cls._forecast_instability(
-                valid, lambda_col=lambda_col, id_col=id_col, time_col=time_col
-            ),
-            "False Demand on Zero-Days (Avg Pred)": false_alarm_zeros,
-            "Peak Demand Deviation (%)": peak_underestimation,
-        }
-
-        precision = {
-            "PBias": 2,
-            "Peak Demand Deviation (%)": 2,
-        }
         return pd.DataFrame(
             {
-                "Metrics": {
-                    name: round(value, precision.get(name, 4))
-                    for name, value in report.items()
-                }
+                "wape": [round(wape, 4)],
+                "pbias": [round(pbias, 4)],
+                "score": [round(wape + abs(pbias), 4)],
+                "forecast_instability": [
+                    round(
+                        cls._forecast_instability(
+                            valid,
+                            lambda_col=lambda_col,
+                            id_col=id_col,
+                            time_col=time_col,
+                        ),
+                        4,
+                    )
+                ],
+                "false_demand_on_zero_days_avg_pred": [round(false_alarm_zeros, 4)],
+                "peak_demand_deviation": [round(peak_underestimation, 4)],
             }
         )
 
@@ -134,9 +130,7 @@ class FirstStageForecasterEvaluator:
         if average_volume == 0:
             return 0.0
         revisions = prev_values - curr_values
-        return float(
-            (np.abs(revisions).sum() + abs(revisions.sum())) / average_volume * 100
-        )
+        return float((np.abs(revisions).sum() + abs(revisions.sum())) / average_volume)
 
     @classmethod
     def calibration_table(
@@ -181,95 +175,121 @@ class FirstStageForecasterEvaluator:
 
 
 class TwoStageForecasterEvaluator:
-    r"""Evaluator utility for probabilistic quantile forecasts.
+    r"""Evaluator utility for probabilistic central prediction intervals.
 
-    Notes on Metrics & Interpretation
-    -------------------------------
-    - **Pinball Loss (Quantile Loss)**: Asymmetrically penalizes over- and under-predictions based on the target quantile.
-      * Lower values indicate sharper and more accurate quantile forecasts. For higher quantiles (e.g., 0.95, 0.99),
-        it heavily penalizes under-forecasting (stockouts).
-    - **Target Coverage**: The nominal probability level requested (e.g., 0.95 for the 95th percentile).
-      * The theoretical frequency with which actual demand should fall at or below the predicted quantile.
-    - **Empirical Coverage**: The actual observed frequency of $y_{true} \le q_{\tau}$ in the evaluation set.
-      * Shows how well-calibrated the probabilistic tail behavior is in practice.
-    - **Coverage Gap**: The arithmetic difference between empirical coverage and target coverage ($\text{Empirical} - \text{Target}$).
-      * Ideally close to 0. A negative gap indicates under-coverage (higher stockout risk than planned),
-        while a positive gap indicates over-coverage (safer inventory bounds, but potentially excess holding costs).
+    A pair of symmetric forecast quantiles, such as ``q_05`` and ``q_95``,
+    defines a central interval with coverage $1 - \alpha$. Evaluation reports
+    its empirical coverage, mean width, and mean Winkler interval score
+    (MWIS). Lower MWIS values indicate sharper, better-calibrated intervals.
     """
 
     @staticmethod
-    def pinball_loss(y_true: np.ndarray, y_pred: np.ndarray, quantile: float) -> float:
-        """Computes the Pinball Loss (Quantile Loss) for a given target quantile."""
-        y_true = np.asarray(y_true)
-        y_pred = np.asarray(y_pred)
-
-        # Remove NaNs to prevent metric corruption
-        mask = ~(np.isnan(y_true) | np.isnan(y_pred))
-        y_true_clean = y_true[mask]
-        y_pred_clean = y_pred[mask]
-        if y_true_clean.size == 0:
+    def mwis(
+        y_true: np.ndarray, lower: np.ndarray, upper: np.ndarray, alpha: float
+    ) -> float:
+        """Compute the mean Winkler interval score for a central interval."""
+        y_true = np.asarray(y_true, dtype=float)
+        lower = np.asarray(lower, dtype=float)
+        upper = np.asarray(upper, dtype=float)
+        valid = ~(np.isnan(y_true) | np.isnan(lower) | np.isnan(upper))
+        if not valid.any():
             return np.nan
 
-        err = y_true_clean - y_pred_clean
-        return float(np.maximum(quantile * err, (quantile - 1) * err).mean())
+        y_true, lower, upper = y_true[valid], lower[valid], upper[valid]
+        width = upper - lower
+        penalty_lower = (2.0 / alpha) * (lower - y_true) * (y_true < lower)
+        penalty_upper = (2.0 / alpha) * (y_true - upper) * (y_true > upper)
+        return float(np.mean(width + penalty_lower + penalty_upper))
 
     @classmethod
     def evaluate(
         cls,
         df_res: pd.DataFrame,
         target_col: str = "y",
-        quantiles: tuple = (0.50, 0.67, 0.95, 0.99),
+        quantiles: tuple = (0.05, 0.50, 0.95),
     ) -> pd.DataFrame:
-        """Evaluates empirical coverage and quantile loss over out-of-sample backtest predictions.
+        """Evaluate central intervals over out-of-sample backtest predictions.
 
         Parameters
         ----------
         df_res : pandas.DataFrame
-            DataFrame containing real ground truth targets and forecasted quantile columns (`q_*`).
+            DataFrame containing real ground truth targets and forecasted quantile columns (``q_*``).
         target_col : str, default='y'
             Name of the column containing real observed values.
-        quantiles : list of float, default=[0.50, 0.67, 0.95, 0.99]
-            List of target quantiles evaluated.
+        quantiles : list of float, default=[0.05, 0.50, 0.95]
+            Quantile levels used to construct symmetric central intervals.
 
         Returns
         -------
         pandas.DataFrame
-            Summary dataframe containing Pinball Loss, Target Coverage, Empirical Coverage and Coverage Gap.
+            Summary dataframe containing level, empirical coverage, mean
+            interval width, and MWIS for each available interval.
         """
-        results = {}
+        results = []
 
         if target_col not in df_res.columns:
             raise KeyError(
                 f"Target column '{target_col}' not found in the input DataFrame."
             )
 
-        for q in sorted(quantiles):
+        quantiles = tuple(sorted(quantiles))
+        for q in quantiles:
             if not np.isfinite(q) or not 0 < q < 1:
                 raise ValueError(
                     "Quantiles must be finite and strictly between 0 and 1."
                 )
 
-            q_int = round(q * 100)
-            col_q = f"q_{q_int}"
-
-            if col_q not in df_res.columns:
+        for lower_quantile in quantiles:
+            if lower_quantile >= 0.5:
+                continue
+            upper_quantile = next(
+                (
+                    quantile
+                    for quantile in quantiles
+                    if np.isclose(quantile, 1.0 - lower_quantile)
+                ),
+                None,
+            )
+            if upper_quantile is None:
                 continue
 
-            loss = cls.pinball_loss(
-                y_true=df_res[target_col].values,
-                y_pred=df_res[col_q].values,
-                quantile=q,
+            lower_col = f"q_{round(lower_quantile * 100)}"
+            upper_col = f"q_{round(upper_quantile * 100)}"
+            if lower_col not in df_res.columns or upper_col not in df_res.columns:
+                continue
+
+            valid = df_res[[target_col, lower_col, upper_col]].dropna()
+            alpha = 2.0 * lower_quantile
+            target_coverage = 1.0 - alpha
+            if valid.empty:
+                empirical_coverage = np.nan
+                interval_width = np.nan
+            else:
+                empirical_coverage = float(
+                    (
+                        (valid[target_col] >= valid[lower_col])
+                        & (valid[target_col] <= valid[upper_col])
+                    ).mean()
+                )
+                interval_width = float((valid[upper_col] - valid[lower_col]).mean())
+
+            results.append(
+                {
+                    "level": target_coverage,
+                    "coverage_rate": round(empirical_coverage, 4),
+                    "interval_width_mean": round(interval_width, 4),
+                    "mwis": round(
+                        cls.mwis(
+                            df_res[target_col].values,
+                            df_res[lower_col].values,
+                            df_res[upper_col].values,
+                            alpha,
+                        ),
+                        4,
+                    ),
+                }
             )
 
-            valid = df_res[[target_col, col_q]].dropna()
-            empirical_coverage = float((valid[target_col] <= valid[col_q]).mean())
-            coverage_gap = empirical_coverage - q
-
-            results[col_q] = {
-                "Pinball Loss": round(loss, 4),
-                "Target Coverage": q,
-                "Empirical Coverage": round(empirical_coverage, 4),
-                "Coverage Gap": round(coverage_gap, 4),
-            }
-
-        return pd.DataFrame(results).T
+        return pd.DataFrame(
+            results, columns=["level", "coverage_rate", "interval_width_mean", "mwis"]
+        )
