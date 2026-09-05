@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -9,169 +9,80 @@ ArrayLike = Union[
     pd.Series,
 ]
 
+IntermittencyInput = Union[
+    ArrayLike,
+    pd.DataFrame,
+]
 
-def _prepare_demand(
-    X: ArrayLike,
-) -> np.ndarray:
+
+class IntermittencyAnalyzer:
     """
-    Validate and prepare a univariate demand series.
+    Analyze intermittent-demand characteristics for one or more time series.
+
+    The analyzer summarizes intermittent demand using complementary diagnostics
+    related to demand occurrence, demand magnitude, zero frequency, and the
+    regularity of spacing between positive-demand observations.
+
+    It supports both a single univariate series and panel data. For panel data,
+    each series is identified by ``unique_id_col`` and analyzed independently.
+
+    Observations are assumed to be provided in temporal order. For panel data,
+    rows within each series are assumed to already follow their temporal
+    ordering. The analyzer does not sort observations by a timestamp column.
 
     Parameters
     ----------
-    X : numpy.ndarray, list of float, or pandas.Series
-        Input demand series.
+    unique_id_col : str, default="unique_id"
+        Column identifying individual time series when ``X`` is a DataFrame.
 
-    Returns
-    -------
-    numpy.ndarray
-        One-dimensional array containing finite, non-negative demand values.
+    target_col : str, optional
+        Column containing non-negative demand values when ``X`` is a DataFrame.
 
-    Raises
-    ------
-    ValueError
-        If the input is not one-dimensional, contains fewer than two
-        observations, contains non-finite values, or contains negative values.
-    """
-    X = np.asarray(X, dtype=np.float64)
+        If omitted, a column named ``"y"`` is used when present. Otherwise,
+        the target is inferred when exactly one numeric column exists besides
+        ``unique_id_col``.
 
-    if X.ndim != 1:
-        raise ValueError("Input data must be 1-dimensional.")
+    adi_threshold : float, default=1.32
+        Threshold separating frequent from intermittent demand occurrence.
 
-    if X.size < 2:
-        raise ValueError("Input data must contain at least two observations.")
+    cv2_threshold : float, default=0.49
+        Threshold separating low from high variability in positive demand
+        magnitudes.
 
-    if not np.isfinite(X).all():
-        raise ValueError("Input data must contain only finite values.")
-
-    if np.any(X < 0):
-        raise ValueError("Demand values must be non-negative.")
-
-    return X
-
-
-def inter_demand_intervals(
-    X: ArrayLike,
-) -> np.ndarray:
-    """
-    Calculate the intervals between consecutive non-zero demand occurrences.
-
-    The inter-demand interval measures the number of observation steps between
-    consecutive periods with positive demand. It describes the temporal spacing
-    of demand occurrences and can be used to assess demand intermittency.
-
-    Parameters
+    Attributes
     ----------
-    X : numpy.ndarray, list of float, or pandas.Series
-        One-dimensional non-negative demand series.
+    adi_ : float or dict
+        Average Demand Interval.
 
-    Returns
-    -------
-    numpy.ndarray
-        Integer array containing the distances, in observations, between
-        consecutive positive-demand occurrences.
+    cv2_ : float or dict
+        Squared coefficient of variation of positive demand values.
 
-        If fewer than two positive-demand observations are present, an empty
-        array is returned.
+    zero_proportion_ : float or dict
+        Proportion of observations with zero demand.
 
-    Examples
-    --------
-    >>> X = [0, 2, 0, 0, 5, 0, 3]
-    >>> inter_demand_intervals(X)
-    array([3, 2])
+    intervals_ : numpy.ndarray or dict
+        Distances, in numbers of observations, between consecutive
+        positive-demand occurrences.
+
+    interval_cv_ : float or dict
+        Coefficient of variation of inter-demand intervals.
+
+    classification_ : str, None, or dict
+        Intermittency classification.
+
+        Possible values are:
+
+        - ``"smooth"``
+        - ``"intermittent"``
+        - ``"erratic"``
+        - ``"lumpy"``
+
+        ``None`` is used when the classification is undefined, such as when
+        the series contains no positive demand.
 
     Notes
     -----
-    A demand occurrence is defined as an observation strictly greater than
-    zero.
-
-    Returned intervals are expressed in numbers of observations. Therefore,
-    the interpretation depends on the sampling frequency of the input series.
-    For daily data, an interval of 7 corresponds to seven days; for hourly
-    data, it corresponds to seven hours.
-    """
-    X = _prepare_demand(X)
-
-    demand_indices = np.flatnonzero(X > 0)
-
-    if demand_indices.size < 2:
-        return np.array([], dtype=int)
-
-    return np.diff(demand_indices)
-
-
-def zero_proportion(X) -> float:
-    """
-    Calculate the proportion of zero-demand observations.
-
-    Parameters
-    ----------
-    X : array-like
-        Non-negative demand series.
-
-    Returns
-    -------
-    float
-        Fraction of observations with zero demand, ranging from 0 to 1.
-    """
-    X = _prepare_demand(X)
-    return float(np.mean(X == 0))
-
-
-def inter_demand_interval_stats(X) -> tuple[float, float]:
-    """
-    Calculate summary statistics of inter-demand intervals.
-
-    Returns
-    -------
-    tuple of float
-        Mean and standard deviation of the distances between consecutive
-        positive-demand occurrences.
-    """
-    intervals = inter_demand_intervals(X)
-
-    if intervals.size == 0:
-        return float("nan"), float("nan")
-
-    return (
-        float(np.mean(intervals)),
-        float(np.std(intervals, ddof=0)),
-    )
-
-
-def inter_demand_interval_cv(X) -> float:
-    """
-    Calculate the coefficient of variation of inter-demand intervals.
-
-    The metric measures how irregularly positive-demand occurrences are
-    distributed over time.
-
-    Values near zero indicate relatively regular spacing, while larger
-    values indicate more irregular occurrence patterns.
-    """
-    intervals = inter_demand_intervals(X)
-
-    if intervals.size < 2:
-        return float("nan")
-
-    mean_interval = np.mean(intervals)
-
-    if mean_interval == 0:
-        return float("nan")
-
-    return float(np.std(intervals, ddof=0) / mean_interval)
-
-
-def average_demand_interval(
-    X: ArrayLike,
-) -> float:
-    """
-    Calculate the Average Demand Interval (ADI).
-
-    ADI measures the average number of observation periods between non-zero
-    demand occurrences. Larger values indicate more intermittent demand,
-    while values closer to one indicate that demand occurs more frequently.
-
-    It is defined as
+    The Average Demand Interval is defined as
 
     .. math::
 
@@ -180,263 +91,490 @@ def average_demand_interval(
     where :math:`N` is the total number of observations and :math:`N_{+}` is
     the number of observations with positive demand.
 
-    Parameters
-    ----------
-    X : numpy.ndarray, list of float, or pandas.Series
-        One-dimensional non-negative demand series.
-
-    Returns
-    -------
-    float
-        Average Demand Interval.
-
-        A value of ``1.0`` indicates positive demand at every observation.
-        Larger values indicate increasingly sparse demand occurrences.
-
-        ``np.inf`` is returned when the series contains no positive demand.
-
-    Examples
-    --------
-    >>> X = [0, 0, 4, 0, 0, 0, 3, 0]
-    >>> average_demand_interval(X)
-    4.0
-
-    Notes
-    -----
-    ADI describes the frequency of demand occurrence rather than the magnitude
-    of demand when it occurs.
-
-    It is commonly combined with the squared coefficient of variation of
-    positive demand sizes to characterize intermittent demand patterns.
-    """
-    X = _prepare_demand(X)
-
-    n_demand = np.count_nonzero(X > 0)
-
-    if n_demand == 0:
-        return float("inf")
-
-    return float(X.size / n_demand)
-
-
-def squared_coefficient_of_variation(
-    X: ArrayLike,
-) -> float:
-    """
-    Calculate the squared coefficient of variation of positive demand.
-
-    The squared coefficient of variation (CV²) measures the relative
-    variability of demand magnitude conditional on demand occurring.
-
-    It is defined as
+    The squared coefficient of variation is calculated only from positive
+    demand values:
 
     .. math::
 
         CV^2 =
         \\left(
             \\frac{\\sigma_{+}}{\\mu_{+}}
-        \\right)^2,
+        \\right)^2.
 
-    where :math:`\\mu_{+}` and :math:`\\sigma_{+}` are the mean and standard
-    deviation of the strictly positive demand observations.
+    ADI measures how sparse demand occurrences are, while CV² measures how
+    variable demand magnitudes are when demand occurs.
 
-    Parameters
-    ----------
-    X : numpy.ndarray, list of float, or pandas.Series
-        One-dimensional non-negative demand series.
+    ``interval_cv_`` captures a different property: the irregularity of the
+    spacing between positive-demand occurrences.
 
-    Returns
-    -------
-    float
-        Squared coefficient of variation of positive demand values.
-
-        ``np.nan`` is returned when no positive demand is present.
+    Inter-demand intervals are expressed in numbers of observations rather
+    than physical time units.
 
     Examples
     --------
-    >>> X = [0, 2, 0, 4, 0, 6]
-    >>> squared_coefficient_of_variation(X)
-    0.16666666666666666
+    Analyze a single demand series:
 
-    Notes
-    -----
-    Zero-demand observations are excluded because CV² is intended to describe
-    variation in demand size conditional on demand occurring.
+    >>> analyzer = IntermittencyAnalyzer()
+    >>> analyzer.fit([0, 0, 4, 0, 2, 0, 0, 6])
+    IntermittencyAnalyzer(...)
 
-    A value near zero indicates that positive demand sizes are relatively
-    stable. Larger values indicate greater variability in demand magnitude.
-
-    The population standard deviation (``ddof=0``) is used.
-    """
-    X = _prepare_demand(X)
-
-    positive_demand = X[X > 0]
-
-    if positive_demand.size == 0:
-        return float("nan")
-
-    mean_demand = np.mean(positive_demand)
-
-    if mean_demand == 0:
-        return float("nan")
-
-    cv = (
-        np.std(
-            positive_demand,
-            ddof=0,
-        )
-        / mean_demand
-    )
-
-    return float(cv**2)
-
-
-def adi_cv(
-    X: ArrayLike,
-) -> Tuple[float, float]:
-    """
-    Calculate ADI and CV² for an intermittent demand series.
-
-    The Average Demand Interval (ADI) measures how frequently positive demand
-    occurs, while the squared coefficient of variation (CV²) measures the
-    variability of demand magnitude conditional on demand occurring.
-
-    Together, these statistics provide complementary information about the
-    occurrence and size dimensions of intermittent demand.
-
-    Parameters
-    ----------
-    X : numpy.ndarray, list of float, or pandas.Series
-        One-dimensional non-negative demand series.
-
-    Returns
-    -------
-    tuple of float
-        A tuple ``(adi, cv2)`` containing:
-
-        - ``adi``: Average Demand Interval.
-        - ``cv2``: squared coefficient of variation of positive demand.
-
-    Examples
-    --------
-    >>> X = [0, 2, 0, 0, 4, 0, 6, 0]
-    >>> adi, cv2 = adi_cv(X)
-    >>> adi
+    >>> analyzer.adi_
     2.6666666666666665
 
-    Notes
-    -----
-    ADI captures demand occurrence sparsity, whereas CV² captures variability
-    in positive demand sizes.
-
-    These two dimensions are commonly used together to characterize demand
-    patterns such as smooth, intermittent, erratic, and lumpy demand.
-    """
-    X = _prepare_demand(X)
-
-    return (
-        average_demand_interval(X),
-        squared_coefficient_of_variation(X),
-    )
-
-
-def classify_intermittency(
-    X: ArrayLike,
-    adi_threshold: float = 1.32,
-    cv2_threshold: float = 0.49,
-) -> str:
-    """
-    Classify a demand series according to its intermittency pattern.
-
-    The classification combines the Average Demand Interval (ADI) and the
-    squared coefficient of variation (CV²) to distinguish between four demand
-    patterns:
-
-    ``"smooth"``
-        Demand occurs frequently and positive demand sizes have relatively
-        low variability.
-
-    ``"intermittent"``
-        Demand occurs infrequently, but positive demand sizes have relatively
-        low variability.
-
-    ``"erratic"``
-        Demand occurs frequently, but positive demand sizes have relatively
-        high variability.
-
-    ``"lumpy"``
-        Demand occurs infrequently and positive demand sizes have relatively
-        high variability.
-
-    Parameters
-    ----------
-    X : numpy.ndarray, list of float, or pandas.Series
-        One-dimensional non-negative demand series.
-
-    adi_threshold : float, default=1.32
-        Threshold separating frequent from intermittent demand occurrence.
-
-    cv2_threshold : float, default=0.49
-        Threshold separating low from high variability in positive demand
-        magnitude.
-
-    Returns
-    -------
-    str
-        One of ``"smooth"``, ``"intermittent"``, ``"erratic"``, or
-        ``"lumpy"``.
-
-    Raises
-    ------
-    ValueError
-        If either threshold is not strictly positive.
-
-        If the series contains no positive demand observations, because CV²
-        and the resulting demand classification are undefined.
-
-    Examples
-    --------
-    >>> X = [0, 0, 5, 0, 0, 6, 0, 0, 5]
-    >>> classify_intermittency(X)
+    >>> analyzer.classification_
     'intermittent'
 
-    Notes
-    -----
-    The default thresholds ``ADI = 1.32`` and ``CV² = 0.49`` correspond to
-    the commonly used ADI-CV² demand categorization proposed for intermittent
-    demand forecasting.
+    Retrieve a compact profile:
 
-    The thresholds should not be interpreted as universal statistical
-    boundaries. They represent a practical classification rule and may be
-    adjusted for specific applications.
+    >>> analyzer.profile()
+    {
+        'adi': ...,
+        'cv2': ...,
+        'zero_proportion': ...,
+        'interval_cv': ...,
+        'classification': ...
+    }
 
-    Boundary values are assigned to the higher category. Therefore,
-    ``ADI >= adi_threshold`` is considered intermittent occurrence and
-    ``CV² >= cv2_threshold`` is considered high variability.
+    Analyze panel data:
+
+    >>> analyzer = IntermittencyAnalyzer(
+    ...     unique_id_col="unique_id",
+    ...     target_col="y",
+    ... )
+    >>> analyzer.fit(data)
+    IntermittencyAnalyzer(...)
+
+    >>> analyzer.profile()
+               adi   cv2  zero_proportion  interval_cv classification
+    unique_id
+    item_a     ...
+    item_b     ...
     """
-    if adi_threshold <= 0:
-        raise ValueError("'adi_threshold' must be positive, " f"got {adi_threshold}.")
 
-    if cv2_threshold <= 0:
-        raise ValueError("'cv2_threshold' must be positive, " f"got {cv2_threshold}.")
+    def __init__(
+        self,
+        unique_id_col: str = "unique_id",
+        target_col: Optional[str] = None,
+        adi_threshold: float = 1.32,
+        cv2_threshold: float = 0.49,
+    ) -> None:
+        self.unique_id_col = unique_id_col
+        self.target_col = target_col
+        self.adi_threshold = adi_threshold
+        self.cv2_threshold = cv2_threshold
 
-    X = _prepare_demand(X)
+        self._validate_params()
 
-    adi, cv2 = adi_cv(X)
-
-    if np.isnan(cv2):
-        raise ValueError(
-            "Intermittency classification requires at least "
-            "one positive demand observation."
+    def __repr__(self) -> str:
+        return (
+            "IntermittencyAnalyzer("
+            f"unique_id_col={self.unique_id_col!r}, "
+            f"target_col={self.target_col!r}, "
+            f"adi_threshold={self.adi_threshold}, "
+            f"cv2_threshold={self.cv2_threshold}"
+            ")"
         )
 
-    if adi < adi_threshold:
-        if cv2 < cv2_threshold:
-            return "smooth"
+    def _validate_params(self) -> None:
+        """Validate analyzer configuration."""
+        if self.adi_threshold <= 0:
+            raise ValueError(
+                "'adi_threshold' must be positive, " f"got {self.adi_threshold}."
+            )
 
-        return "erratic"
+        if self.cv2_threshold <= 0:
+            raise ValueError(
+                "'cv2_threshold' must be positive, " f"got {self.cv2_threshold}."
+            )
 
-    if cv2 < cv2_threshold:
-        return "intermittent"
+    @staticmethod
+    def _prepare_demand(
+        X: ArrayLike,
+    ) -> np.ndarray:
+        """
+        Validate and prepare a univariate demand series.
+        """
+        X = np.asarray(
+            X,
+            dtype=np.float64,
+        )
 
-    return "lumpy"
+        if X.ndim != 1:
+            raise ValueError("Input data must be 1-dimensional.")
+
+        if X.size < 2:
+            raise ValueError("Input data must contain at least two observations.")
+
+        if not np.isfinite(X).all():
+            raise ValueError("Input data must contain only finite values.")
+
+        if np.any(X < 0):
+            raise ValueError("Demand values must be non-negative.")
+
+        return X
+
+    def _resolve_target_column(
+        self,
+        data: pd.DataFrame,
+    ) -> str:
+        """
+        Resolve the target column used for panel input.
+        """
+        if self.unique_id_col not in data.columns:
+            raise ValueError(
+                "DataFrame must contain the unique ID column "
+                f"{self.unique_id_col!r}."
+            )
+
+        if self.target_col is not None:
+            if self.target_col not in data.columns:
+                raise ValueError(
+                    "DataFrame does not contain target column " f"{self.target_col!r}."
+                )
+
+            return self.target_col
+
+        if "y" in data.columns:
+            return "y"
+
+        numeric_columns = [
+            column
+            for column in data.columns
+            if (
+                column != self.unique_id_col
+                and pd.api.types.is_numeric_dtype(data[column])
+            )
+        ]
+
+        if len(numeric_columns) != 1:
+            raise ValueError(
+                "Could not infer the target column. "
+                "Provide `target_col`, include a column named 'y', "
+                "or include exactly one numeric column besides "
+                f"{self.unique_id_col!r}."
+            )
+
+        return numeric_columns[0]
+
+    @staticmethod
+    def _inter_demand_intervals(
+        X: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Calculate distances between consecutive positive-demand occurrences.
+        """
+        demand_indices = np.flatnonzero(X > 0)
+
+        if demand_indices.size < 2:
+            return np.array(
+                [],
+                dtype=int,
+            )
+
+        return np.diff(demand_indices)
+
+    @staticmethod
+    def _average_demand_interval(
+        X: np.ndarray,
+    ) -> float:
+        """
+        Calculate the Average Demand Interval (ADI).
+        """
+        n_positive = np.count_nonzero(X > 0)
+
+        if n_positive == 0:
+            return float("inf")
+
+        return float(X.size / n_positive)
+
+    @staticmethod
+    def _squared_coefficient_of_variation(
+        X: np.ndarray,
+    ) -> float:
+        """
+        Calculate CV² from strictly positive demand observations.
+        """
+        positive_demand = X[X > 0]
+
+        if positive_demand.size == 0:
+            return float("nan")
+
+        mean_demand = np.mean(positive_demand)
+
+        if mean_demand == 0:
+            return float("nan")
+
+        cv = (
+            np.std(
+                positive_demand,
+                ddof=0,
+            )
+            / mean_demand
+        )
+
+        return float(cv**2)
+
+    @staticmethod
+    def _zero_proportion(
+        X: np.ndarray,
+    ) -> float:
+        """
+        Calculate the proportion of zero-demand observations.
+        """
+        return float(np.mean(X == 0))
+
+    @staticmethod
+    def _inter_demand_interval_cv(
+        intervals: np.ndarray,
+    ) -> float:
+        """
+        Calculate the coefficient of variation of inter-demand intervals.
+        """
+        if intervals.size < 2:
+            return float("nan")
+
+        mean_interval = np.mean(intervals)
+
+        if mean_interval <= 0:
+            return float("nan")
+
+        return float(
+            np.std(
+                intervals,
+                ddof=0,
+            )
+            / mean_interval
+        )
+
+    def _classify(
+        self,
+        adi: float,
+        cv2: float,
+    ) -> Optional[str]:
+        """
+        Classify demand according to the ADI-CV² framework.
+        """
+        if not np.isfinite(adi) or np.isnan(cv2):
+            return None
+
+        if adi < self.adi_threshold:
+            if cv2 < self.cv2_threshold:
+                return "smooth"
+
+            return "erratic"
+
+        if cv2 < self.cv2_threshold:
+            return "intermittent"
+
+        return "lumpy"
+
+    def _fit_single(
+        self,
+        X: ArrayLike,
+    ) -> Dict[str, Any]:
+        """
+        Calculate all intermittency diagnostics for a single series.
+        """
+        demand = self._prepare_demand(X)
+
+        intervals = self._inter_demand_intervals(demand)
+
+        adi = self._average_demand_interval(demand)
+
+        cv2 = self._squared_coefficient_of_variation(demand)
+
+        zero_proportion = self._zero_proportion(demand)
+
+        interval_cv = self._inter_demand_interval_cv(intervals)
+
+        classification = self._classify(
+            adi=adi,
+            cv2=cv2,
+        )
+
+        return {
+            "adi": adi,
+            "cv2": cv2,
+            "zero_proportion": zero_proportion,
+            "interval_cv": interval_cv,
+            "intervals": intervals,
+            "classification": classification,
+        }
+
+    def fit(
+        self,
+        X: IntermittencyInput,
+    ) -> "IntermittencyAnalyzer":
+        """
+        Fit the intermittency analyzer.
+
+        Parameters
+        ----------
+        X : numpy.ndarray, list of float, pandas.Series, or pandas.DataFrame
+            Input demand data.
+
+            A one-dimensional input is interpreted as a single time series.
+
+            A DataFrame is interpreted as panel data. Each unique value of
+            ``unique_id_col`` is analyzed independently.
+
+            For all inputs, observations are assumed to already be in temporal
+            order.
+
+        Returns
+        -------
+        IntermittencyAnalyzer
+            The fitted analyzer instance.
+
+        Notes
+        -----
+        Calling ``fit`` updates the fitted attributes:
+
+        - ``adi_``
+        - ``cv2_``
+        - ``zero_proportion_``
+        - ``interval_cv_``
+        - ``intervals_``
+        - ``classification_``
+        """
+        if not isinstance(
+            X,
+            pd.DataFrame,
+        ):
+            result = self._fit_single(X)
+
+            self.adi_ = result["adi"]
+
+            self.cv2_ = result["cv2"]
+
+            self.zero_proportion_ = result["zero_proportion"]
+
+            self.interval_cv_ = result["interval_cv"]
+
+            self.intervals_ = result["intervals"]
+
+            self.classification_ = result["classification"]
+
+            self._is_panel_ = False
+
+            return self
+
+        target_col = self._resolve_target_column(X)
+
+        results = {
+            unique_id: self._fit_single(group[target_col])
+            for unique_id, group in X.groupby(
+                self.unique_id_col,
+                sort=False,
+            )
+        }
+
+        self.adi_ = {unique_id: result["adi"] for unique_id, result in results.items()}
+
+        self.cv2_ = {unique_id: result["cv2"] for unique_id, result in results.items()}
+
+        self.zero_proportion_ = {
+            unique_id: result["zero_proportion"]
+            for unique_id, result in results.items()
+        }
+
+        self.interval_cv_ = {
+            unique_id: result["interval_cv"] for unique_id, result in results.items()
+        }
+
+        self.intervals_ = {
+            unique_id: result["intervals"] for unique_id, result in results.items()
+        }
+
+        self.classification_ = {
+            unique_id: result["classification"] for unique_id, result in results.items()
+        }
+
+        self._is_panel_ = True
+
+        return self
+
+    def profile(
+        self,
+    ) -> Union[
+        Dict[str, Any],
+        pd.DataFrame,
+    ]:
+        """
+        Return a compact intermittency profile.
+
+        Returns
+        -------
+        dict or pandas.DataFrame
+            For a single time series, returns a dictionary containing the
+            scalar intermittency diagnostics.
+
+            For panel data, returns a DataFrame with one row per series.
+
+        Raises
+        ------
+        RuntimeError
+            If the analyzer has not been fitted.
+
+        Notes
+        -----
+        ``intervals_`` is not included in the profile because it contains a
+        variable-length array rather than a scalar summary statistic.
+        """
+        if not hasattr(
+            self,
+            "_is_panel_",
+        ):
+            raise RuntimeError(
+                "The analyzer must be fitted before calling " "`profile()`."
+            )
+
+        if not self._is_panel_:
+            return {
+                "adi": self.adi_,
+                "cv2": self.cv2_,
+                "zero_proportion": (self.zero_proportion_),
+                "interval_cv": (self.interval_cv_),
+                "classification": (self.classification_),
+            }
+
+        profile = pd.DataFrame(
+            {
+                "adi": self.adi_,
+                "cv2": self.cv2_,
+                "zero_proportion": (self.zero_proportion_),
+                "interval_cv": (self.interval_cv_),
+                "classification": (self.classification_),
+            }
+        )
+
+        profile.index.name = self.unique_id_col
+
+        return profile
+
+    def analyze(
+        self,
+        X: IntermittencyInput,
+    ) -> Union[
+        Dict[str, Any],
+        pd.DataFrame,
+    ]:
+        """
+        Fit the analyzer and return the intermittency profile directly.
+
+        This is a convenience method equivalent to calling ``fit(X)`` followed
+        by ``profile()``.
+
+        Parameters
+        ----------
+        X : numpy.ndarray, list of float, pandas.Series, or pandas.DataFrame
+            Input demand data.
+
+        Returns
+        -------
+        dict or pandas.DataFrame
+            Intermittency profile.
+        """
+        self.fit(X)
+
+        return self.profile()
