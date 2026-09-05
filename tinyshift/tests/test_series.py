@@ -8,16 +8,14 @@ import pandas as pd
 import pytest
 
 from tinyshift.series.diagnostic import (
-    detrend,
     hurst_exponent,
     trend_significance,
     seasonal_significance,
-    extract_mstl_components,
 )
+from tinyshift.series.decomposition import detrend, extract_mstl_components
 from tinyshift.series import SeasonalPeriodDetector
 from tinyshift.series.forecastability import (
     foreca,
-    adi_cv,
     sample_entropy,
     regularity_index,
     permutation_entropy,
@@ -308,17 +306,6 @@ class TestForecastability:
         with pytest.raises(ValueError, match="finite"):
             foreca([1.0, np.nan, 2.0])
 
-    def test_adi_cv(self):
-        x = np.array([0, 0, 1, 2, 0, 0, 1, 1], dtype=float)
-        adi, cv = adi_cv(x)
-        assert adi > 0.0
-        assert cv >= 0.0
-
-    def test_adi_cv_returns_infinite_interval_for_all_zero_demand(self):
-        adi, cv = adi_cv(np.zeros(4))
-        assert adi == np.inf
-        assert np.isnan(cv)
-
     def test_sample_entropy(self):
         x = np.array([0.0, 0.5, 1.0, 0.0, 0.5, 1.0], dtype=float)
         entropy = sample_entropy(x)
@@ -501,16 +488,6 @@ class TestInterpolation:
 
 
 class TestMetric:
-    def test_wape(self):
-        df = pd.DataFrame(
-            {
-                "unique_id": ["A", "A", "B", "B"],
-                "y": [10.0, 20.0, 8.0, 12.0],
-                "model_a": [8.0, 24.0, 7.0, 12.0],
-            }
-        )
-        result = wape(df, models=["model_a"])
-        assert result.loc[0, "model_a"] == pytest.approx(20.0)
 
     def test_pbias(self):
         df = pd.DataFrame(

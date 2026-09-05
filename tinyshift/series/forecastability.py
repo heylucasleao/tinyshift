@@ -9,7 +9,7 @@ from .diagnostic import trend_significance
 from typing import List, Literal, Tuple, Union, Optional
 import numpy as np
 import scipy.signal as signal
-from spectral import _prepare_spectrum
+from .spectral import _prepare_spectrum
 import pandas as pd
 
 ArrayLike = Union[np.ndarray, List[float], pd.Series]
@@ -39,6 +39,10 @@ def foreca(
     The measure is based on normalized Shannon spectral entropy.
     Higher values indicate a more concentrated, structured spectrum.
     """
+    values = np.asarray(X, dtype=np.float64)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Input series must contain only finite values.")
+
     _, power, _ = _prepare_spectrum(
         X,
         detrend=detrend,
@@ -51,7 +55,7 @@ def foreca(
     total_power = np.sum(power)
 
     if total_power <= np.finfo(float).eps:
-        return np.nan
+        return 1.0
 
     probabilities = power / total_power
 
@@ -128,74 +132,6 @@ def spectral_concentration(
     concentration = (concentration - minimum) / (1.0 - minimum)
 
     return float(np.clip(concentration, 0.0, 1.0))
-
-
-def adi_cv(
-    X: Union[np.ndarray, List[float]],
-) -> Tuple[float, float]:
-    """
-    Computes two key metrics for analyzing time series data: Average Demand Interval (ADI)
-    and Coefficient of Variation (CV).
-
-    1. Average Demand Interval (ADI): Indicates the average number of periods between nonzero values in a time series.
-       - Higher ADI suggests more periods of zero or low values, indicating potential sparsity or infrequent activity.
-       - ADI = n / n_nonzero, where n is the total number of periods and n_nonzero is the count of nonzero values.
-
-    2. Coefficient of Variation (CV): The squared ratio of the standard deviation to the mean of the time series.
-       - Provides a normalized measure of dispersion, allowing for comparison across different time series regardless of their scale.
-       - Higher CV indicates greater variability relative to the mean.
-       - CV = (std(X) / mean(X)) ** 2
-
-    Parameters
-    ----------
-    X : Union[np.ndarray, List[float]]
-        Time series data (e.g., demand, sales, or other metrics).
-
-    Returns
-    -------
-    Tuple[float, float]
-        A tuple containing:
-        - adi : float
-            Average Demand Interval for the time series.
-        - cv : float
-            Squared Coefficient of Variation for the time series.
-
-    Notes
-    -----
-    - ADI thresholds:
-        * Low ADI < 1.32 (frequent activity)
-        * High ADI >= 1.32 (infrequent activity)
-    - CV thresholds:
-        * Low CV < 0.49 (low variability)
-        * High CV >= 0.49 (high variability)
-    - Classification of time series:
-        * "Smooth":      Low ADI, Low CV — consistent activity, low variability, highly predictable.
-        * "Intermittent":High ADI, Low CV — infrequent but regular activity, forecastable with specialized methods (e.g., Croston's, ADIDA, IMAPA).
-        * "Erratic":     Low ADI, High CV — regular activity but high variability, high uncertainty.
-        * "Lumpy":       High ADI, High CV — periods of inactivity followed by bursts, challenging to forecast.
-
-    Raises
-    ------
-    ValueError
-        If input data is not 1-dimensional.
-    """
-    X = np.asarray(X, dtype=np.float64)
-
-    if X.ndim != 1:
-        raise ValueError("Input data must be 1-dimensional")
-
-    if X.size < 2:
-        raise ValueError("Input data must contain at least two observations")
-    if not np.isfinite(X).all():
-        raise ValueError("Input data must contain only finite values")
-
-    n = X.shape[0]
-    n_nonzero = np.count_nonzero(X)
-    adi = np.inf if n_nonzero == 0 else n / n_nonzero
-    mean = np.mean(X)
-    cv = np.nan if mean == 0 else (np.std(X, ddof=1) / mean) ** 2
-
-    return adi, cv
 
 
 def sample_entropy(
