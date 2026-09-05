@@ -99,7 +99,7 @@ fit calls without pooling component values or fitted parameters across series.
 
 `season_length` accepts an integer, a list of integers, a mapping by
 `unique_id`, or `"auto"`. Every period must be an integer greater than one.
-Automatic detection uses `detect_seasonal_periods` with
+Automatic detection uses `SeasonalPeriodDetector` configured with
 `seasonal_detection_params`.
 
 A series must contain enough history for MSTL. One seasonal period requires at
