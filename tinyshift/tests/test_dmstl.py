@@ -215,9 +215,9 @@ class TestDMSTLWrapper:
         ):
             wrapper._resolve_seasonal_periods("sku_303", series)
 
-    @patch("tinyshift.forecasting.dmstl.base.detect_seasonal_periods")
+    @patch("tinyshift.forecasting.dmstl.base.SeasonalPeriodDetector")
     def test_auto_detection_failure_raises_value_error(self, mock_detect):
-        mock_detect.return_value = []
+        mock_detect.return_value.detect.return_value = []
         wrapper = DMSTLLocalWrapper(season_length="auto")
         series = np.array([10.0] * 12)
 
