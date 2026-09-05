@@ -3,14 +3,12 @@
 # Licensed under the MIT License
 
 
-from typing import Union, Tuple, List, Dict, Any, Optional
+from typing import Union, Tuple, List
 import numpy as np
 import scipy
 import math
 import pandas as pd
 from statsmodels.tsa.seasonal import DecomposeResult
-from scipy.fft import rfft, rfftfreq
-from scipy.signal import find_peaks
 from statsmodels.nonparametric.smoothers_lowess import lowess
 
 
@@ -100,147 +98,6 @@ def detrend(
     result["detrended"] = result[target_col] - result["trend"]
 
     return result.loc[df.index]
-
-
-def detect_seasonal_periods(
-    series: Union[np.ndarray, List[float], pd.Series, pd.DataFrame],
-    top_k: int = 2,
-    noise_threshold_factor: float = 2.0,
-    fallback: Optional[Union[int, List[int]]] = None,
-    unique_id_col: str = "unique_id",
-    target_col: Optional[str] = None,
-) -> Union[List[int], Dict[Any, List[int]]]:
-    """
-    Identifies candidate seasonal periods in a time series using Fast Fourier Transform (FFT).
-
-    The function detrends the series linearly to eliminate DC offset bias, calculates
-    the Real FFT, identifies spectral magnitude peaks exceeding a noise threshold,
-    and converts the dominant frequencies into discrete seasonal periods.
-
-    Parameters
-    ----------
-    series : Union[np.ndarray, List[float], pd.Series, pd.DataFrame]
-        Input 1D time series data or a panel DataFrame. A DataFrame must
-        contain `unique_id_col` and a target column, and returns periods per ID.
-    top_k : int, default=2
-        Maximum number of candidate periods to return, ordered by spectral power.
-    noise_threshold_factor : float, default=2.0
-        Multiplier applied to the average spectral amplitude to filter out
-        background noise peaks.
-    fallback : int or List[int], optional
-        Value(s) to return when no significant seasonal periods are detected.
-        If an integer is passed, it is converted to a single-element list.
-        If None, returns an empty list `[]` when no peaks are found.
-    unique_id_col : str, default="unique_id"
-        DataFrame column containing the series identifiers.
-    target_col : str, optional
-        DataFrame column containing the values. If omitted, ``y`` is selected
-        when available; otherwise the DataFrame must contain exactly one
-        numeric column besides `unique_id_col`.
-
-    Returns
-    -------
-    List[int] or dict
-        For 1D input, a list of candidate seasonal periods sorted by dominant
-        magnitude (or `fallback` if no peaks are found). For DataFrame input,
-        a dictionary mapping each unique ID to its list of candidate periods.
-
-    Raises
-    ------
-    ValueError
-        If the input is invalid, the input length is less than 4, if `top_k` is
-        non-positive, or if the DataFrame target column is ambiguous.
-    """
-    if top_k <= 0:
-        raise ValueError(f"'top_k' must be a positive integer, got {top_k}.")
-
-    if isinstance(series, pd.DataFrame):
-        if unique_id_col not in series.columns:
-            raise ValueError(
-                f"DataFrame must contain the unique ID column {unique_id_col!r}."
-            )
-
-        if target_col is None:
-            if "y" in series.columns:
-                target_col = "y"
-            else:
-                numeric_columns = [
-                    column
-                    for column in series.columns
-                    if column != unique_id_col
-                    and pd.api.types.is_numeric_dtype(series[column])
-                ]
-                if len(numeric_columns) != 1:
-                    raise ValueError(
-                        "Could not infer the target column. Provide `target_col` "
-                        "or include a single numeric column besides the ID."
-                    )
-
-                target_col = numeric_columns[0]
-        elif target_col not in series.columns:
-            raise ValueError(
-                f"DataFrame does not contain target column {target_col!r}."
-            )
-
-        return {
-            unique_id: detect_seasonal_periods(
-                group[target_col],
-                top_k=top_k,
-                noise_threshold_factor=noise_threshold_factor,
-                fallback=fallback,
-            )
-            for unique_id, group in series.groupby(unique_id_col, sort=False)
-        }
-
-    fallback_values = (
-        [fallback]
-        if isinstance(fallback, int)
-        else (fallback if fallback is not None else [])
-    )
-
-    if isinstance(series, pd.Series):
-        s = series.dropna().to_numpy(dtype=np.float64)
-    else:
-        s = np.asarray(series, dtype=np.float64)
-        s = s[~np.isnan(s)]
-
-    n = len(s)
-    if n < 4:
-        raise ValueError(f"Input series must have at least 4 observations, got {n}.")
-
-    x = np.arange(n)
-    poly_fit = np.polyfit(x, s, 1)
-    signal = s - np.polyval(poly_fit, x)
-
-    fft_vals = rfft(signal)
-    freqs = rfftfreq(n, d=1.0)
-    amplitudes = np.abs(fft_vals)
-
-    non_dc_amplitudes = amplitudes[1:]
-    if len(non_dc_amplitudes) == 0:
-        return fallback_values
-
-    noise_level = np.mean(non_dc_amplitudes) * noise_threshold_factor
-    peaks, _ = find_peaks(non_dc_amplitudes, height=noise_level)
-    peaks = peaks + 1
-
-    if len(peaks) == 0:
-        return fallback_values
-
-    sorted_peaks = sorted(peaks, key=lambda idx: amplitudes[idx], reverse=True)[:top_k]
-
-    periods = []
-    for p in sorted_peaks:
-        freq = freqs[p]
-        if freq > 0:
-            period = int(round(1.0 / freq))
-            if 1 < period <= n // 2 and period not in periods:
-                periods.append(period)
-
-    if not periods:
-        return fallback_values
-
-    return sorted(periods)
 
 
 def hurst_exponent(
