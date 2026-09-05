@@ -3,139 +3,135 @@
 # Licensed under the MIT License
 
 
-from scipy.signal import periodogram
 from collections import Counter
 import math
 from .diagnostic import trend_significance
 from typing import List, Literal, Tuple, Union, Optional
 import numpy as np
 import scipy.signal as signal
+from .spectral import _prepare_spectrum
+import pandas as pd
+
+ArrayLike = Union[np.ndarray, List[float], pd.Series]
 
 
 def foreca(
-    X: Union[np.ndarray, List[float]],
+    X: ArrayLike,
+    detrend: str = "linear",
 ) -> float:
     """
-    Calculate the Forecastable Component Analysis (ForeCA) omega index for a given signal.
-
-    The omega index (ω) measures how forecastable a time series is, ranging from 0
-    (completely noisy/unforecastable) to 1 (perfectly forecastable). It is based on
-    the spectral entropy of the signal's power spectral density (PSD).
+    Calculate the ForeCA omega forecastability index.
 
     Parameters
     ----------
-    X : Union[np.ndarray, List[float]]
-        Input 1D time series data for which to calculate the forecastability measure.
-        The signal should be stationary for meaningful results.
+    X : array-like
+        Input univariate time series.
+    detrend : {"linear", "constant", "none"}, default="linear"
+        Detrending applied before estimating the power spectrum.
 
     Returns
     -------
     float
-        The omega forecastability index (ω), where:
-        - ω ≈ 0: Signal is noise-like and not forecastable
-        - ω ≈ 1: Signal has strong periodic components and is highly forecastable
+        Forecastability index between 0 and 1.
 
     Notes
     -----
-    The calculation involves:
-    1. Computing the power spectral density (PSD) via periodogram
-    2. Normalizing the PSD to sum to 1 (creating a probability distribution)
-    3. Calculating the spectral entropy of this distribution
-    4. Normalizing against maximum possible entropy
-    5. Subtracting from 1 to get forecastability measure
-
-    References
-    ----------
-    - Goerg (2013), "Forecastable Component Analysis" (JMLR)
-    - Hyndman et al. (2015), "Large unusual observations in time series"
-    - Manokhin (2025), "Mastering Modern Time Series Forecasting: The Complete Guide to
-        Statistical, Machine Learning & Deep Learning Models in Python", Ch. 2.4.12
+    The measure is based on normalized Shannon spectral entropy.
+    Higher values indicate a more concentrated, structured spectrum.
     """
-    X = np.asarray(X, dtype=np.float64)
-    if X.ndim != 1:
-        raise ValueError("Input data must be 1-dimensional")
-    if X.size < 2:
-        raise ValueError("Input data must contain at least two observations")
-    if not np.isfinite(X).all():
-        raise ValueError("Input data must contain only finite values")
+    values = np.asarray(X, dtype=np.float64)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Input series must contain only finite values.")
 
-    _, psd = periodogram(X)
-    total_power = np.sum(psd)
-    if total_power == 0:
+    _, power, _ = _prepare_spectrum(
+        X,
+        detrend=detrend,
+        method="periodogram",
+    )
+
+    # DC should not participate after detrending.
+    power = power[1:]
+
+    total_power = np.sum(power)
+
+    if total_power <= np.finfo(float).eps:
         return 1.0
-    psd = psd / total_power
-    entropy = -np.sum(psd * np.log2(psd + 1e-12))
-    max_entropy = np.log2(len(psd))
-    omega = 1 - (entropy / max_entropy)
-    return float(omega)
+
+    probabilities = power / total_power
+
+    probabilities = probabilities[probabilities > 0]
+
+    entropy = -np.sum(probabilities * np.log2(probabilities))
+
+    max_entropy = np.log2(len(power))
+
+    if max_entropy == 0:
+        return np.nan
+
+    omega = 1.0 - entropy / max_entropy
+
+    return float(np.clip(omega, 0.0, 1.0))
 
 
-def adi_cv(
-    X: Union[np.ndarray, List[float]],
-) -> Tuple[float, float]:
+def spectral_concentration(
+    X: ArrayLike,
+    detrend: str = "linear",
+    normalize: bool = True,
+) -> float:
     """
-    Computes two key metrics for analyzing time series data: Average Demand Interval (ADI)
-    and Coefficient of Variation (CV).
-
-    1. Average Demand Interval (ADI): Indicates the average number of periods between nonzero values in a time series.
-       - Higher ADI suggests more periods of zero or low values, indicating potential sparsity or infrequent activity.
-       - ADI = n / n_nonzero, where n is the total number of periods and n_nonzero is the count of nonzero values.
-
-    2. Coefficient of Variation (CV): The squared ratio of the standard deviation to the mean of the time series.
-       - Provides a normalized measure of dispersion, allowing for comparison across different time series regardless of their scale.
-       - Higher CV indicates greater variability relative to the mean.
-       - CV = (std(X) / mean(X)) ** 2
+    Measure concentration of spectral power using the
+    Herfindahl-Hirschman / Simpson concentration index.
 
     Parameters
     ----------
-    X : Union[np.ndarray, List[float]]
-        Time series data (e.g., demand, sales, or other metrics).
+    X : array-like
+        Input univariate time series.
+    detrend : {"linear", "constant", "none"}, default="linear"
+        Detrending applied before estimating the spectrum.
+    normalize : bool, default=True
+        If True, normalize concentration to [0, 1],
+        accounting for the number of spectral bins.
 
     Returns
     -------
-    Tuple[float, float]
-        A tuple containing:
-        - adi : float
-            Average Demand Interval for the time series.
-        - cv : float
-            Squared Coefficient of Variation for the time series.
+    float
+        Spectral concentration.
 
-    Notes
-    -----
-    - ADI thresholds:
-        * Low ADI < 1.32 (frequent activity)
-        * High ADI >= 1.32 (infrequent activity)
-    - CV thresholds:
-        * Low CV < 0.49 (low variability)
-        * High CV >= 0.49 (high variability)
-    - Classification of time series:
-        * "Smooth":      Low ADI, Low CV — consistent activity, low variability, highly predictable.
-        * "Intermittent":High ADI, Low CV — infrequent but regular activity, forecastable with specialized methods (e.g., Croston's, ADIDA, IMAPA).
-        * "Erratic":     Low ADI, High CV — regular activity but high variability, high uncertainty.
-        * "Lumpy":       High ADI, High CV — periods of inactivity followed by bursts, challenging to forecast.
-
-    Raises
-    ------
-    ValueError
-        If input data is not 1-dimensional.
+        When normalized:
+        - 0 means power is approximately uniformly distributed.
+        - 1 means power is concentrated in one spectral component.
     """
-    X = np.asarray(X, dtype=np.float64)
+    _, power, _ = _prepare_spectrum(
+        X,
+        detrend=detrend,
+        method="periodogram",
+    )
 
-    if X.ndim != 1:
-        raise ValueError("Input data must be 1-dimensional")
+    # Remove zero-frequency / DC component.
+    power = power[1:]
 
-    if X.size < 2:
-        raise ValueError("Input data must contain at least two observations")
-    if not np.isfinite(X).all():
-        raise ValueError("Input data must contain only finite values")
+    total_power = np.sum(power)
 
-    n = X.shape[0]
-    n_nonzero = np.count_nonzero(X)
-    adi = np.inf if n_nonzero == 0 else n / n_nonzero
-    mean = np.mean(X)
-    cv = np.nan if mean == 0 else (np.std(X, ddof=1) / mean) ** 2
+    if total_power <= np.finfo(float).eps:
+        return np.nan
 
-    return adi, cv
+    p = power / total_power
+
+    concentration = np.sum(p**2)
+
+    if not normalize:
+        return float(concentration)
+
+    k = len(p)
+
+    if k <= 1:
+        return 1.0
+
+    minimum = 1.0 / k
+
+    concentration = (concentration - minimum) / (1.0 - minimum)
+
+    return float(np.clip(concentration, 0.0, 1.0))
 
 
 def sample_entropy(

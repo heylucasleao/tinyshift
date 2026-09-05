@@ -105,7 +105,7 @@ label. Costs can also be provided as fixed scalar values, such as
 
 ### 4. Diagnostics & Decomposition
 
-- **`detect_seasonal_periods`**
+- **`SeasonalPeriodDetector`**
   Identifies candidate seasonal periods via FFT and spectral peak detection.
   **When to use:** To discover seasonality for decomposition or modeling.
 
@@ -197,7 +197,7 @@ label. Costs can also be provided as fixed scalar values, such as
 ### Diagnostics & Decomposition
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
 |----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **detect_seasonal_periods**            | N/A           | Candidate season length detection                            | "What are the dominant season lengths?"                            |
+| **SeasonalPeriodDetector**             | N/A           | Candidate season length detection                            | "What are the dominant season lengths?"                            |
 | **Hurst Exponent**                     | 0 → 1         | Trend persistence / long memory                              | "Does the series have long-term memory?"                          |
 | **Trend Significance**                 | 0 → 1         | Linear trend strength and significance                        | "Is there a meaningful linear trend?"                             |
 | **Seasonal Significance**              | 0 → 1         | Seasonal strength and significance                            | "Is seasonality statistically significant?"                      |

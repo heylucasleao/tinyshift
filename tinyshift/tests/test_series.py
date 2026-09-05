@@ -8,16 +8,14 @@ import pandas as pd
 import pytest
 
 from tinyshift.series.diagnostic import (
-    detrend,
-    detect_seasonal_periods,
     hurst_exponent,
     trend_significance,
     seasonal_significance,
-    extract_mstl_components,
 )
+from tinyshift.series.decomposition import detrend, extract_mstl_components
+from tinyshift.series import SeasonalPeriodDetector
 from tinyshift.series.forecastability import (
     foreca,
-    adi_cv,
     sample_entropy,
     regularity_index,
     permutation_entropy,
@@ -169,17 +167,17 @@ class TestDiagnostic:
         with pytest.raises(ValueError, match="missing required columns"):
             detrend(pd.DataFrame({"unique_id": ["a"], "y": [1.0]}))
 
-    def test_detect_seasonal_periods(self):
+    def test_seasonal_period_detector_detects_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
-        periods = detect_seasonal_periods(x)
+        periods = SeasonalPeriodDetector().detect(x)
         assert 8 in periods
         assert periods == sorted(set(periods))
 
-    def test_detect_seasonal_periods_ignores_missing_values(self):
+    def test_seasonal_period_detector_ignores_missing_values(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         x[[3, 17]] = np.nan
 
-        periods = detect_seasonal_periods(pd.Series(x), top_k=1)
+        periods = SeasonalPeriodDetector(top_k=1).detect(pd.Series(x))
 
         assert periods == [8]
 
@@ -187,14 +185,14 @@ class TestDiagnostic:
         ("fallback", "expected"),
         [(None, []), (12, [12]), ([7, 30], [7, 30])],
     )
-    def test_detect_seasonal_periods_uses_fallback_without_peaks(
+    def test_seasonal_period_detector_uses_fallback_without_peaks(
         self, fallback, expected
     ):
-        periods = detect_seasonal_periods(np.ones(32), fallback=fallback)
+        periods = SeasonalPeriodDetector(fallback=fallback).detect(np.ones(32))
 
         assert periods == expected
 
-    def test_detect_seasonal_periods_supports_panel_data(self):
+    def test_seasonal_period_detector_supports_panel_data(self):
         steps = np.arange(32)
         frame = pd.DataFrame(
             {
@@ -208,12 +206,12 @@ class TestDiagnostic:
             }
         )
 
-        periods = detect_seasonal_periods(frame, top_k=1)
+        periods = SeasonalPeriodDetector(top_k=1).detect(frame)
 
         assert periods["weekly"] == [8]
         assert periods["biweekly"] == [16]
 
-    def test_detect_seasonal_periods_infers_single_numeric_target(self):
+    def test_seasonal_period_detector_infers_single_numeric_target(self):
         steps = np.arange(32)
         frame = pd.DataFrame(
             {
@@ -223,7 +221,7 @@ class TestDiagnostic:
             }
         )
 
-        periods = detect_seasonal_periods(frame, top_k=1)
+        periods = SeasonalPeriodDetector(top_k=1).detect(frame)
 
         assert periods == {"a": [8]}
 
@@ -273,18 +271,18 @@ class TestDiagnostic:
         with pytest.raises(ValueError):
             extract_mstl_components(result, periods=[4])
 
-    def test_detect_seasonal_periods_raises_for_invalid_input(self):
+    def test_seasonal_period_detector_raises_for_invalid_input(self):
         with pytest.raises(ValueError):
-            detect_seasonal_periods(np.array([1.0, 2.0, 3.0]))
+            SeasonalPeriodDetector().detect(np.array([1.0, 2.0, 3.0]))
 
         with pytest.raises(ValueError):
-            detect_seasonal_periods(np.array([1.0, 2.0, 3.0, 4.0]), top_k=0)
+            SeasonalPeriodDetector(top_k=0).detect(np.array([1.0, 2.0, 3.0, 4.0]))
 
         with pytest.raises(ValueError, match="unique ID"):
-            detect_seasonal_periods(pd.DataFrame({"y": [1.0, 2.0, 3.0, 4.0]}))
+            SeasonalPeriodDetector().detect(pd.DataFrame({"y": [1.0, 2.0, 3.0, 4.0]}))
 
         with pytest.raises(ValueError, match="Could not infer"):
-            detect_seasonal_periods(
+            SeasonalPeriodDetector().detect(
                 pd.DataFrame(
                     {
                         "unique_id": ["a"] * 4,
@@ -307,17 +305,6 @@ class TestForecastability:
     def test_foreca_rejects_non_finite_values(self):
         with pytest.raises(ValueError, match="finite"):
             foreca([1.0, np.nan, 2.0])
-
-    def test_adi_cv(self):
-        x = np.array([0, 0, 1, 2, 0, 0, 1, 1], dtype=float)
-        adi, cv = adi_cv(x)
-        assert adi > 0.0
-        assert cv >= 0.0
-
-    def test_adi_cv_returns_infinite_interval_for_all_zero_demand(self):
-        adi, cv = adi_cv(np.zeros(4))
-        assert adi == np.inf
-        assert np.isnan(cv)
 
     def test_sample_entropy(self):
         x = np.array([0.0, 0.5, 1.0, 0.0, 0.5, 1.0], dtype=float)
@@ -501,16 +488,6 @@ class TestInterpolation:
 
 
 class TestMetric:
-    def test_wape(self):
-        df = pd.DataFrame(
-            {
-                "unique_id": ["A", "A", "B", "B"],
-                "y": [10.0, 20.0, 8.0, 12.0],
-                "model_a": [8.0, 24.0, 7.0, 12.0],
-            }
-        )
-        result = wape(df, models=["model_a"])
-        assert result.loc[0, "model_a"] == pytest.approx(20.0)
 
     def test_pbias(self):
         df = pd.DataFrame(
