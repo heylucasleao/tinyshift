@@ -9,3 +9,4 @@ from .stability import *
 from .interpolation import *
 from .metric import *
 from .diagnostic import *
+from .seasonality import *

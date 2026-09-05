@@ -3,7 +3,6 @@
 # Licensed under the MIT License
 
 
-from scipy.signal import periodogram
 from collections import Counter
 import math
 from .diagnostic import trend_significance
