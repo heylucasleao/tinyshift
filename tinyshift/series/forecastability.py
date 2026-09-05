@@ -39,7 +39,7 @@ def foreca(
     The measure is based on normalized Shannon spectral entropy.
     Higher values indicate a more concentrated, structured spectrum.
     """
-    _, power = _prepare_spectrum(
+    _, power, _ = _prepare_spectrum(
         X,
         detrend=detrend,
         method="periodogram",
@@ -97,7 +97,7 @@ def spectral_concentration(
         - 0 means power is approximately uniformly distributed.
         - 1 means power is concentrated in one spectral component.
     """
-    _, power = _prepare_spectrum(
+    _, power, _ = _prepare_spectrum(
         X,
         detrend=detrend,
         method="periodogram",
