@@ -156,21 +156,21 @@ class FirstStageForecasterEvaluator:
             lambda_col,
         )
         if valid[lambda_col].nunique() == 1:
-            valid["Calibration Bin"] = "all"
+            valid["calibration_bin"] = "all"
         else:
-            valid["Calibration Bin"] = pd.qcut(
+            valid["calibration_bin"] = pd.qcut(
                 valid[lambda_col], q=n_bins, duplicates="drop"
             )
         result = (
-            valid.groupby("Calibration Bin", observed=True)
+            valid.groupby("calibration_bin", observed=True)
             .agg(
-                Count=(target_col, "size"),
-                Mean_Prediction=(lambda_col, "mean"),
-                Mean_Observed=(target_col, "mean"),
+                count=(target_col, "size"),
+                mean_prediction=(lambda_col, "mean"),
+                mean_observed=(target_col, "mean"),
             )
             .reset_index()
         )
-        result["Mean_Residual"] = result["Mean_Observed"] - result["Mean_Prediction"]
+        result["mean_residual"] = result["mean_observed"] - result["mean_prediction"]
         return result
 
 

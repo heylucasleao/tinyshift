@@ -739,9 +739,9 @@ def test_first_stage_calibration_table():
         }
     )
     calibration = FirstStageForecasterEvaluator.calibration_table(df, n_bins=2)
-    assert calibration["Count"].sum() == len(df)
+    assert calibration["count"].sum() == len(df)
     assert len(calibration) == 2
-    assert calibration.iloc[0]["Mean_Residual"] == pytest.approx(0.0)
+    assert calibration.iloc[0]["mean_residual"] == pytest.approx(0.0)
 
 
 def test_first_stage_evaluator_rejects_non_positive_mean():
@@ -1033,7 +1033,7 @@ def test_calibration_table_handles_constant_predictions():
     result = FirstStageForecasterEvaluator.calibration_table(data, n_bins=5)
 
     assert len(result) == 1
-    assert result.loc[0, "Calibration Bin"] == "all"
+    assert result.loc[0, "calibration_bin"] == "all"
 
 
 def test_two_stage_evaluator_requires_target_and_skips_missing_quantiles():
