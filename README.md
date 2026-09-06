@@ -262,7 +262,7 @@ hurst, p_value = hurst_exponent(time_series)
 print(f"Hurst Exponent: {hurst}, P-value: {p_value}")
 
 # Combined diagnostics for a Nixtla-style panel
-profile = SeriesProfiler().fit(df).profile()
+summary = SeriesProfiler().fit(df).summary()
 
 # Outlier detection in time series
 outliers = hampel_filter(time_series, window_size=5)

@@ -116,13 +116,12 @@ from tinyshift.series import SeriesProfiler
 profiler = SeriesProfiler().fit(
     df, id_col="unique_id", time_col="ds", target_col="y"
 )
-profile = profiler.profile()
 summary = profiler.summary()
 ```
 
 The result contains `adi`, `cv2`, `zero_prop`, `interval_cv`, `class`,
 `foreca`, `limit`, `hurst`, `trend_r2`, `trend_pvalue`, `spectral_conc`,
-and `periods` for each unique ID. At least 30 observations are required per
+and `candidate_periods` for each unique ID. At least 30 observations are required per
 series because the profile includes the Hurst exponent.
 
 - **`SeasonalPeriodDetector`**
