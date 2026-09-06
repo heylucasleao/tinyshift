@@ -58,7 +58,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         In global mode, the resulting per-series lags are combined into their
         sorted union before the shared model is created.
     pami_params : dict, optional
-        Keyword arguments passed to ``select_pami_lag`` when ``nlags="auto"``.
+        PAMI analyzer and lag-creation options used when ``nlags="auto"``.
     log_transform : bool, default=False
         Apply ``log1p`` before decomposition and ``expm1`` after recombination.
 

@@ -651,27 +651,24 @@ def pami(
     - Bar chart showing PAMI values for each lag
     - Confidence band at ±1.96/√N level (gray dashed line)
     - Local minima markers (red circles) indicating potential optimal lags
-    - Selected optimal lag marker (cyan circle) highlighting the chosen lag
 
     Local minima in PAMI often correspond to meaningful time delays in the
     underlying dynamical system and can be used for lag selection in forecasting
     or embedding dimension analysis.
     """
-    from scipy.signal import find_peaks
     import plotly.graph_objects as go
-    from tinyshift.series import select_pami_lag
+    from tinyshift.series import PAMIAnalyzer
 
-    best_lag, best_value, pami_values = select_pami_lag(
-        X,
+    result = PAMIAnalyzer(
         max_tau=nlags,
         m=m,
         delay=delay,
         normalize=normalize,
-        return_mode="value_only",
-    )
+    ).analyze(X)
 
-    lags = np.arange(1, len(pami_values) + 1)
-    minima_idx, _ = find_peaks(-pami_values)
+    lags = result.taus
+    pami_values = result.values
+    minima_idx = np.searchsorted(lags, result.local_minima)
     min_lag = lags[minima_idx]
     min_value = pami_values[minima_idx]
 
@@ -703,22 +700,7 @@ def pami(
         hoverinfo="skip",
         showlegend=True,
     )
-    selected_marker = go.Scatter(
-        x=[best_lag],
-        y=[best_value + offset],
-        customdata=[best_value],
-        mode="markers",
-        marker=dict(
-            color="#00d2ff",
-            size=6,
-            symbol="circle",
-        ),
-        name="Optimal Lag",
-        hoverinfo="skip",
-        showlegend=True,
-    )
-
-    fig = go.Figure([pami_bar, band_upper, min_marker, selected_marker])
+    fig = go.Figure([pami_bar, band_upper, min_marker])
     fig.update_layout(
         title="Permutation Auto-Mutual Information (PAMI) by Lag",
         xaxis_title="Lag",

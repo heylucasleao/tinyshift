@@ -25,8 +25,8 @@ from tinyshift.series import (
 from tinyshift.series.decomposition import detrend, extract_mstl_components
 from tinyshift.series.dependence import (
     permutation_auto_mutual_information,
-    select_pami_lag,
 )
+from tinyshift.series.pami import PAMIAnalyzer, create_pami_lags
 from tinyshift.series.diagnostic import (
     seasonal_significance,
     trend_significance,
@@ -622,107 +622,47 @@ class TestForecastability:
         pami = permutation_auto_mutual_information(x)
         assert np.isfinite(pami)
 
-    def test_select_pami_lag(self, monkeypatch):
+    def test_pami_analyzer_finds_all_local_minima(self, monkeypatch):
         pami_values = {1: 0.8, 2: 0.4, 3: 0.7, 4: 0.2}
 
         def fake_pami(values, tau, m, delay, normalize):
             return pami_values[tau]
 
         monkeypatch.setattr(
-            "tinyshift.series.dependence.permutation_auto_mutual_information",
+            "tinyshift.series.pami.permutation_auto_mutual_information",
             fake_pami,
         )
 
-        tau, value, values = select_pami_lag(
-            np.arange(10), max_tau=4, return_mode="value_only"
-        )
+        result = PAMIAnalyzer(max_tau=4).analyze(np.arange(10))
 
-        assert tau == 2
-        assert value == pytest.approx(0.4)
-        np.testing.assert_allclose(values, [0.8, 0.4, 0.7, 0.2])
+        assert result.local_minima == [2]
+        np.testing.assert_allclose(result.values, [0.8, 0.4, 0.7, 0.2])
 
-    def test_select_pami_lag_rejects_missing_fallback(self, monkeypatch):
-        def fake_pami(values, tau, m, delay, normalize):
-            return float(5 - tau)
-
-        monkeypatch.setattr(
-            "tinyshift.series.dependence.permutation_auto_mutual_information",
-            fake_pami,
-        )
-
-        with pytest.raises(ValueError, match="no explicit 'fallback'"):
-            select_pami_lag(np.arange(10), max_tau=4, return_mode="value_only")
-
-    def test_select_pami_lag_uses_explicit_fallback(self, monkeypatch):
-        def fake_pami(values, tau, m, delay, normalize):
-            return float(5 - tau)
-
-        monkeypatch.setattr(
-            "tinyshift.series.dependence.permutation_auto_mutual_information",
-            fake_pami,
-        )
-
-        lags, value, values = select_pami_lag(
-            np.arange(10), max_tau=4, fallback=2, return_mode="point"
-        )
-
-        assert lags == [2]
-        assert value == pytest.approx(3.0)
-        np.testing.assert_allclose(values, [4.0, 3.0, 2.0, 1.0])
-
-    def test_select_pami_lag_returns_nan_for_out_of_bounds_fallback(self, monkeypatch):
-        monkeypatch.setattr(
-            "tinyshift.series.dependence.permutation_auto_mutual_information",
-            lambda values, tau, m, delay, normalize: float(5 - tau),
-        )
-
-        lag, value, _ = select_pami_lag(
-            np.arange(10), max_tau=4, fallback=5, return_mode="value_only"
-        )
-
-        assert lag == 5
-        assert np.isnan(value)
-
-    def test_select_pami_lag_rejects_short_series(self):
+    def test_pami_analyzer_rejects_short_series(self):
         with pytest.raises(ValueError):
-            select_pami_lag(np.arange(3), m=3)
+            PAMIAnalyzer(m=3).analyze(np.arange(3))
 
-    def test_select_pami_lag_return_modes(self, monkeypatch):
-        pami_values = {1: 0.8, 2: 0.6, 3: 0.2, 4: 0.7, 5: 0.5}
-
-        def fake_pami(values, tau, m, delay, normalize):
-            assert normalize is True
-            return pami_values[tau]
-
-        monkeypatch.setattr(
-            "tinyshift.series.dependence.permutation_auto_mutual_information",
-            fake_pami,
-        )
-
-        for return_mode, expected_lags in [
+    def test_create_pami_lags_modes(self):
+        for mode, expected_lags in [
             ("range", [1, 2, 3]),
             ("point", [3]),
-            ("short_term", [1, 2, 3]),
+            ("short", [1, 2, 3]),
         ]:
-            lags, value, values = select_pami_lag(
-                np.arange(10),
-                max_tau=5,
-                normalize=True,
-                return_mode=return_mode,
-                short_term=2,
+            lags = create_pami_lags(
+                {"a": [3, 7]},
+                mode=mode,
+                short=2,
             )
-            assert lags == expected_lags
-            assert value == pytest.approx(0.2)
-            np.testing.assert_allclose(values, [0.8, 0.6, 0.2, 0.7, 0.5])
+            assert lags == {"a": expected_lags}
 
-        lag, value, values = select_pami_lag(
-            np.arange(10), max_tau=5, normalize=True, return_mode="value_only"
-        )
-        assert lag == 3
-        assert value == pytest.approx(0.2)
-        np.testing.assert_allclose(values, [0.8, 0.6, 0.2, 0.7, 0.5])
+    def test_create_pami_lags_applies_fallback_only_when_needed(self):
+        assert create_pami_lags(
+            {"with_minimum": [4], "without_minimum": []},
+            mode="point",
+            fallback=2,
+        ) == {"with_minimum": [4], "without_minimum": [2]}
 
-    def test_select_pami_lag_clips_max_tau_to_valid_range(self, monkeypatch):
+    def test_pami_analyzer_clips_max_tau_to_valid_range(self, monkeypatch):
         evaluated_taus = []
 
         def fake_pami(values, tau, m, delay, normalize):
@@ -730,25 +670,29 @@ class TestForecastability:
             return float(tau)
 
         monkeypatch.setattr(
-            "tinyshift.series.dependence.permutation_auto_mutual_information",
+            "tinyshift.series.pami.permutation_auto_mutual_information",
             fake_pami,
         )
 
-        _, _, values = select_pami_lag(
-            np.arange(8), max_tau=100, m=3, delay=2, fallback=1
-        )
+        result = PAMIAnalyzer(max_tau=100, m=3, delay=2).analyze(np.arange(8))
 
         assert evaluated_taus == [1, 2, 3]
-        np.testing.assert_allclose(values, [1.0, 2.0, 3.0])
+        np.testing.assert_allclose(result.values, [1.0, 2.0, 3.0])
 
-    def test_select_pami_lag_rejects_invalid_return_mode(self, monkeypatch):
+    def test_pami_analyzer_profile_contains_only_id_and_minima(self, monkeypatch):
         monkeypatch.setattr(
-            "tinyshift.series.dependence.permutation_auto_mutual_information",
-            lambda values, tau, m, delay, normalize: float(tau),
+            "tinyshift.series.pami.permutation_auto_mutual_information",
+            lambda values, tau, m, delay, normalize: [0.8, 0.2, 0.7][tau - 1],
+        )
+        frame = pd.DataFrame(
+            {"unique_id": ["a"] * 8, "ds": np.arange(8), "y": np.arange(8.0)}
         )
 
-        with pytest.raises(ValueError, match="Invalid return_mode"):
-            select_pami_lag(np.arange(8), max_tau=3, fallback=1, return_mode="invalid")
+        result = PAMIAnalyzer(max_tau=3).fit(frame).summary()
+
+        assert result.to_dict("records") == [
+            {"unique_id": "a", "local_minima": [2]}
+        ]
 
 
 class TestInterpolation:

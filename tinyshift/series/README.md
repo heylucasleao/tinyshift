@@ -8,13 +8,14 @@ profiling. Forecast evaluation and stabilization belong to
 ## Modules
 
 - `decomposition`: LOWESS detrending and MSTL component extraction.
-- `dependence`: permutation auto-mutual information (PAMI) and lag selection.
+- `dependence`: permutation auto-mutual information (PAMI).
 - `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
   theoretical predictability limit.
 - `intermittency`: ADI, CV², zero proportion, interval variability, and demand
   classification.
 - `outlier`: univariate temporal Hampel and Bollinger detectors.
+- `pami`: panel PAMI analysis and lag creation for forecasting models.
 - `profiler`: one combined diagnostic summary per panel series.
 - `seasonality`: FFT-based candidate-period detection.
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
@@ -31,14 +32,16 @@ profiling. Forecast evaluation and stabilization belong to
   permutation entropy.
 - `permutation_auto_mutual_information`: non-linear dependence between ordinal
   patterns separated by a lag.
-- `select_pami_lag`: selects a lag from the first local minimum of the PAMI curve.
+- `PAMIAnalyzer`: finds every local minimum of each panel series' PAMI curve.
+- `create_pami_lags`: converts minima into DTL/DMSTL lag dictionaries.
 
 ```python
 from tinyshift.series import (
     foreca,
+    PAMIAnalyzer,
+    create_pami_lags,
     permutation_auto_mutual_information,
     permutation_entropy,
-    select_pami_lag,
     spectral_concentration,
     theoretical_limit,
 )
@@ -48,7 +51,9 @@ concentration = spectral_concentration(values)
 complexity = permutation_entropy(values)
 limit = theoretical_limit(values)
 pami = permutation_auto_mutual_information(values, tau=7)
-lags, selected_pami, curve = select_pami_lag(values, max_tau=30, fallback=1)
+pami = PAMIAnalyzer(max_tau=30).fit(df)
+minima = pami.summary()
+lags = pami.lags(mode="short", short=2, fallback=1)
 ```
 
 ## Intermittency, Seasonality, and Variance Ratio

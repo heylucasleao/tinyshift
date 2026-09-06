@@ -1,7 +1,7 @@
 """Time-series analysis, diagnostics, decomposition, and profiling tools."""
 
 from .decomposition import detrend, extract_mstl_components
-from .dependence import permutation_auto_mutual_information, select_pami_lag
+from .dependence import permutation_auto_mutual_information
 from .diagnostic import seasonal_significance, trend_significance, variance_ratio
 from .entropy import (
     permutation_entropy,
@@ -11,6 +11,7 @@ from .entropy import (
 )
 from .intermittency import IntermittencyAnalyzer
 from .outlier import bollinger_bands, hampel_filter
+from .pami import PAMIAnalyzer, PAMIResult, create_pami_lags
 from .profiler import SeriesProfiler
 from .seasonality import SeasonalPeriodDetector
 from .spectral import foreca, spectral_concentration
@@ -30,7 +31,9 @@ __all__ = [
     "regularity_index",
     "sample_entropy",
     "seasonal_significance",
-    "select_pami_lag",
+    "PAMIAnalyzer",
+    "PAMIResult",
+    "create_pami_lags",
     "spectral_concentration",
     "theoretical_limit",
     "trend_significance",

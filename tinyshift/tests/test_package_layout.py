@@ -31,9 +31,10 @@ def test_series_public_api_does_not_leak_module_dependencies():
 def test_series_metrics_live_in_their_domain_modules():
     from tinyshift.series import (
         foreca,
+        PAMIAnalyzer,
+        create_pami_lags,
         permutation_auto_mutual_information,
         permutation_entropy,
-        select_pami_lag,
         theoretical_limit,
     )
 
@@ -44,4 +45,5 @@ def test_series_metrics_live_in_their_domain_modules():
         permutation_auto_mutual_information.__module__
         == "tinyshift.series.dependence"
     )
-    assert select_pami_lag.__module__ == "tinyshift.series.dependence"
+    assert PAMIAnalyzer.__module__ == "tinyshift.series.pami"
+    assert create_pami_lags.__module__ == "tinyshift.series.pami"

@@ -13,7 +13,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.forecasting.stabilization import hfi, hpi
 from tinyshift.series.decomposition import extract_mstl_components
-from tinyshift.series.dependence import select_pami_lag
+from tinyshift.series.pami import PAMIAnalyzer, create_pami_lags
 from tinyshift.series.seasonality import SeasonalPeriodDetector
 
 
@@ -183,25 +183,17 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         """Calculate PAMI lags for one SKU, regardless of residual strategy."""
         configured_lags = self._get_sku_config(self.nlags, uid)
         if configured_lags == "auto":
-            selected_lag, _, _ = select_pami_lag(
-                residual_part, **(self.pami_params or {})
-            )
-
-            if selected_lag is None or (
-                isinstance(selected_lag, (list, tuple, np.ndarray))
-                and len(selected_lag) == 0
-            ):
-                raise ValueError(
-                    f"Could not automatically select residual lag via PAMI for unique_id {uid!r}. "
-                    f"Consider specifying explicit lags or a dictionary mapping in 'nlags' "
-                    f"(e.g., nlags={{{uid!r}: 1}} or nlags={{{uid!r}: [1, 2, 3]}}), "
-                    f"or adjusting 'pami_params'."
-                )
-
-            if isinstance(selected_lag, int):
-                return [max(selected_lag, 1)]
-
-            return list(selected_lag) or [1]
+            params = dict(self.pami_params or {})
+            mode = params.pop("mode", "range")
+            fallback = params.pop("fallback", 1)
+            short = params.pop("short", 1)
+            result = PAMIAnalyzer(**params).analyze(residual_part)
+            return create_pami_lags(
+                {uid: result.local_minima},
+                mode=mode,
+                fallback=fallback,
+                short=short,
+            )[uid]
 
         if isinstance(configured_lags, int) and configured_lags > 0:
             return list(range(1, configured_lags + 1))
