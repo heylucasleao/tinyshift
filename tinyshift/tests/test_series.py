@@ -745,6 +745,19 @@ class TestMetric:
         value = fva_rmae(y_true, y_pred)
         assert np.isfinite(value)
 
+    def test_fva_rmae_moving_average_preserves_initial_window_behavior(self):
+        y_true = np.array([1.0, 3.0, 5.0, 7.0])
+        y_pred = np.array([1.0, 2.0, 4.0, 6.0])
+
+        value = fva_rmae(
+            y_true,
+            y_pred,
+            baseline_type="moving_average",
+            window_size=2,
+        )
+
+        assert value == pytest.approx(3 / 7)
+
     def test_forecast_instability(self):
         df = pd.DataFrame(
             {
@@ -799,3 +812,10 @@ class TestOutlier:
         outliers = bollinger_bands(x, window_size=2)
         assert outliers.dtype == bool
         assert len(outliers) == len(x)
+
+    def test_bollinger_bands_preserves_population_standard_deviation(self):
+        x = np.array([0.0, 2.0, 4.0])
+
+        result = bollinger_bands(x, window_size=2, factor=0.8)
+
+        assert result.tolist() == [True, True, True]
