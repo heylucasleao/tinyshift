@@ -29,6 +29,31 @@ decomposition, evaluation, and stabilization belong to
 - `PAMIAnalyzer`: finds every local minimum of each panel series' PAMI curve.
 - `create_pami_lags`: converts minima into DTL/DMSTL lag dictionaries.
 
+## Forecastability Dimensions
+
+Forecastability is best understood as a multidimensional diagnostic rather than
+as a single score. The tools in this module inspect complementary sources of
+predictable structure:
+
+$$
+\mathrm{Forecastability}
+\;\leftarrow\;
+\begin{cases}
+\mathrm{regularity} & \mathrm{sample\ entropy\ and\ regularity\ index} \\
+\mathrm{periodicity} & \mathrm{seasonality\ analyzer\ and\ harmonic\ tests} \\
+\mathrm{spectral\ structure} & \mathrm{ForeCA\ and\ spectral\ concentration} \\
+\mathrm{persistence} & \mathrm{variance\ ratio\ and\ temporal\ dependence} \\
+\mathrm{intermittency} & \mathrm{intermittency\ analyzer} \\
+\mathrm{ordinal\ predictability} & \mathrm{permutation\ entropy\ and\ theoretical\ limit}
+\end{cases}
+$$
+
+These dimensions should be interpreted together. For example, a series may have
+strong periodicity but weak persistence, or a concentrated spectrum while still
+being highly intermittent. The resulting profile is useful for choosing a
+forecasting strategy and model assumptions, but it is not an additive
+forecastability formula.
+
 ```python
 from tinyshift.series import (
     foreca,
