@@ -147,11 +147,11 @@ class VarianceRatioAnalyzer:
         }
         return self
 
-    def profile(self) -> pd.DataFrame:
+    def summary(self) -> pd.DataFrame:
         """Return one row per series and evaluated horizon."""
         if not hasattr(self, "results_"):
             raise RuntimeError(
-                "The analyzer must be fitted before calling `profile()`."
+                "The analyzer must be fitted before calling `summary()`."
             )
 
         rows = [

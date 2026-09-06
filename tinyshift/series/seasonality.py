@@ -432,7 +432,7 @@ class SeasonalPeriodDetector:
 
         return self
 
-    def profile(self) -> pd.DataFrame:
+    def summary(self) -> pd.DataFrame:
         """Return detected candidate periods with one row per series.
 
         Returns
@@ -447,7 +447,7 @@ class SeasonalPeriodDetector:
         """
         if not hasattr(self, "results_"):
             raise RuntimeError(
-                "The detector must be fitted before calling `profile()`."
+                "The detector must be fitted before calling `summary()`."
             )
 
         columns = ["candidate_periods"]

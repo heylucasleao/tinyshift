@@ -177,10 +177,6 @@ class PAMIAnalyzer:
             columns=[self.id_col_, "local_minima"],
         )
 
-    def profile(self) -> pd.DataFrame:
-        """Return the same compact table as :meth:`summary`."""
-        return self.summary()
-
     def lags(
         self,
         *,

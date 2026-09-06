@@ -65,9 +65,9 @@ from tinyshift.series import (
     VarianceRatioAnalyzer,
 )
 
-intermittency = IntermittencyAnalyzer().fit(df).profile()
-seasonality = SeasonalPeriodDetector(top_k=2).fit(df).profile()
-dependence = VarianceRatioAnalyzer().fit(df).profile()
+intermittency = IntermittencyAnalyzer().fit(df).summary()
+seasonality = SeasonalPeriodDetector(top_k=2).fit(df).summary()
+dependence = VarianceRatioAnalyzer().fit(df).summary()
 ```
 
 `IntermittencyAnalyzer` classifies demand as smooth, intermittent, erratic, or

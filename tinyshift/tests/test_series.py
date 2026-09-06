@@ -301,7 +301,7 @@ class TestVarianceRatioAnalyzer:
         )
 
         analyzer = VarianceRatioAnalyzer().fit(frame)
-        result = analyzer.profile()
+        result = analyzer.summary()
 
         assert result.columns.tolist() == [
             "unique_id",
@@ -326,21 +326,21 @@ class TestVarianceRatioAnalyzer:
             frame, id_col="item", time_col="date", target_col="value"
         )
 
-        assert analyzer.profile()["horizon"].tolist() == [2, 4, 8]
+        assert analyzer.summary()["horizon"].tolist() == [2, 4, 8]
 
     def test_constant_series_produces_undefined_statistics(self):
         frame = pd.DataFrame(
             {"unique_id": "a", "ds": np.arange(30), "y": np.ones(30)}
         )
 
-        result = VarianceRatioAnalyzer().fit(frame).profile()
+        result = VarianceRatioAnalyzer().fit(frame).summary()
 
         assert result["horizon"].tolist() == [2]
         assert result[["variance_ratio", "z_statistic", "p_value"]].isna().all().all()
 
     def test_profile_requires_fit(self):
         with pytest.raises(RuntimeError, match="fitted"):
-            VarianceRatioAnalyzer().profile()
+            VarianceRatioAnalyzer().summary()
 
     def test_trend_significance(self):
         x = np.linspace(0, 10, 40)
@@ -431,7 +431,7 @@ class TestIntermittencyAnalyzer:
             }
         )
 
-        result = IntermittencyAnalyzer().fit(frame).profile()
+        result = IntermittencyAnalyzer().fit(frame).summary()
 
         assert result.columns.tolist() == [
             "unique_id",
@@ -452,15 +452,15 @@ class TestIntermittencyAnalyzer:
             frame, id_col="item", time_col="date", target_col="demand"
         )
 
-        assert analyzer.profile()["item"].tolist() == ["a"]
+        assert analyzer.summary()["item"].tolist() == ["a"]
         assert analyzer.id_col_ == "item"
 
     def test_profile_requires_fit(self):
         with pytest.raises(RuntimeError, match="fitted"):
-            IntermittencyAnalyzer().profile()
+            IntermittencyAnalyzer().summary()
 
         with pytest.raises(RuntimeError, match="fitted"):
-            SeasonalPeriodDetector().profile()
+            SeasonalPeriodDetector().summary()
 
     def test_seasonality_profile_returns_one_row_per_series(self):
         steps = np.arange(32)
@@ -472,7 +472,7 @@ class TestIntermittencyAnalyzer:
             }
         )
 
-        profile = SeasonalPeriodDetector(top_k=1).fit(frame).profile()
+        profile = SeasonalPeriodDetector(top_k=1).fit(frame).summary()
 
         assert profile.to_dict("records") == [
             {"unique_id": "a", "candidate_periods": [8]},
@@ -623,7 +623,7 @@ class TestForecastability:
         assert np.isfinite(pami)
 
     def test_pami_analyzer_finds_all_local_minima(self, monkeypatch):
-        pami_values = {1: 0.8, 2: 0.4, 3: 0.7, 4: 0.2}
+        pami_values = {1: 0.8, 2: 0.4, 3: 0.7, 4: 0.2, 5: 0.6}
 
         def fake_pami(values, tau, m, delay, normalize):
             return pami_values[tau]
@@ -633,10 +633,10 @@ class TestForecastability:
             fake_pami,
         )
 
-        result = PAMIAnalyzer(max_tau=4).analyze(np.arange(10))
+        result = PAMIAnalyzer(max_tau=5).analyze(np.arange(10))
 
-        assert result.local_minima == [2]
-        np.testing.assert_allclose(result.values, [0.8, 0.4, 0.7, 0.2])
+        assert result.local_minima == [2, 4]
+        np.testing.assert_allclose(result.values, [0.8, 0.4, 0.7, 0.2, 0.6])
 
     def test_pami_analyzer_rejects_short_series(self):
         with pytest.raises(ValueError):
@@ -662,6 +662,9 @@ class TestForecastability:
             fallback=2,
         ) == {"with_minimum": [4], "without_minimum": [2]}
 
+    def test_create_pami_lags_uses_first_local_minimum(self):
+        assert create_pami_lags({"a": [4, 9]}, mode="point") == {"a": [4]}
+
     def test_pami_analyzer_clips_max_tau_to_valid_range(self, monkeypatch):
         evaluated_taus = []
 
@@ -679,7 +682,7 @@ class TestForecastability:
         assert evaluated_taus == [1, 2, 3]
         np.testing.assert_allclose(result.values, [1.0, 2.0, 3.0])
 
-    def test_pami_analyzer_profile_contains_only_id_and_minima(self, monkeypatch):
+    def test_pami_analyzer_summary_contains_only_id_and_minima(self, monkeypatch):
         monkeypatch.setattr(
             "tinyshift.series.pami.permutation_auto_mutual_information",
             lambda values, tau, m, delay, normalize: [0.8, 0.2, 0.7][tau - 1],
@@ -693,6 +696,16 @@ class TestForecastability:
         assert result.to_dict("records") == [
             {"unique_id": "a", "local_minima": [2]}
         ]
+
+    def test_analyzers_expose_summary_without_profile(self):
+        for analyzer in (
+            IntermittencyAnalyzer(),
+            SeasonalPeriodDetector(),
+            VarianceRatioAnalyzer(),
+            PAMIAnalyzer(),
+        ):
+            assert hasattr(analyzer, "summary")
+            assert not hasattr(analyzer, "profile")
 
 
 class TestInterpolation:

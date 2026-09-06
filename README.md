@@ -262,7 +262,7 @@ print(f"Theoretical Limit (Πmax): {theo_limit}")
 ratio, z_statistic, p_value = variance_ratio(time_series, horizon=7)
 
 # Compare several horizons across a panel
-vr_profile = VarianceRatioAnalyzer().fit(df).profile()
+vr_summary = VarianceRatioAnalyzer().fit(df).summary()
 
 # Combined diagnostics for a Nixtla-style panel
 summary = SeriesProfiler().fit(df).summary()
@@ -565,7 +565,7 @@ tinyshift/
 │   ├── dtl.ipynb                # Trend/residual forecasting example
 │   ├── outlier.ipynb            # Outlier detection demos
 │   ├── power_analysis.ipynb     # Statistical power analysis
-│   ├── series_profiler.ipynb    # Time series profiling
+│   ├── diagnostic.ipynb         # Time series diagnostics and profiling
 │   ├── transaction_analyzer.ipynb  # Transaction analysis examples
 │   └── tsf.ipynb                # Probabilistic forecasting example
 ├── features/                    # Feature-engineering helpers

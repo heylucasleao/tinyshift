@@ -85,7 +85,7 @@ class IntermittencyAnalyzer:
     >>> analyzer.fit(data, id_col="unique_id", time_col="ds", target_col="y")
     IntermittencyAnalyzer(...)
 
-    >>> analyzer.profile()
+    >>> analyzer.summary()
       unique_id  adi   cv2  zero_proportion  interval_cv classification
     0     item_a  ...   ...              ...          ...            ...
     1     item_b  ...   ...              ...          ...            ...
@@ -375,7 +375,7 @@ class IntermittencyAnalyzer:
 
         return self
 
-    def profile(
+    def summary(
         self,
     ) -> pd.DataFrame:
         """
@@ -399,7 +399,7 @@ class IntermittencyAnalyzer:
         """
         if not hasattr(self, "results_"):
             raise RuntimeError(
-                "The analyzer must be fitted before calling `profile()`."
+                "The analyzer must be fitted before calling `summary()`."
             )
 
         columns = [
