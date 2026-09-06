@@ -9,7 +9,7 @@ profiling. Forecast evaluation and stabilization belong to
 
 - `decomposition`: LOWESS detrending and MSTL component extraction.
 - `dependence`: permutation auto-mutual information (PAMI) and lag selection.
-- `diagnostic`: Hurst exponent and trend/seasonal significance.
+- `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
   theoretical predictability limit.
 - `intermittency`: ADI, CV², zero proportion, interval variability, and demand
@@ -18,6 +18,7 @@ profiling. Forecast evaluation and stabilization belong to
 - `profiler`: one combined diagnostic summary per panel series.
 - `seasonality`: FFT-based candidate-period detection.
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
+- `variance_ratio`: multi-horizon variance-ratio analysis for panel series.
 
 ## Spectral, Entropy, and Dependence Metrics
 
@@ -50,22 +51,28 @@ pami = permutation_auto_mutual_information(values, tau=7)
 lags, selected_pami, curve = select_pami_lag(values, max_tau=30, fallback=1)
 ```
 
-## Intermittency and Seasonality
+## Intermittency, Seasonality, and Variance Ratio
 
 ```python
-from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
+from tinyshift.series import (
+    IntermittencyAnalyzer,
+    SeasonalPeriodDetector,
+    VarianceRatioAnalyzer,
+)
 
 intermittency = IntermittencyAnalyzer().fit(df).profile()
 seasonality = SeasonalPeriodDetector(top_k=2).fit(df).profile()
+dependence = VarianceRatioAnalyzer().fit(df).profile()
 ```
 
 `IntermittencyAnalyzer` classifies demand as smooth, intermittent, erratic, or
 lumpy. `SeasonalPeriodDetector` identifies candidate seasonal periods from
-significant spectral peaks.
+significant spectral peaks. `VarianceRatioAnalyzer` reports persistence or
+mean reversion at logarithmically spaced horizons for each series.
 
 ## Diagnostics and Decomposition
 
-- `hurst_exponent`: long-memory estimate and random-walk p-value.
+- `variance_ratio`: persistence or mean reversion at one aggregation horizon.
 - `trend_significance`: linear trend R² and slope p-value.
 - `seasonal_significance`: seasonal strength and harmonic-regression F-test.
 - `detrend`: LOWESS trend and residual extraction for panel data.
@@ -88,9 +95,9 @@ summary = SeriesProfiler(top_k=2).fit(
 ```
 
 The result contains `adi`, `cv2`, `zero_prop`, `interval_cv`, `class`, `foreca`,
-`limit`, `hurst`, `trend_r2`, `trend_pvalue`, `spectral_conc`, and
-`candidate_periods`. Each series needs at least 30 observations because the
-profile includes the Hurst exponent.
+`limit`, `trend_r2`, `trend_pvalue`, `spectral_conc`, and
+`candidate_periods`. Variance-ratio analysis remains available independently
+through `VarianceRatioAnalyzer`.
 
 ## Outlier Detection
 

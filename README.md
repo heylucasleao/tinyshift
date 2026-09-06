@@ -225,7 +225,8 @@ from tinyshift.series import (
     sample_entropy,
     permutation_entropy,
     theoretical_limit,
-    hurst_exponent,
+    variance_ratio,
+    VarianceRatioAnalyzer,
     SeriesProfiler,
     hampel_filter,
     bollinger_bands
@@ -257,9 +258,11 @@ print(f"Permutation Entropy: {perm_entropy}")
 theo_limit = theoretical_limit(time_series, m=3, delay=1)
 print(f"Theoretical Limit (Πmax): {theo_limit}")
 
-# Detect long-term memory
-hurst, p_value = hurst_exponent(time_series)
-print(f"Hurst Exponent: {hurst}, P-value: {p_value}")
+# Inspect persistence at one horizon
+ratio, z_statistic, p_value = variance_ratio(time_series, horizon=7)
+
+# Compare several horizons across a panel
+vr_profile = VarianceRatioAnalyzer().fit(df).profile()
 
 # Combined diagnostics for a Nixtla-style panel
 summary = SeriesProfiler().fit(df).summary()
