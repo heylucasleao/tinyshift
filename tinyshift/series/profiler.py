@@ -4,9 +4,10 @@ import numpy as np
 import pandas as pd
 
 from .diagnostic import hurst_exponent, trend_significance
-from .forecastability import foreca, spectral_concentration, theoretical_limit
+from .entropy import theoretical_limit
 from .intermittency import IntermittencyAnalyzer
 from .seasonality import SeasonalPeriodDetector
+from .spectral import foreca, spectral_concentration
 
 
 class SeriesProfiler:

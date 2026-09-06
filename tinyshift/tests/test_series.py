@@ -18,23 +18,25 @@ from tinyshift.forecasting.metrics import (
 from tinyshift.forecasting.stabilization import hfi, hpi, vi
 from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
 from tinyshift.series.decomposition import detrend, extract_mstl_components
+from tinyshift.series.dependence import (
+    permutation_auto_mutual_information,
+    select_pami_lag,
+)
 from tinyshift.series.diagnostic import (
     hurst_exponent,
     seasonal_significance,
     trend_significance,
 )
-from tinyshift.series.forecastability import (
-    foreca,
-    permutation_auto_mutual_information,
+from tinyshift.series.entropy import (
     permutation_entropy,
     regularity_index,
     sample_entropy,
-    select_pami_lag,
     theoretical_limit,
 )
 from tinyshift.series.intermittency import IntermittencyAnalyzer as CanonicalAnalyzer
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
 from tinyshift.series.profiler import SeriesProfiler
+from tinyshift.series.spectral import foreca
 
 
 def test_economic_loss_aggregates_understock_and_overstock_by_id():
@@ -553,7 +555,7 @@ class TestForecastability:
             return pami_values[tau]
 
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            "tinyshift.series.dependence.permutation_auto_mutual_information",
             fake_pami,
         )
 
@@ -570,7 +572,7 @@ class TestForecastability:
             return float(5 - tau)
 
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            "tinyshift.series.dependence.permutation_auto_mutual_information",
             fake_pami,
         )
 
@@ -582,7 +584,7 @@ class TestForecastability:
             return float(5 - tau)
 
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            "tinyshift.series.dependence.permutation_auto_mutual_information",
             fake_pami,
         )
 
@@ -596,7 +598,7 @@ class TestForecastability:
 
     def test_select_pami_lag_returns_nan_for_out_of_bounds_fallback(self, monkeypatch):
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            "tinyshift.series.dependence.permutation_auto_mutual_information",
             lambda values, tau, m, delay, normalize: float(5 - tau),
         )
 
@@ -619,7 +621,7 @@ class TestForecastability:
             return pami_values[tau]
 
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            "tinyshift.series.dependence.permutation_auto_mutual_information",
             fake_pami,
         )
 
@@ -654,7 +656,7 @@ class TestForecastability:
             return float(tau)
 
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            "tinyshift.series.dependence.permutation_auto_mutual_information",
             fake_pami,
         )
 
@@ -667,7 +669,7 @@ class TestForecastability:
 
     def test_select_pami_lag_rejects_invalid_return_mode(self, monkeypatch):
         monkeypatch.setattr(
-            "tinyshift.series.forecastability.permutation_auto_mutual_information",
+            "tinyshift.series.dependence.permutation_auto_mutual_information",
             lambda values, tau, m, delay, normalize: float(tau),
         )
 

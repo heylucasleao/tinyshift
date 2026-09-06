@@ -169,8 +169,9 @@ Forecast stabilization is exposed canonically from `tinyshift.forecasting`.
 
 ## Notes
 
-- The `series` module exposes analysis tools from `decomposition`, `diagnostic`,
-  `forecastability`, `intermittency`, `outlier`, `profiler`, and `seasonality`.
+- The `series` module exposes analysis tools from `decomposition`, `dependence`,
+  `diagnostic`, `entropy`, `intermittency`, `outlier`, `profiler`, `seasonality`,
+  and `spectral`.
 - Forecast metrics and stabilization live in `tinyshift.forecasting`.
 - For decomposed forecasting wrappers such as `DMSTLWrapper`, see `tinyshift.forecasting`.
 

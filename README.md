@@ -597,11 +597,15 @@ tinyshift/
 ├── series/                      # Time series analysis tools
 │   ├── README.md                # Module documentation
 │   ├── __init__.py              # Package exports
-│   ├── diagnostic.py            # Time series diagnostics and decomposition
-│   ├── forecastability.py       # Forecast quality and complexity metrics
-│   ├── interpolation.py         # Forecast stabilization methods
-│   ├── metric.py                # Forecast accuracy and stability metrics
+│   ├── decomposition.py         # Trend and seasonal decomposition helpers
+│   ├── dependence.py            # Temporal dependence and lag selection
+│   ├── diagnostic.py            # Statistical time series diagnostics
+│   ├── entropy.py               # Entropy and ordinal complexity metrics
+│   ├── intermittency.py         # Intermittent-demand analysis
 │   ├── outlier.py               # Time series outlier detection
+│   ├── profiler.py              # Combined series profiling
+│   ├── seasonality.py           # Seasonal-period detection
+│   └── spectral.py              # Spectral analysis and forecastability metrics
 └── stats/                       # Statistical utilities
     ├── __init__.py              # Package exports
     ├── bootstrap_bca.py         # Bootstrap confidence intervals

@@ -1,21 +1,19 @@
 """Time-series analysis, diagnostics, decomposition, and profiling tools."""
 
 from .decomposition import detrend, extract_mstl_components
+from .dependence import permutation_auto_mutual_information, select_pami_lag
 from .diagnostic import hurst_exponent, seasonal_significance, trend_significance
-from .forecastability import (
-    foreca,
-    permutation_auto_mutual_information,
+from .entropy import (
     permutation_entropy,
     regularity_index,
     sample_entropy,
-    select_pami_lag,
-    spectral_concentration,
     theoretical_limit,
 )
 from .intermittency import IntermittencyAnalyzer
 from .outlier import bollinger_bands, hampel_filter
 from .profiler import SeriesProfiler
 from .seasonality import SeasonalPeriodDetector
+from .spectral import foreca, spectral_concentration
 
 __all__ = [
     "IntermittencyAnalyzer",

@@ -26,3 +26,22 @@ def test_series_public_api_does_not_leak_module_dependencies():
     assert not hasattr(series, "List")
     assert not hasattr(series, "hfi")
     assert not hasattr(series, "wape")
+
+
+def test_series_metrics_live_in_their_domain_modules():
+    from tinyshift.series import (
+        foreca,
+        permutation_auto_mutual_information,
+        permutation_entropy,
+        select_pami_lag,
+        theoretical_limit,
+    )
+
+    assert foreca.__module__ == "tinyshift.series.spectral"
+    assert permutation_entropy.__module__ == "tinyshift.series.entropy"
+    assert theoretical_limit.__module__ == "tinyshift.series.entropy"
+    assert (
+        permutation_auto_mutual_information.__module__
+        == "tinyshift.series.dependence"
+    )
+    assert select_pami_lag.__module__ == "tinyshift.series.dependence"

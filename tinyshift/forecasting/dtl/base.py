@@ -13,7 +13,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.forecasting.stabilization import hfi, hpi
 from tinyshift.series.decomposition import detrend
-from tinyshift.series.forecastability import select_pami_lag
+from tinyshift.series.dependence import select_pami_lag
 
 
 class BaseDTL(BaseEstimator, RegressorMixin):
