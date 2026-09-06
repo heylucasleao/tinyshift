@@ -135,6 +135,7 @@ def bollinger_bands(
     Notes
     -----
     - The Bollinger Bands are calculated using a rolling window approach.
+    - The rolling standard deviation uses the sample convention (ddof=1).
     - Outliers are points outside the upper or lower band.
     """
     index = X.index if isinstance(X, pd.Series) else pd.RangeIndex(len(X))
@@ -157,10 +158,6 @@ def bollinger_bands(
 
     centers = rolling_mean(X, window_size=window_size)
     spreads = rolling_std(X, window_size=window_size)
-
-    # coreforecast uses the sample standard deviation; Bollinger Bands use the
-    # population standard deviation in TinyShift.
-    spreads *= np.sqrt((window_size - 1) / window_size)
 
     first = window_size - 1
     centers[:first] = centers[first]
