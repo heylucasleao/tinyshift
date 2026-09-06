@@ -19,7 +19,7 @@ from tinyshift.forecasting.metrics import (
 from tinyshift.forecasting.stabilization import hfi, hpi, vi
 from tinyshift.series import (
     IntermittencyAnalyzer,
-    SeasonalPeriodDetector,
+    SeasonalityAnalyzer,
     VarianceRatioAnalyzer,
 )
 from tinyshift.series.decomposition import detrend, extract_mstl_components
@@ -29,7 +29,8 @@ from tinyshift.series.dependence import (
 from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
 from tinyshift.series.analyzers.base import BaseSeriesAnalyzer
 from tinyshift.series.diagnostic import (
-    seasonal_significance,
+    harmonic_significance,
+    seasonal_strength,
     trend_significance,
     variance_ratio,
 )
@@ -187,7 +188,7 @@ class TestDiagnostic:
     def test_seasonal_period_detector_detects_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector().fit(frame).results_["a"]["candidate_periods"]
+        periods = SeasonalityAnalyzer().fit(frame).results_["a"]["candidate_periods"]
         assert 8 in periods
         assert periods == sorted(set(periods))
 
@@ -196,7 +197,7 @@ class TestDiagnostic:
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
         periods = (
-            SeasonalPeriodDetector(top_k=1)
+            SeasonalityAnalyzer(top_k=1)
             .fit(frame)
             .results_["a"]["candidate_periods"]
         )
@@ -208,7 +209,7 @@ class TestDiagnostic:
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
         periods = (
-            SeasonalPeriodDetector(top_k=1)
+            SeasonalityAnalyzer(top_k=1)
             .fit(frame)
             .results_["a"]["candidate_periods"]
         )
@@ -219,7 +220,7 @@ class TestDiagnostic:
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         x[[3, 17]] = np.nan
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        detector = SeasonalPeriodDetector(top_k=1).fit(frame)
+        detector = SeasonalityAnalyzer(top_k=1).fit(frame)
 
         assert len(detector.results_["a"]["frequencies"]) == 17
 
@@ -232,7 +233,7 @@ class TestDiagnostic:
     ):
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": np.ones(32)})
         periods = (
-            SeasonalPeriodDetector(fallback=fallback)
+            SeasonalityAnalyzer(fallback=fallback)
             .fit(frame)
             .results_["a"]["candidate_periods"]
         )
@@ -254,7 +255,7 @@ class TestDiagnostic:
             }
         )
 
-        results = SeasonalPeriodDetector(top_k=1).fit(frame).results_
+        results = SeasonalityAnalyzer(top_k=1).fit(frame).results_
         assert results["weekly"]["candidate_periods"] == [8]
         assert results["biweekly"]["candidate_periods"] == [16]
 
@@ -268,7 +269,7 @@ class TestDiagnostic:
             }
         )
 
-        detector = SeasonalPeriodDetector(top_k=1).fit(
+        detector = SeasonalityAnalyzer(top_k=1).fit(
             frame,
             time_col="timestamp",
             target_col="value",
@@ -355,11 +356,10 @@ class TestVarianceRatioAnalyzer:
         assert r_squared >= 0.0
         assert np.isfinite(p_value)
 
-    def test_seasonal_significance(self):
+    def test_seasonal_strength_and_harmonic_significance(self):
         y = np.array([0, 1, 0, -1, 0, 1, 0, -1], dtype=float)
-        strength, f_stat, p_value = seasonal_significance(
-            y, y, np.zeros_like(y), period=4
-        )
+        strength = seasonal_strength(y, np.zeros_like(y))
+        f_stat, p_value = harmonic_significance(y, period=4)
         assert 0.0 <= strength <= 1.0
         assert np.isfinite(f_stat)
         assert np.isfinite(p_value)
@@ -391,16 +391,16 @@ class TestVarianceRatioAnalyzer:
 
     def test_seasonal_period_detector_raises_for_invalid_input(self):
         with pytest.raises(TypeError, match="panel format"):
-            SeasonalPeriodDetector().fit(np.array([1.0, 2.0, 3.0]))
+            SeasonalityAnalyzer().fit(np.array([1.0, 2.0, 3.0]))
 
         with pytest.raises(ValueError):
-            SeasonalPeriodDetector(top_k=0).fit(np.array([1.0, 2.0, 3.0, 4.0]))
+            SeasonalityAnalyzer(top_k=0).fit(np.array([1.0, 2.0, 3.0, 4.0]))
 
         with pytest.raises(ValueError, match="required columns"):
-            SeasonalPeriodDetector().fit(pd.DataFrame({"y": [1.0, 2.0, 3.0, 4.0]}))
+            SeasonalityAnalyzer().fit(pd.DataFrame({"y": [1.0, 2.0, 3.0, 4.0]}))
 
         with pytest.raises(ValueError, match="required columns"):
-            SeasonalPeriodDetector().fit(
+            SeasonalityAnalyzer().fit(
                 pd.DataFrame(
                     {
                         "unique_id": ["a"] * 4,
@@ -413,12 +413,12 @@ class TestVarianceRatioAnalyzer:
     @pytest.mark.parametrize("fallback", [0, -1, True, [7, "30"]])
     def test_seasonal_period_detector_rejects_invalid_fallback(self, fallback):
         with pytest.raises(ValueError, match="fallback"):
-            SeasonalPeriodDetector(fallback=fallback)
+            SeasonalityAnalyzer(fallback=fallback)
 
     @pytest.mark.parametrize("factor", [np.nan, np.inf, True])
     def test_seasonal_period_detector_rejects_invalid_noise_factor(self, factor):
         with pytest.raises(ValueError, match="noise_threshold_factor"):
-            SeasonalPeriodDetector(noise_threshold_factor=factor)
+            SeasonalityAnalyzer(noise_threshold_factor=factor)
 
 
 class TestIntermittencyAnalyzer:
@@ -467,9 +467,9 @@ class TestIntermittencyAnalyzer:
             IntermittencyAnalyzer().summary()
 
         with pytest.raises(RuntimeError, match="fitted"):
-            SeasonalPeriodDetector().summary()
+            SeasonalityAnalyzer().summary()
 
-    def test_seasonality_profile_returns_one_row_per_series(self):
+    def test_seasonality_summary_returns_candidates_and_significant_periods(self):
         steps = np.arange(32)
         frame = pd.DataFrame(
             {
@@ -479,14 +479,24 @@ class TestIntermittencyAnalyzer:
             }
         )
 
-        profile = SeasonalPeriodDetector(top_k=1).fit(frame).summary()
+        profile = SeasonalityAnalyzer(top_k=1).fit(frame).summary()
 
         assert profile.to_dict("records") == [
-            {"unique_id": "a", "candidate_periods": [8]},
-            {"unique_id": "b", "candidate_periods": [8]},
+            {
+                "unique_id": "a",
+                "candidate_periods": [8],
+                "significant_periods": [8],
+            },
+            {
+                "unique_id": "b",
+                "candidate_periods": [8],
+                "significant_periods": [8],
+            },
         ]
-        assert set(SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]) == {
+        assert set(SeasonalityAnalyzer(top_k=1).fit(frame).results_["a"]) == {
             "candidate_periods",
+            "significant_periods",
+            "seasonalities",
             "frequencies",
             "power",
             "peaks",
@@ -707,7 +717,7 @@ class TestForecastability:
     def test_analyzers_expose_summary_without_profile(self):
         for analyzer in (
             IntermittencyAnalyzer(),
-            SeasonalPeriodDetector(),
+            SeasonalityAnalyzer(),
             VarianceRatioAnalyzer(),
             PAMIAnalyzer(),
         ):

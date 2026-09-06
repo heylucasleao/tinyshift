@@ -77,8 +77,9 @@ def seasonal_decompose(
     import plotly.express as px
     import plotly.graph_objs as go
     from tinyshift.series import (
+        harmonic_significance,
+        seasonal_strength,
         trend_significance,
-        seasonal_significance,
         extract_mstl_components,
     )
 
@@ -112,12 +113,11 @@ def seasonal_decompose(
     y_detrended = X_series.values - components_df["trend"].values
     for p in period_list:
         s_col = f"seasonal_{p}"
-        strength, f_stat, p_val_seas = seasonal_significance(
-            y_detrended=y_detrended,
-            seasonal_component=components_df[s_col].values,
-            residuals=components_df["resid"].values,
-            period=p,
+        strength = seasonal_strength(
+            components_df[s_col].values,
+            components_df["resid"].values,
         )
+        f_stat, p_val_seas = harmonic_significance(y_detrended, period=p)
         summary_dict[f"Seasonality (Period {p})"] = (
             f"Strength={strength:.4f} | F-Test={f_stat:.4f}, p={p_val_seas:.4f}"
         )

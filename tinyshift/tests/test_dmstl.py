@@ -227,7 +227,7 @@ class TestDMSTLWrapper:
         ):
             wrapper._resolve_seasonal_periods("sku_404", series)
 
-    @patch("tinyshift.forecasting.dmstl.base.SeasonalPeriodDetector")
+    @patch("tinyshift.forecasting.dmstl.base.SeasonalityAnalyzer")
     def test_auto_detection_fits_the_complete_panel_once(self, detector_class):
         frame = pd.DataFrame(
             {

@@ -14,7 +14,7 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from tinyshift.forecasting.stabilization import hfi, hpi
 from tinyshift.series.decomposition import extract_mstl_components
 from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
-from tinyshift.series.analyzers.seasonality import SeasonalPeriodDetector
+from tinyshift.series.analyzers.seasonality import SeasonalityAnalyzer
 
 
 class BaseDMSTL(BaseEstimator, RegressorMixin):
@@ -82,7 +82,7 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             detection_df = detection_df.copy()
             detection_df[self.target_col_] = np.log1p(detection_df[self.target_col_])
 
-        self.seasonal_detector_ = SeasonalPeriodDetector(
+        self.seasonal_detector_ = SeasonalityAnalyzer(
             **(self.seasonal_detection_params or {})
         ).fit(
             detection_df,

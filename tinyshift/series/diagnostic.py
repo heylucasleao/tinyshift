@@ -185,47 +185,33 @@ def trend_significance(
     return r_squared, p_value
 
 
-def seasonal_significance(
-    y_detrended: Union[np.ndarray, List[float], pd.Series],
+def seasonal_strength(
     seasonal_component: Union[np.ndarray, List[float], pd.Series],
     residuals: Union[np.ndarray, List[float], pd.Series],
-    period: int,
-) -> Tuple[float, float, float]:
-    """
-    Calculates seasonal strength (Hyndman's metric) and performs an F-test
-    for seasonal significance using harmonic regression terms.
-
-    Parameters
-    ----------
-    y_detrended : Union[np.ndarray, List[float], pd.Series]
-        The time series data after trend removal.
-    seasonal_component : Union[np.ndarray, List[float], pd.Series]
-        The extracted seasonal component for the given period.
-    residuals : Union[np.ndarray, List[float], pd.Series]
-        The residual component from the decomposition.
-    period : int
-        The length of the seasonal cycle (e.g., 7 for weekly, 12 for monthly).
-
-    Returns
-    -------
-    Tuple[float, float, float]
-        (strength, f_stat, p_value)
-        strength : float
-            Seasonal strength index ranging from 0 to 1.
-        f_stat : float
-            F-statistic testing the joint significance of harmonic terms.
-        p_value : float
-            p-value corresponding to the F-test.
-    """
-    y_detrended = np.asarray(y_detrended, dtype=np.float64)
+) -> float:
+    """Calculate Hyndman's seasonal-strength measure from decomposition components."""
     seasonal_component = np.asarray(seasonal_component, dtype=np.float64)
     residuals = np.asarray(residuals, dtype=np.float64)
 
     var_resid = np.var(residuals, ddof=1)
     var_seas_resid = np.var(seasonal_component + residuals, ddof=1)
-    strength = (
+    return float(
         max(0.0, 1.0 - (var_resid / var_seas_resid)) if var_seas_resid > 0 else 0.0
     )
+
+
+def harmonic_significance(
+    y_detrended: Union[np.ndarray, List[float], pd.Series],
+    period: int,
+) -> Tuple[float, float]:
+    """Test sinusoidal terms for a candidate period using an F-test."""
+    y_detrended = np.asarray(y_detrended, dtype=np.float64)
+    if y_detrended.ndim != 1:
+        raise ValueError("Input data must be 1-dimensional")
+    if not np.isfinite(y_detrended).all():
+        raise ValueError("Input data must contain only finite values")
+    if isinstance(period, bool) or not isinstance(period, int) or period <= 1:
+        raise ValueError("'period' must be an integer greater than 1")
 
     n = len(y_detrended)
     t = np.arange(n)
@@ -239,13 +225,14 @@ def seasonal_significance(
     ss_res = np.sum((y_detrended - y_pred) ** 2)
     ss_reg = ss_tot - ss_res
 
-    df_reg = 2
-    df_res = n - 3
+    model_rank = np.linalg.matrix_rank(X_design)
+    df_reg = model_rank - 1
+    df_res = n - model_rank
 
-    if df_res > 0 and ss_res > 0:
+    if df_reg > 0 and df_res > 0 and ss_res > 0:
         f_stat = (ss_reg / df_reg) / (ss_res / df_res)
         p_val = scipy.stats.f.sf(f_stat, df_reg, df_res)
     else:
         f_stat, p_val = 0.0, 1.0
 
-    return float(strength), float(f_stat), float(p_val)
+    return float(f_stat), float(p_val)

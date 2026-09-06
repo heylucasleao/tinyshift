@@ -3,7 +3,7 @@
 from .base import BaseSeriesAnalyzer
 from .intermittency import IntermittencyAnalyzer
 from .pami import PAMIAnalyzer, PAMIResult, create_pami_lags
-from .seasonality import SeasonalPeriodDetector
+from .seasonality import SeasonalityAnalyzer
 from .variance_ratio import VarianceRatioAnalyzer
 
 __all__ = [
@@ -11,7 +11,7 @@ __all__ = [
     "IntermittencyAnalyzer",
     "PAMIAnalyzer",
     "PAMIResult",
-    "SeasonalPeriodDetector",
+    "SeasonalityAnalyzer",
     "VarianceRatioAnalyzer",
     "create_pami_lags",
 ]

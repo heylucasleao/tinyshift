@@ -5,7 +5,7 @@ import pandas as pd
 
 from .diagnostic import trend_significance
 from .entropy import theoretical_limit
-from .analyzers import IntermittencyAnalyzer, SeasonalPeriodDetector
+from .analyzers import IntermittencyAnalyzer, SeasonalityAnalyzer
 from .spectral import foreca, spectral_concentration
 
 
@@ -55,7 +55,7 @@ class SeriesProfiler:
     intermittency_ : IntermittencyAnalyzer
         Fitted analyzer containing the complete demand-occurrence results,
         including raw inter-demand intervals.
-    seasonality_ : SeasonalPeriodDetector
+    seasonality_ : SeasonalityAnalyzer
         Fitted detector containing candidate periods and the underlying
         frequencies, power spectrum, and peak indices.
     id_col_, time_col_, target_col_ : str
@@ -273,7 +273,7 @@ class SeriesProfiler:
             adi_threshold=self.adi_threshold,
             cv2_threshold=self.cv2_threshold,
         ).fit(df, id_col=id_col, time_col=time_col, target_col=target_col)
-        self.seasonality_ = SeasonalPeriodDetector(
+        self.seasonality_ = SeasonalityAnalyzer(
             top_k=self.top_k,
             noise_threshold_factor=self.noise_threshold_factor,
             fallback=self.fallback,

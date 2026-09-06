@@ -10,7 +10,8 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-from ..spectral import _prepare_spectrum
+from ..diagnostic import harmonic_significance
+from ..spectral import _prepare_signal, _prepare_spectrum
 from .base import BaseSeriesAnalyzer
 
 SeriesLike = Union[
@@ -20,7 +21,7 @@ SeriesLike = Union[
 ]
 
 
-class SeasonalPeriodDetector(BaseSeriesAnalyzer):
+class SeasonalityAnalyzer(BaseSeriesAnalyzer):
     """
     Detect dominant candidate seasonal periods from spectral peaks.
 
@@ -75,11 +76,15 @@ class SeasonalPeriodDetector(BaseSeriesAnalyzer):
         ``"none"``
             Analyze the original signal without detrending.
 
+    significance_level : float, default=0.05
+        P-value threshold used to retain statistically significant candidate
+        periods after harmonic regression.
+
     Attributes
     ----------
     results_ : dict
         Mapping from each unique ID to a diagnostics dictionary containing
-        ``candidate_periods``, ``frequencies``, ``power``, and ``peaks``.
+        candidates, significant periods, harmonic tests, and spectral details.
 
     Notes
     -----
@@ -103,9 +108,9 @@ class SeasonalPeriodDetector(BaseSeriesAnalyzer):
     --------
     Detect periods for panel data:
 
-    >>> detector = SeasonalPeriodDetector()
-    >>> detector.fit(data, id_col="unique_id", time_col="ds", target_col="y")
-    SeasonalPeriodDetector(...)
+    >>> analyzer = SeasonalityAnalyzer()
+    >>> analyzer.fit(data, id_col="unique_id", time_col="ds", target_col="y")
+    SeasonalityAnalyzer(...)
     >>> detector.results_
     {
         "series_a": {
@@ -137,21 +142,24 @@ class SeasonalPeriodDetector(BaseSeriesAnalyzer):
         noise_threshold_factor: float = 2.0,
         fallback: Optional[Union[int, List[int]]] = None,
         detrend: str = "linear",
+        significance_level: float = 0.05,
     ) -> None:
         self.top_k = top_k
         self.noise_threshold_factor = noise_threshold_factor
         self.fallback = fallback
         self.detrend = detrend
+        self.significance_level = significance_level
 
         self._validate_params()
 
     def __repr__(self) -> str:
         return (
-            "SeasonalPeriodDetector("
+            "SeasonalityAnalyzer("
             f"top_k={self.top_k}, "
             f"noise_threshold_factor={self.noise_threshold_factor}, "
             f"fallback={self.fallback!r}, "
-            f"detrend={self.detrend!r}"
+            f"detrend={self.detrend!r}, "
+            f"significance_level={self.significance_level}"
             ")"
         )
 
@@ -173,6 +181,14 @@ class SeasonalPeriodDetector(BaseSeriesAnalyzer):
 
         if self.detrend not in {"linear", "constant", "none"}:
             raise ValueError("'detrend' must be one of {'linear', 'constant', 'none'}.")
+
+        if (
+            isinstance(self.significance_level, bool)
+            or not isinstance(self.significance_level, Real)
+            or not np.isfinite(self.significance_level)
+            or not 0 < self.significance_level < 1
+        ):
+            raise ValueError("'significance_level' must be between 0 and 1.")
 
         if self.fallback is not None:
             fallback = (
@@ -353,8 +369,24 @@ class SeasonalPeriodDetector(BaseSeriesAnalyzer):
         if not periods:
             periods = self._normalize_fallback()
 
+        detrended = _prepare_signal(values, detrend=self.detrend)
+        seasonalities = {}
+        for period in periods:
+            f_statistic, p_value = harmonic_significance(detrended, period)
+            seasonalities[period] = {
+                "f_statistic": f_statistic,
+                "p_value": p_value,
+            }
+        significant_periods = [
+            period
+            for period in periods
+            if seasonalities[period]["p_value"] < self.significance_level
+        ]
+
         return {
             "candidate_periods": periods,
+            "significant_periods": significant_periods,
+            "seasonalities": seasonalities,
             "frequencies": frequencies,
             "power": power,
             "peaks": peaks,
@@ -378,7 +410,7 @@ class SeasonalPeriodDetector(BaseSeriesAnalyzer):
                 "The detector must be fitted before calling `summary()`."
             )
 
-        columns = ["candidate_periods"]
+        columns = ["candidate_periods", "significant_periods"]
         rows = [
             {
                 self.id_col_: unique_id,

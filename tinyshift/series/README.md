@@ -58,25 +58,26 @@ lags = pami.lags(mode="short", short=2, fallback=1)
 ```python
 from tinyshift.series import (
     IntermittencyAnalyzer,
-    SeasonalPeriodDetector,
+    SeasonalityAnalyzer,
     VarianceRatioAnalyzer,
 )
 
 intermittency = IntermittencyAnalyzer().fit(df).summary()
-seasonality = SeasonalPeriodDetector(top_k=2).fit(df).summary()
+seasonality = SeasonalityAnalyzer(top_k=2).fit(df).summary()
 dependence = VarianceRatioAnalyzer().fit(df).summary()
 ```
 
 `IntermittencyAnalyzer` classifies demand as smooth, intermittent, erratic, or
-lumpy. `SeasonalPeriodDetector` identifies candidate seasonal periods from
-significant spectral peaks. `VarianceRatioAnalyzer` reports persistence or
+lumpy. `SeasonalityAnalyzer` identifies spectral candidates and tests their
+harmonic significance. `VarianceRatioAnalyzer` reports persistence or
 mean reversion at logarithmically spaced horizons for each series.
 
 ## Diagnostics and Decomposition
 
 - `variance_ratio`: persistence or mean reversion at one aggregation horizon.
 - `trend_significance`: linear trend R² and slope p-value.
-- `seasonal_significance`: seasonal strength and harmonic-regression F-test.
+- `seasonal_strength`: strength calculated from decomposition components.
+- `harmonic_significance`: harmonic-regression F-test for a candidate period.
 - `detrend`: LOWESS trend and residual extraction for panel data.
 - `extract_mstl_components`: conversion of an MSTL result into a tidy frame.
 

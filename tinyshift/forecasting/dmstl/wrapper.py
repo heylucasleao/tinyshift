@@ -42,7 +42,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         independently for each series. A dictionary can configure one integer,
         list of integers, or ``"auto"`` per ``unique_id``.
     seasonal_detection_params : dict, optional
-        Keyword arguments used to configure ``SeasonalPeriodDetector`` when
+        Keyword arguments used to configure ``SeasonalityAnalyzer`` when
         ``season_length="auto"``.
     trend_model_callable : callable or dict of callable, optional
         Factory without arguments returning a StatsForecast trend model. A

@@ -2,12 +2,17 @@
 
 from .decomposition import detrend, extract_mstl_components
 from .dependence import permutation_auto_mutual_information
-from .diagnostic import seasonal_significance, trend_significance, variance_ratio
+from .diagnostic import (
+    harmonic_significance,
+    seasonal_strength,
+    trend_significance,
+    variance_ratio,
+)
 from .analyzers import (
     IntermittencyAnalyzer,
     PAMIAnalyzer,
     PAMIResult,
-    SeasonalPeriodDetector,
+    SeasonalityAnalyzer,
     VarianceRatioAnalyzer,
     create_pami_lags,
 )
@@ -23,7 +28,7 @@ from .spectral import foreca, spectral_concentration
 
 __all__ = [
     "IntermittencyAnalyzer",
-    "SeasonalPeriodDetector",
+    "SeasonalityAnalyzer",
     "SeriesProfiler",
     "bollinger_bands",
     "detrend",
@@ -34,7 +39,8 @@ __all__ = [
     "permutation_entropy",
     "regularity_index",
     "sample_entropy",
-    "seasonal_significance",
+    "harmonic_significance",
+    "seasonal_strength",
     "PAMIAnalyzer",
     "PAMIResult",
     "create_pami_lags",
