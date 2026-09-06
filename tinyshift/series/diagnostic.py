@@ -15,34 +15,25 @@ def variance_ratio(
     horizon: int = 2,
 ) -> Tuple[float, float, float]:
     """
-    Performs the Lo-MacKinlay variance ratio test for serial dependence.
+    Calculate the Lo-MacKinlay variance ratio test for serial dependence.
 
-    The variance ratio compares the variance of changes over a horizon `k`
-    with `k` times the variance of one-period changes.
-
-    Under the random-walk null hypothesis:
-
-        VR(k) = 1
-
-    Values greater than 1 indicate positive serial dependence
-    (persistence), while values below 1 indicate negative serial dependence
-    (mean reversion / anti-persistence).
+    The variance ratio compares the variance of changes over a horizon ``k``
+    with ``k`` times the variance of one-period changes. Under the random-walk
+    null hypothesis, the statistic is approximately one.
 
     Parameters
     ----------
-    X: Union[np.ndarray, List[float]]
+    X : Union[np.ndarray, List[float]]
         One-dimensional time series in level form.
-
-    horizon: int, default=2
-        Aggregation horizon `k`. Must be greater than 1 and smaller than
-        the number of one-period increments.
+    horizon : int, default=2
+        Aggregation horizon ``k``. Must be greater than 1 and smaller than the
+        number of one-period increments.
 
     Returns
     -------
     Tuple[float, float, float]
         (variance_ratio, z_statistic, p_value)
-
-        variance_ratio: float
+        variance_ratio : float
             Lo-MacKinlay variance ratio estimate.
 
             - VR > 1: positive serial dependence / persistence
@@ -63,16 +54,16 @@ def variance_ratio(
 
     Notes
     -----
-    The implementation uses overlapping k-period changes and the
-    finite-sample variance estimator proposed by Lo and MacKinlay.
+    Values greater than 1 indicate positive serial dependence (persistence),
+    while values below 1 indicate negative serial dependence (mean reversion or
+    anti-persistence). The implementation uses overlapping ``k``-period changes
+    and the finite-sample variance correction proposed by Lo and MacKinlay.
 
-    The null hypothesis is:
-
-        H0: VR(k) = 1
-
-    which corresponds to uncorrelated one-period increments.
-
-    The test statistic assumes homoscedastic increments.
+    References
+    ----------
+    Lo, A. W., & MacKinlay, A. C. (1988). Stock market prices do not follow
+    random walks: Evidence from a simple specification test. Review of Financial
+    Studies, 1(1), 41-66.
     """
 
     X = np.asarray(X, dtype=np.float64)
@@ -131,35 +122,27 @@ def trend_significance(
     X: Union[np.ndarray, List[float]],
 ) -> Tuple[float, float, float]:
     """
-    Performs a linear regression against time (index) to check for a significant
-    linear trend in the input data.
+    Test whether a linear trend is statistically significant.
 
-    The function calculates the slope, R-squared value, and p-value of the
-    hypothesis test where the null hypothesis is that the slope of the
-    regression line is zero (i.e., no linear trend).
+    The function fits a least-squares line against the observation index and
+    evaluates whether the slope differs from zero. The result includes the slope,
+    the coefficient of determination, and the two-sided p-value.
 
     Parameters
     ----------
     X : Union[np.ndarray, List[float]]
-        One-dimensional array or time series data (e.g., a numpy array or list).
+        One-dimensional time series or sequence of observations.
 
     Returns
     -------
     Tuple[float, float, float]
-        (slope, R-squared, p-value)
+        (slope, r_squared, p_value)
         slope : float
             Linear change in the target per observation.
         r_squared : float
-            The coefficient of determination (R²), representing the proportion
-            of variance in the data explained by the linear trend.
+            Proportion of variance explained by the fitted linear trend.
         p_value : float
-            The two-sided p-value for a hypothesis test whose null hypothesis is
-            that the slope of the regression line is zero.
-
-    Raises
-    ------
-    ValueError
-        If the input data is not 1-dimensional.
+            Two-sided p-value for the null hypothesis that the slope is zero.
 
     Notes
     -----
@@ -191,7 +174,32 @@ def seasonal_strength(
     seasonal_component: Union[np.ndarray, List[float], pd.Series],
     residuals: Union[np.ndarray, List[float], pd.Series],
 ) -> float:
-    """Calculate Hyndman's seasonal-strength measure from decomposition components."""
+    """
+    Calculate Hyndman's seasonal-strength measure from decomposition components.
+
+    Seasonal strength compares the variance of the residual component with the
+    variance of the combined seasonal-plus-residual signal. Higher values imply
+    a stronger seasonal component relative to the noise term.
+
+    Parameters
+    ----------
+    seasonal_component : Union[np.ndarray, List[float], pd.Series]
+        Seasonal component extracted from a decomposition method.
+    residuals : Union[np.ndarray, List[float], pd.Series]
+        Residual component after removing the trend and seasonal effects.
+
+    Returns
+    -------
+    float
+        Seasonal-strength score between 0 and 1. Values closer to 1 indicate a
+        stronger seasonal signal.
+
+    Notes
+    -----
+    The measure is based on the relative reduction in variance when the seasonal
+    signal is included alongside the residuals. It is often used to summarize
+    how dominant a recurring seasonal pattern is in a series.
+    """
     seasonal_component = np.asarray(seasonal_component, dtype=np.float64)
     residuals = np.asarray(residuals, dtype=np.float64)
 
@@ -206,7 +214,34 @@ def harmonic_significance(
     y_detrended: Union[np.ndarray, List[float], pd.Series],
     period: int,
 ) -> Tuple[float, float]:
-    """Test sinusoidal terms for a candidate period using an F-test."""
+    """
+    Test whether a sinusoidal component at a candidate period is significant.
+
+    The function regresses the detrended series on sine and cosine terms for the
+    supplied period and returns the resulting F statistic and p-value.
+
+    Parameters
+    ----------
+    y_detrended : Union[np.ndarray, List[float], pd.Series]
+        One-dimensional detrended series.
+    period : int
+        Candidate seasonal period in observations. Must be greater than 1.
+
+    Returns
+    -------
+    Tuple[float, float]
+        (f_statistic, p_value)
+        f_statistic : float
+            F statistic for the harmonic regression.
+        p_value : float
+            p-value associated with the null hypothesis that the seasonal term is
+            not significant.
+
+    Notes
+    -----
+    This diagnostic is used to assess whether an apparent cycle at a given period
+    is statistically meaningful beyond a generic harmonic fluctuation.
+    """
     y_detrended = np.asarray(y_detrended, dtype=np.float64)
     if y_detrended.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
