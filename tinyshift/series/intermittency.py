@@ -25,13 +25,6 @@ class IntermittencyAnalyzer:
 
     Parameters
     ----------
-    id_col : str, default="unique_id"
-        Column identifying individual time series.
-    time_col : str, default="ds"
-        Column defining temporal order within each series.
-    target_col : str, default="y"
-        Column containing non-negative demand values.
-
     adi_threshold : float, default=1.32
         Threshold separating frequent from intermittent demand occurrence.
 
@@ -104,12 +97,8 @@ class IntermittencyAnalyzer:
     --------
     Analyze panel demand data:
 
-    >>> analyzer = IntermittencyAnalyzer(
-    ...     id_col="unique_id",
-    ...     time_col="ds",
-    ...     target_col="y",
-    ... )
-    >>> analyzer.fit(data)
+    >>> analyzer = IntermittencyAnalyzer()
+    >>> analyzer.fit(data, id_col="unique_id", time_col="ds", target_col="y")
     IntermittencyAnalyzer(...)
 
     >>> analyzer.profile()
@@ -120,15 +109,9 @@ class IntermittencyAnalyzer:
 
     def __init__(
         self,
-        id_col: str = "unique_id",
-        time_col: str = "ds",
-        target_col: str = "y",
         adi_threshold: float = 1.32,
         cv2_threshold: float = 0.49,
     ) -> None:
-        self.id_col = id_col
-        self.time_col = time_col
-        self.target_col = target_col
         self.adi_threshold = adi_threshold
         self.cv2_threshold = cv2_threshold
 
@@ -137,9 +120,6 @@ class IntermittencyAnalyzer:
     def __repr__(self) -> str:
         return (
             "IntermittencyAnalyzer("
-            f"id_col={self.id_col!r}, "
-            f"time_col={self.time_col!r}, "
-            f"target_col={self.target_col!r}, "
             f"adi_threshold={self.adi_threshold}, "
             f"cv2_threshold={self.cv2_threshold}"
             ")"
@@ -200,11 +180,11 @@ class IntermittencyAnalyzer:
         """
         Resolve the target column used for panel input.
         """
-        required = [self.id_col, self.time_col, self.target_col]
+        required = [self.id_col_, self.time_col_, self.target_col_]
         missing = [column for column in required if column not in data.columns]
         if missing:
             raise ValueError(f"DataFrame is missing required columns: {missing}.")
-        return self.target_col
+        return self.target_col_
 
     @staticmethod
     def _inter_demand_intervals(
@@ -354,6 +334,9 @@ class IntermittencyAnalyzer:
     def fit(
         self,
         df: pd.DataFrame,
+        id_col: str = "unique_id",
+        time_col: str = "ds",
+        target_col: str = "y",
     ) -> "IntermittencyAnalyzer":
         """
         Fit the intermittency analyzer.
@@ -362,6 +345,12 @@ class IntermittencyAnalyzer:
         ----------
         df : pandas.DataFrame
             Panel data containing the configured ID, time, and target columns.
+        id_col : str, default="unique_id"
+            Column identifying individual time series.
+        time_col : str, default="ds"
+            Column defining temporal order within each series.
+        target_col : str, default="y"
+            Column containing non-negative demand values.
 
         Returns
         -------
@@ -382,22 +371,26 @@ class IntermittencyAnalyzer:
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame in panel format.")
 
+        self.id_col_ = id_col
+        self.time_col_ = time_col
+        self.target_col_ = target_col
+
         target_col = self._resolve_target_column(df)
 
         if df.empty:
             raise ValueError("Panel input must contain at least one series.")
 
-        if df[[self.id_col, self.time_col]].isna().any().any():
+        if df[[self.id_col_, self.time_col_]].isna().any().any():
             raise ValueError("ID and time values must not be missing.")
-        if df.duplicated([self.id_col, self.time_col]).any():
+        if df.duplicated([self.id_col_, self.time_col_]).any():
             raise ValueError("Panel contains duplicate ID-time observations.")
 
-        data = df.sort_values([self.id_col, self.time_col])
+        data = df.sort_values([self.id_col_, self.time_col_])
 
         results = {
             unique_id: self._fit_single(group[target_col])
             for unique_id, group in data.groupby(
-                self.id_col,
+                self.id_col_,
                 sort=False,
             )
         }
@@ -461,12 +454,15 @@ class IntermittencyAnalyzer:
             }
         )
 
-        profile.index.name = self.id_col
+        profile.index.name = self.id_col_
         return profile.reset_index()
 
     def analyze(
         self,
         df: pd.DataFrame,
+        id_col: str = "unique_id",
+        time_col: str = "ds",
+        target_col: str = "y",
     ) -> pd.DataFrame:
         """
         Fit the analyzer and return the intermittency profile directly.
@@ -484,6 +480,6 @@ class IntermittencyAnalyzer:
         pandas.DataFrame
             Intermittency profile with one row per series.
         """
-        self.fit(df)
+        self.fit(df, id_col=id_col, time_col=time_col, target_col=target_col)
 
         return self.profile()

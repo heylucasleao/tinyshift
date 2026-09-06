@@ -11,8 +11,13 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 
-from tinyshift.series import SeasonalPeriodDetector, extract_mstl_components, hfi, hpi
-from tinyshift.series import select_pami_lag
+from tinyshift.series import (
+    SeasonalPeriodDetector,
+    extract_mstl_components,
+    hfi,
+    hpi,
+    select_pami_lag,
+)
 
 
 class BaseDMSTL(BaseEstimator, RegressorMixin):
@@ -73,10 +78,11 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             raise ValueError(f"No season_length configured for unique_id {uid!r}.")
 
         if configured_periods == "auto":
-            detector = SeasonalPeriodDetector(
-                **(self.seasonal_detection_params or {})
+            detector = SeasonalPeriodDetector(**(self.seasonal_detection_params or {}))
+            panel = pd.DataFrame(
+                {"unique_id": uid, "ds": np.arange(len(series)), "y": series}
             )
-            periods = detector.detect(series)
+            periods = detector.fit(panel).periods_[uid]
             if not periods:
                 raise ValueError(
                     f"Could not automatically detect seasonal periods for unique_id {uid!r}. "

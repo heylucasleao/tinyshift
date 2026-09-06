@@ -74,13 +74,6 @@ class SeasonalPeriodDetector:
         ``"none"``
             Analyze the original signal without detrending.
 
-    id_col : str, default="unique_id"
-        Column identifying individual series.
-    time_col : str, default="ds"
-        Column defining temporal order within each series.
-    target_col : str, default="y"
-        Numeric target column.
-
     Attributes
     ----------
     periods_ : list of int or dict
@@ -122,12 +115,8 @@ class SeasonalPeriodDetector:
     --------
     Detect periods for panel data:
 
-    >>> detector = SeasonalPeriodDetector(
-    ...     id_col="unique_id",
-    ...     time_col="ds",
-    ...     target_col="y",
-    ... )
-    >>> detector.fit(data)
+    >>> detector = SeasonalPeriodDetector()
+    >>> detector.fit(data, id_col="unique_id", time_col="ds", target_col="y")
     SeasonalPeriodDetector(...)
     >>> detector.periods_
     {
@@ -150,17 +139,11 @@ class SeasonalPeriodDetector:
         noise_threshold_factor: float = 2.0,
         fallback: Optional[Union[int, List[int]]] = None,
         detrend: str = "linear",
-        id_col: str = "unique_id",
-        time_col: str = "ds",
-        target_col: str = "y",
     ) -> None:
         self.top_k = top_k
         self.noise_threshold_factor = noise_threshold_factor
         self.fallback = fallback
         self.detrend = detrend
-        self.id_col = id_col
-        self.time_col = time_col
-        self.target_col = target_col
 
         self._validate_params()
 
@@ -170,10 +153,7 @@ class SeasonalPeriodDetector:
             f"top_k={self.top_k}, "
             f"noise_threshold_factor={self.noise_threshold_factor}, "
             f"fallback={self.fallback!r}, "
-            f"detrend={self.detrend!r}, "
-            f"id_col={self.id_col!r}, "
-            f"time_col={self.time_col!r}, "
-            f"target_col={self.target_col!r}"
+            f"detrend={self.detrend!r}"
             ")"
         )
 
@@ -229,11 +209,11 @@ class SeasonalPeriodDetector:
         """
         Resolve the target column for panel time-series input.
         """
-        required = [self.id_col, self.time_col, self.target_col]
+        required = [self.id_col_, self.time_col_, self.target_col_]
         missing = [column for column in required if column not in data.columns]
         if missing:
             raise ValueError(f"DataFrame is missing required columns: {missing}.")
-        return self.target_col
+        return self.target_col_
 
     @staticmethod
     def _spectral_background(
@@ -398,6 +378,9 @@ class SeasonalPeriodDetector:
     def fit(
         self,
         df: pd.DataFrame,
+        id_col: str = "unique_id",
+        time_col: str = "ds",
+        target_col: str = "y",
     ) -> "SeasonalPeriodDetector":
         """
         Fit the seasonal-period detector.
@@ -406,6 +389,12 @@ class SeasonalPeriodDetector:
         ----------
         df : pandas.DataFrame
             Panel data containing the configured ID, time, and target columns.
+        id_col : str, default="unique_id"
+            Column identifying individual series.
+        time_col : str, default="ds"
+            Column defining temporal order within each series.
+        target_col : str, default="y"
+            Numeric target column.
 
         Returns
         -------
@@ -420,22 +409,26 @@ class SeasonalPeriodDetector:
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame in panel format.")
 
+        self.id_col_ = id_col
+        self.time_col_ = time_col
+        self.target_col_ = target_col
+
         target_col = self._resolve_target_column(df)
 
         if df.empty:
             raise ValueError("Panel input must contain at least one series.")
 
-        if df[[self.id_col, self.time_col]].isna().any().any():
+        if df[[self.id_col_, self.time_col_]].isna().any().any():
             raise ValueError("ID and time values must not be missing.")
-        if df.duplicated([self.id_col, self.time_col]).any():
+        if df.duplicated([self.id_col_, self.time_col_]).any():
             raise ValueError("Panel contains duplicate ID-time observations.")
 
-        data = df.sort_values([self.id_col, self.time_col])
+        data = df.sort_values([self.id_col_, self.time_col_])
 
         results = {
             unique_id: self._fit_single(group[target_col])
             for unique_id, group in data.groupby(
-                self.id_col,
+                self.id_col_,
                 sort=False,
             )
         }
@@ -457,28 +450,3 @@ class SeasonalPeriodDetector:
         }
 
         return self
-
-    def detect(
-        self,
-        df: pd.DataFrame,
-    ) -> pd.DataFrame:
-        """
-        Detect candidate periods and return them directly.
-
-        This is a convenience method equivalent to calling ``fit(df)``
-        followed by accessing ``periods_``.
-
-        Parameters
-        ----------
-        df : pandas.DataFrame
-            Panel data containing the configured ID, time, and target columns.
-
-        Returns
-        -------
-        pandas.DataFrame
-            ID column and detected candidate periods, one row per series.
-        """
-        self.fit(df)
-        return pd.DataFrame(
-            {self.id_col: list(self.periods_), "periods": list(self.periods_.values())}
-        )
