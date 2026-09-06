@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-from .spectral import _prepare_spectrum
+from ..spectral import _prepare_spectrum
 
 SeriesLike = Union[
     np.ndarray,

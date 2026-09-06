@@ -5,8 +5,7 @@ import pandas as pd
 
 from .diagnostic import trend_significance
 from .entropy import theoretical_limit
-from .intermittency import IntermittencyAnalyzer
-from .seasonality import SeasonalPeriodDetector
+from .analyzers import IntermittencyAnalyzer, SeasonalPeriodDetector
 from .spectral import foreca, spectral_concentration
 
 

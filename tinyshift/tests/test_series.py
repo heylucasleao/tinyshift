@@ -26,7 +26,7 @@ from tinyshift.series.decomposition import detrend, extract_mstl_components
 from tinyshift.series.dependence import (
     permutation_auto_mutual_information,
 )
-from tinyshift.series.pami import PAMIAnalyzer, create_pami_lags
+from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
 from tinyshift.series.diagnostic import (
     seasonal_significance,
     trend_significance,
@@ -38,7 +38,9 @@ from tinyshift.series.entropy import (
     sample_entropy,
     theoretical_limit,
 )
-from tinyshift.series.intermittency import IntermittencyAnalyzer as CanonicalAnalyzer
+from tinyshift.series.analyzers.intermittency import (
+    IntermittencyAnalyzer as CanonicalAnalyzer,
+)
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
 from tinyshift.series.profiler import SeriesProfiler
 from tinyshift.series.spectral import _prepare_spectrum, foreca
@@ -629,7 +631,7 @@ class TestForecastability:
             return pami_values[tau]
 
         monkeypatch.setattr(
-            "tinyshift.series.pami.permutation_auto_mutual_information",
+            "tinyshift.series.analyzers.pami.permutation_auto_mutual_information",
             fake_pami,
         )
 
@@ -673,7 +675,7 @@ class TestForecastability:
             return float(tau)
 
         monkeypatch.setattr(
-            "tinyshift.series.pami.permutation_auto_mutual_information",
+            "tinyshift.series.analyzers.pami.permutation_auto_mutual_information",
             fake_pami,
         )
 
@@ -684,7 +686,7 @@ class TestForecastability:
 
     def test_pami_analyzer_summary_contains_only_id_and_minima(self, monkeypatch):
         monkeypatch.setattr(
-            "tinyshift.series.pami.permutation_auto_mutual_information",
+            "tinyshift.series.analyzers.pami.permutation_auto_mutual_information",
             lambda values, tau, m, delay, normalize: [0.8, 0.2, 0.7][tau - 1],
         )
         frame = pd.DataFrame(

@@ -8,7 +8,7 @@ from typing import Any, List, Optional
 import numpy as np
 import pandas as pd
 
-from .diagnostic import variance_ratio
+from ..diagnostic import variance_ratio
 
 
 class VarianceRatioAnalyzer:

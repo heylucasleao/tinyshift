@@ -45,5 +45,5 @@ def test_series_metrics_live_in_their_domain_modules():
         permutation_auto_mutual_information.__module__
         == "tinyshift.series.dependence"
     )
-    assert PAMIAnalyzer.__module__ == "tinyshift.series.pami"
-    assert create_pami_lags.__module__ == "tinyshift.series.pami"
+    assert PAMIAnalyzer.__module__ == "tinyshift.series.analyzers.pami"
+    assert create_pami_lags.__module__ == "tinyshift.series.analyzers.pami"

@@ -12,14 +12,11 @@ profiling. Forecast evaluation and stabilization belong to
 - `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
   theoretical predictability limit.
-- `intermittency`: ADI, CV², zero proportion, interval variability, and demand
-  classification.
+- `analyzers`: panel-oriented intermittency, PAMI, seasonality, and
+  variance-ratio analyzers with a shared `fit()`/`summary()` convention.
 - `outlier`: univariate temporal Hampel and Bollinger detectors.
-- `pami`: panel PAMI analysis and lag creation for forecasting models.
 - `profiler`: one combined diagnostic summary per panel series.
-- `seasonality`: FFT-based candidate-period detection.
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
-- `variance_ratio`: multi-horizon variance-ratio analysis for panel series.
 
 ## Spectral, Entropy, and Dependence Metrics
 

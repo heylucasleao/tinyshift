@@ -13,8 +13,8 @@ from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.forecasting.stabilization import hfi, hpi
 from tinyshift.series.decomposition import extract_mstl_components
-from tinyshift.series.pami import PAMIAnalyzer, create_pami_lags
-from tinyshift.series.seasonality import SeasonalPeriodDetector
+from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
+from tinyshift.series.analyzers.seasonality import SeasonalPeriodDetector
 
 
 class BaseDMSTL(BaseEstimator, RegressorMixin):

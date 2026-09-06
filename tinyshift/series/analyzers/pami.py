@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-from .dependence import permutation_auto_mutual_information
+from ..dependence import permutation_auto_mutual_information
 
 LagMode = Literal["short", "point", "range"]
 
