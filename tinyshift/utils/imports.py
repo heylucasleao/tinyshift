@@ -11,7 +11,13 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 EXTRA_DEPENDENCIES: dict[str, list[str]] = {
-    "series": ["statsforecast", "mlforecast", "utilsforecast", "statsmodels"],
+    "series": [
+        "coreforecast",
+        "statsforecast",
+        "mlforecast",
+        "utilsforecast",
+        "statsmodels",
+    ],
     "plot": ["plotly", "kaleido"],
     "notebook": ["nbformat", "ipykernel"],
 }
