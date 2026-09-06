@@ -3,8 +3,9 @@
 # Licensed under the MIT License
 
 
-import numpy as np
 from typing import List, Union
+
+import numpy as np
 
 
 def vi(

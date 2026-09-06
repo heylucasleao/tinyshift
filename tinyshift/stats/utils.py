@@ -102,11 +102,6 @@ def jackknife(
 
     return result
 
-
-# Backwards-compatible alias for the original misspelled public name.
-jacknife = jackknife
-
-
 def mad(x):
     """
     Calculate the Median Absolute Deviation (MAD) of a 1D array.

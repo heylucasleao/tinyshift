@@ -275,11 +275,13 @@ pami(time_series, nlags=20, m=3, delay=1, normalize=False)
 
 ### 6. Forecast Accuracy Metrics
 
-TinyShift also includes forecast evaluation utilities in the series metrics module, implemented in [tinyshift/series/metric.py](tinyshift/series/metric.py). This module provides functions such as `wape`, `pbias`, `score`, and `rmae` to compare forecasting models using aggregate error, bias, and baseline-relative performance:
+TinyShift also includes forecast evaluation utilities in the forecasting metrics
+module, implemented in
+[tinyshift/forecasting/metrics.py](tinyshift/forecasting/metrics.py). This module
+provides accuracy, bias, stability, economic-loss, and tail-risk measures:
 
 ```python
-import pandas as pd
-from tinyshift.series import wape, pbias, score, rmae
+from tinyshift.forecasting import wape, pbias, score, rmae
 
 # Example evaluation dataframe
 # df must contain actual values in the 'y' column and model predictions as columns
@@ -292,20 +294,25 @@ rmae_df = rmae(df, models=["model_a", "model_b"], baseline_col="naive", id_col="
 ```
 
 These utilities cover:
+
 - `wape`: weighted absolute percentage error for overall accuracy
 - `pbias`: percent bias to detect over- or under-forecasting
 - `score`: composite score combining WAPE and absolute bias
 - `economic_loss`: financial loss from understock and overstock costs
 - `rmae`: relative mean absolute error versus a baseline model
+- `forecast_instability`: revision magnitude across consecutive forecasts
+- `tail_risk`: expected cost, dispersion, VaR, CVaR, and worst-case loss
 
-### 7. Forecast Interpolation
+### 7. Forecast Stabilization
 
 TinyShift includes forecast interpolation methods and a panel instability metric:
 
 ```python
-from tinyshift.series import (
-    forecast_instability,          # Period-over-period forecast instability
-    vi, hpi, hfi          # Interpolation methods
+from tinyshift.forecasting import (
+    forecast_instability,
+    hfi,
+    hpi,
+    vi,
 )
 
 # Calculate period-over-period forecast variability (instability)
@@ -551,14 +558,12 @@ tinyshift/
 │   └── continuous.py            # ConDrift for numerical features
 ├── examples/                    # Jupyter notebook examples
 │   ├── dmstl.ipynb              # Multi-seasonal forecasting example
-│   ├── dtl.ipynb                # Trend/residual forecasting example
 │   ├── drift.ipynb              # Drift detection examples
+│   ├── dtl.ipynb                # Trend/residual forecasting example
 │   ├── outlier.ipynb            # Outlier detection demos
 │   ├── power_analysis.ipynb     # Statistical power analysis
-│   ├── series.ipynb             # Time series analysis
-│   ├── solver.ipynb             # Probabilistic decision example
+│   ├── series_profiler.ipynb    # Time series profiling
 │   ├── transaction_analyzer.ipynb  # Transaction analysis examples
-│   ├── ts_diagnostics.ipynb     # Time series diagnostics
 │   └── tsf.ipynb                # Probabilistic forecasting example
 ├── features/                    # Feature-engineering helpers
 │   ├── README.md                # Package documentation
@@ -569,7 +574,9 @@ tinyshift/
 │   ├── __init__.py              # Public forecasting API
 │   ├── dmstl/                   # Multi-seasonal decomposed forecasting
 │   ├── dtl/                     # LOWESS trend/residual forecasting
-│   └── probabilistic/           # Distributions, calibration and decisions
+│   ├── metrics.py               # Forecast evaluation and business metrics
+│   ├── probabilistic/           # Distributions, calibration and decisions
+│   └── stabilization.py         # Forecast interpolation and stabilization
 ├── preprocessing/               # Sklearn-compatible data transforms
 │   ├── README.md                # Package documentation
 │   ├── __init__.py              # Package exports
@@ -593,11 +600,15 @@ tinyshift/
 ├── series/                      # Time series analysis tools
 │   ├── README.md                # Module documentation
 │   ├── __init__.py              # Package exports
-│   ├── diagnostic.py            # Time series diagnostics and decomposition
-│   ├── forecastability.py       # Forecast quality and complexity metrics
-│   ├── interpolation.py         # Forecast stabilization methods
-│   ├── metric.py                # Forecast accuracy and stability metrics
+│   ├── decomposition.py         # Trend and seasonal decomposition helpers
+│   ├── dependence.py            # Temporal dependence and lag selection
+│   ├── diagnostic.py            # Statistical time series diagnostics
+│   ├── entropy.py               # Entropy and ordinal complexity metrics
+│   ├── intermittency.py         # Intermittent-demand analysis
 │   ├── outlier.py               # Time series outlier detection
+│   ├── profiler.py              # Combined series profiling
+│   ├── seasonality.py           # Seasonal-period detection
+│   └── spectral.py              # Spectral analysis and forecastability metrics
 └── stats/                       # Statistical utilities
     ├── __init__.py              # Package exports
     ├── bootstrap_bca.py         # Bootstrap confidence intervals

@@ -10,8 +10,6 @@ import numpy as np
 import pandas as pd
 import scipy
 
-from .decomposition import detrend, extract_mstl_components
-
 
 def hurst_exponent(
     X: Union[np.ndarray, List[float]],

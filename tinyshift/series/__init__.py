@@ -1,14 +1,37 @@
-# Copyright (c) 2024-2025 Lucas Leão
-# tinyshift - A small toolbox for mlops
-# Licensed under the MIT License
+"""Time-series analysis, diagnostics, decomposition, and profiling tools."""
 
+from .decomposition import detrend, extract_mstl_components
+from .dependence import permutation_auto_mutual_information, select_pami_lag
+from .diagnostic import hurst_exponent, seasonal_significance, trend_significance
+from .entropy import (
+    permutation_entropy,
+    regularity_index,
+    sample_entropy,
+    theoretical_limit,
+)
+from .intermittency import IntermittencyAnalyzer
+from .outlier import bollinger_bands, hampel_filter
+from .profiler import SeriesProfiler
+from .seasonality import SeasonalPeriodDetector
+from .spectral import foreca, spectral_concentration
 
-from .decomposition import *
-from .diagnostic import *
-from .forecastability import *
-from .intermittency import *
-from .interpolation import *
-from .metric import *
-from .outlier import *
-from .profiler import *
-from .seasonality import *
+__all__ = [
+    "IntermittencyAnalyzer",
+    "SeasonalPeriodDetector",
+    "SeriesProfiler",
+    "bollinger_bands",
+    "detrend",
+    "extract_mstl_components",
+    "foreca",
+    "hampel_filter",
+    "hurst_exponent",
+    "permutation_auto_mutual_information",
+    "permutation_entropy",
+    "regularity_index",
+    "sample_entropy",
+    "seasonal_significance",
+    "select_pami_lag",
+    "spectral_concentration",
+    "theoretical_limit",
+    "trend_significance",
+]
