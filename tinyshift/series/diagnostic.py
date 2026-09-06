@@ -3,11 +3,13 @@
 # Licensed under the MIT License
 
 
-from typing import Union, Tuple, List
-import numpy as np
-import scipy
 import math
+from typing import List, Tuple, Union
+
+import numpy as np
 import pandas as pd
+import scipy
+
 from .decomposition import detrend, extract_mstl_components
 
 
