@@ -77,8 +77,8 @@ class SeasonalPeriodDetector:
     Attributes
     ----------
     results_ : dict
-        Mapping from each unique ID to its periods, frequencies, spectral
-        power, and peak indices.
+        Mapping from each unique ID to a diagnostics dictionary containing
+        ``candidate_periods``, ``frequencies``, ``power``, and ``peaks``.
 
     Notes
     -----
@@ -107,8 +107,18 @@ class SeasonalPeriodDetector:
     SeasonalPeriodDetector(...)
     >>> detector.results_
     {
-        "series_a": [7],
-        "series_b": [7, 30],
+        "series_a": {
+            "candidate_periods": [7],
+            "frequencies": ...,
+            "power": ...,
+            "peaks": ...,
+        },
+        "series_b": {
+            "candidate_periods": [7, 30],
+            "frequencies": ...,
+            "power": ...,
+            "peaks": ...,
+        },
     }
 
     See Also

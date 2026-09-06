@@ -393,8 +393,9 @@ class IntermittencyAnalyzer:
 
         Notes
         -----
-        ``intervals_`` is not included in the profile because it contains a
-        variable-length array rather than a scalar summary statistic.
+        The ``intervals`` entry stored in each ``results_[unique_id]`` mapping
+        is not included because it contains a variable-length array rather
+        than a scalar summary statistic.
         """
         if not hasattr(self, "results_"):
             raise RuntimeError(
