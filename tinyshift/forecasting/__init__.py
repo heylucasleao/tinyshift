@@ -2,6 +2,15 @@
 
 from .dmstl import DMSTLWrapper
 from .dtl import DTLWrapper
+from .metrics import (
+    economic_loss,
+    forecast_instability,
+    pbias,
+    rmae,
+    score,
+    tail_risk,
+    wape,
+)
 from .probabilistic import (
     DiscretePanelPredictiveForecast,
     FirstStageForecasterEvaluator,
@@ -14,6 +23,7 @@ from .probabilistic import (
     TwoStageForecasterWrapper,
     WeibullFamily,
 )
+from .stabilization import hfi, hpi, vi
 
 __all__ = [
     "DMSTLWrapper",
@@ -28,4 +38,14 @@ __all__ = [
     "TwoStageForecasterEvaluator",
     "TwoStageForecasterWrapper",
     "WeibullFamily",
+    "economic_loss",
+    "forecast_instability",
+    "hfi",
+    "hpi",
+    "pbias",
+    "rmae",
+    "score",
+    "tail_risk",
+    "vi",
+    "wape",
 ]

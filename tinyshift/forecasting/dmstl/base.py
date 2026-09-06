@@ -11,8 +11,10 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 
-from tinyshift.series import detect_seasonal_periods, extract_mstl_components, hfi, hpi
-from tinyshift.series import select_pami_lag
+from tinyshift.forecasting.stabilization import hfi, hpi
+from tinyshift.series.decomposition import extract_mstl_components
+from tinyshift.series.dependence import select_pami_lag
+from tinyshift.series.seasonality import SeasonalPeriodDetector
 
 
 class BaseDMSTL(BaseEstimator, RegressorMixin):
@@ -64,17 +66,44 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             column for column in frame if column not in (self.id_col_, self.time_col_)
         ]
 
-    def _get_raw_seasonal_periods(
-        self, uid: Union[str, int], series: np.ndarray
-    ) -> List[int]:
-        """Retrieve or detect raw seasonal periods for one SKU."""
+    def _detect_panel_seasonal_periods(self, df: pd.DataFrame) -> None:
+        """Detect periods once for every series configured as automatic."""
+        auto_ids = [
+            uid
+            for uid in df[self.id_col_].unique()
+            if self._get_sku_config(self.season_length, uid) == "auto"
+        ]
+        self.seasonal_detector_ = None
+        if not auto_ids:
+            return
+
+        detection_df = df[df[self.id_col_].isin(auto_ids)]
+        if self.log_transform:
+            detection_df = detection_df.copy()
+            detection_df[self.target_col_] = np.log1p(detection_df[self.target_col_])
+
+        self.seasonal_detector_ = SeasonalPeriodDetector(
+            **(self.seasonal_detection_params or {})
+        ).fit(
+            detection_df,
+            id_col=self.id_col_,
+            time_col=self.time_col_,
+            target_col=self.target_col_,
+        )
+
+    def _get_raw_seasonal_periods(self, uid: Union[str, int]) -> List[int]:
+        """Retrieve configured or previously detected periods for one SKU."""
         configured_periods = self._get_sku_config(self.season_length, uid)
         if configured_periods is None:
             raise ValueError(f"No season_length configured for unique_id {uid!r}.")
 
         if configured_periods == "auto":
-            periods = detect_seasonal_periods(
-                series, **(self.seasonal_detection_params or {})
+            periods = (
+                self.seasonal_detector_.results_.get(uid, {}).get(
+                    "candidate_periods", []
+                )
+                if self.seasonal_detector_ is not None
+                else []
             )
             if not periods:
                 raise ValueError(
@@ -125,7 +154,7 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         self, uid: Union[str, int], series: np.ndarray
     ) -> List[int]:
         """Resolve and validate the seasonal periods configured for one SKU."""
-        raw_periods = self._get_raw_seasonal_periods(uid, series)
+        raw_periods = self._get_raw_seasonal_periods(uid)
         periods = self._validate_seasonal_periods_format(uid, raw_periods)
         self._validate_series_length_for_mstl(uid, series, periods)
         return periods
@@ -357,6 +386,7 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         self.exog_cols_ = [
             column for column in df if column not in (id_col, time_col, target_col)
         ]
+        self._detect_panel_seasonal_periods(df)
         self.fitted_models_ = {}
         self.skus_nlags_ = {}
         residuals = []

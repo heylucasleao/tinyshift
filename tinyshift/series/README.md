@@ -1,227 +1,103 @@
-# Time Series Module (`series`)
+# Time Series Analysis (`tinyshift.series`)
 
-The `series` module of tinyshift provides quantitative tools for time series analysis, focusing on key features for MLOps, forecasting, and pattern detection. It covers metrics and transformations for volatility, intermittency, seasonality strength, trend, entropy, complexity, and forecast stability.
+Tools for analyzing observed time series: decomposition, temporal dependence,
+entropy, intermittency, outliers, seasonality, spectral structure, and combined
+profiling. Forecast evaluation and stabilization belong to
+`tinyshift.forecasting`.
 
-## Features
+## Modules
 
-### 1. Outlier Detection & Volatility
+- `decomposition`: LOWESS detrending and MSTL component extraction.
+- `dependence`: permutation auto-mutual information (PAMI) and lag selection.
+- `diagnostic`: Hurst exponent and trend/seasonal significance.
+- `entropy`: sample entropy, regularity, permutation entropy, and its derived
+  theoretical predictability limit.
+- `intermittency`: ADI, CV², zero proportion, interval variability, and demand
+  classification.
+- `outlier`: univariate temporal Hampel and Bollinger detectors.
+- `profiler`: one combined diagnostic summary per panel series.
+- `seasonality`: FFT-based candidate-period detection.
+- `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
 
-- **`hampel_filter`**
-  Detects outliers using a robust Hampel filter over a rolling window.
-  **When to use:** To identify localized anomalies in time series data.
+## Spectral, Entropy, and Dependence Metrics
 
-- **`bollinger_bands`**
-  Computes Bollinger Bands and flags values outside the expected volatility envelope.
-  **When to use:** To detect volatility breakouts and extreme deviations.
-
-### 2. Forecastability, Entropy, Intermittency & Complexity
-
-- **`foreca`**
-  Measures the forecastability (ForeCA omega index) of a series from its spectral density.
-  **When to use:** To assess whether a series is structured or noise-like.
-
-- **`adi_cv`**
-  Computes Average Demand Interval (ADI) and Coefficient of Variation (CV).
-  **When to use:** To classify series as intermittent, erratic, or smooth.
-
-- **`sample_entropy`**
-  Calculates Sample Entropy for complexity and irregularity.
-  **When to use:** To quantify unpredictability or regularity in time series.
-
-- **`regularity_index`**
-  Computes a regularity score from Sample Entropy.
-  **When to use:** To quantify the temporal consistency of a series.
-
-- **`permutation_entropy`**
-  Computes ordinal complexity using Permutation Entropy.
-  **When to use:** To assess how random the ordering of values is.
-
-- **`theoretical_limit`**
-  Computes the theoretical predictability ceiling (Πmax) based on normalized permutation entropy.
-  **When to use:** To benchmark the maximum ordinal predictability of a series.
-
-- **`permutation_auto_mutual_information`**
-  Computes PAMI between a series and its lagged ordinal patterns.
-  **When to use:** To detect non-linear temporal dependencies in ordinal structure.
-
-### 3. Forecast Accuracy Metrics
-
-- **`wape`**
-  Calculates Weighted Absolute Percentage Error for one or more models.
-  **When to use:** To compare volume accuracy across forecasts, even with zero demand.
-
-- **`pbias`**
-  Calculates Percent Bias for directional forecast drift.
-  **When to use:** To detect systematic over- or under-forecasting.
-
-- **`score`**
-  Computes `WAPE + |PBias|` as a combined performance metric.
-  **When to use:** To summarize accuracy and bias in one value.
-
-- **`economic_loss`**
-  Calculates the total financial loss from understock and overstock for one or
-  more forecasting models using Newsvendor-style costs.
-  **When to use:** To evaluate forecasts using business costs instead of only
-  statistical error.
-
-- **`rmae`**
-  Computes Relative Mean Absolute Error against a baseline forecast.
-  **When to use:** To evaluate whether a model adds value over a benchmark.
-
-- **`fva_rmae`**
-  Computes Forecast Value Added RMAE using naive or moving average baselines.
-  **When to use:** To measure whether a model outperforms operational baselines.
-
-- **`forecast_instability`**
-  Measures instability across consecutive forecast origins.
-  **When to use:** To quantify forecast nervousness and revision magnitude.
-
-Example with per-row costs:
+- `foreca`: spectral-entropy forecastability index from 0 to 1.
+- `spectral_concentration`: normalized concentration of power across frequencies.
+- `sample_entropy`: magnitude-based irregularity and complexity.
+- `regularity_index`: regularity score derived from sample entropy.
+- `permutation_entropy`: ordinal-pattern complexity, optionally normalized.
+- `theoretical_limit`: ordinal predictability ceiling derived from normalized
+  permutation entropy.
+- `permutation_auto_mutual_information`: non-linear dependence between ordinal
+  patterns separated by a lag.
+- `select_pami_lag`: selects a lag from the first local minimum of the PAMI curve.
 
 ```python
-from tinyshift.series import economic_loss
-
-loss = economic_loss(
-    df,
-    models=["forecast"],
-    id_col="unique_id",
-    target_col="y",
-    underage_cost="cu",
-    overage_cost="co",
+from tinyshift.series import (
+    foreca,
+    permutation_auto_mutual_information,
+    permutation_entropy,
+    select_pami_lag,
+    spectral_concentration,
+    theoretical_limit,
 )
+
+omega = foreca(values)
+concentration = spectral_concentration(values)
+complexity = permutation_entropy(values)
+limit = theoretical_limit(values)
+pami = permutation_auto_mutual_information(values, tau=7)
+lags, selected_pami, curve = select_pami_lag(values, max_tau=30, fallback=1)
 ```
 
-`economic_loss` calculates:
+## Intermittency and Seasonality
 
-```text
-understock = max(y - forecast, 0)
-overstock = max(forecast - y, 0)
-loss = understock * underage_cost + overstock * overage_cost
+```python
+from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
+
+intermittency = IntermittencyAnalyzer().fit(df).profile()
+seasonality = SeasonalPeriodDetector(top_k=2).fit(df).profile()
 ```
 
-The result is aggregated by `unique_id` and returns the `economic_loss` metric
-label. Costs can also be provided as fixed scalar values, such as
-`underage_cost=3.0` and `overage_cost=1.0`.
+`IntermittencyAnalyzer` classifies demand as smooth, intermittent, erratic, or
+lumpy. `SeasonalPeriodDetector` identifies candidate seasonal periods from
+significant spectral peaks.
 
-### 4. Diagnostics & Decomposition
+## Diagnostics and Decomposition
 
-- **`detect_seasonal_periods`**
-  Identifies candidate seasonal periods via FFT and spectral peak detection.
-  **When to use:** To discover seasonality for decomposition or modeling.
+- `hurst_exponent`: long-memory estimate and random-walk p-value.
+- `trend_significance`: linear trend R² and slope p-value.
+- `seasonal_significance`: seasonal strength and harmonic-regression F-test.
+- `detrend`: LOWESS trend and residual extraction for panel data.
+- `extract_mstl_components`: conversion of an MSTL result into a tidy frame.
 
-- **`hurst_exponent`**
-  Estimates the Hurst exponent and a p-value for the random walk hypothesis.
-  **When to use:** To assess long-term memory and trend persistence.
+## Series Profiler
 
-- **`trend_significance`**
-  Tests linear trend significance using R² and slope p-value.
-  **When to use:** To determine whether a series has a meaningful linear trend.
+`SeriesProfiler` combines demand occurrence, predictability, temporal structure,
+and spectral structure into one row per series:
 
-- **`seasonal_significance`**
-  Computes seasonal strength and performs an F-test on a seasonal component.
-  **When to use:** To evaluate whether extracted seasonality is statistically significant.
+```python
+from tinyshift.series import SeriesProfiler
 
-- **`extract_mstl_components`**
-  Converts `statsmodels` MSTL results into a tidy DataFrame of decomposed components.
-  **When to use:** To work with MSTL decomposition output in tabular form.
+summary = SeriesProfiler(top_k=2).fit(
+    df,
+    id_col="unique_id",
+    time_col="ds",
+    target_col="y",
+).summary()
+```
 
-### 5. Forecast Stability Metrics
+The result contains `adi`, `cv2`, `zero_prop`, `interval_cv`, `class`, `foreca`,
+`limit`, `hurst`, `trend_r2`, `trend_pvalue`, `spectral_conc`, and
+`candidate_periods`. Each series needs at least 30 observations because the
+profile includes the Hurst exponent.
 
-- **`macv`**
-  Mean Absolute Change Vertical (MAC(V)) for stability across forecast origins.
-  **When to use:** To measure revision magnitude between consecutive forecast updates.
+## Outlier Detection
 
-- **`mach`**
-  Mean Absolute Change Horizontal (MAC(H)) for within-horizon smoothness.
-  **When to use:** To assess the smoothness of a forecast window.
+- `hampel_filter`: robust rolling median/MAD detector.
+- `bollinger_bands`: rolling volatility-envelope detector.
 
-- **`mascv`**
-  Mean Absolute Scaled Change Vertical (MASC(V)).
-  **When to use:** To compare vertical stability normalized by seasonality.
+Both return a boolean `pandas.Series` and preserve a supplied Series index.
 
-- **`masch`**
-  Mean Absolute Scaled Change Horizontal (MASC(H)).
-  **When to use:** To compare horizontal stability normalized by seasonality.
-
-- **`rmsscv`**
-  Root Mean Squared Scaled Change Vertical (RMSSC(V)).
-  **When to use:** To penalize larger vertical revisions more heavily.
-
-- **`rmssch`**
-  Root Mean Squared Scaled Change Horizontal (RMSSC(H)).
-  **When to use:** To penalize larger horizontal revisions more heavily.
-
-### 6. Forecast Stabilization
-
-- **`vi`**
-  Vertical Interpolation for stabilized forecasts using previous-origin anchors.
-  **When to use:** To stabilize individual forecast points vertically.
-
-- **`hpi`**
-  Horizontal Partial Interpolation for smoother horizon transitions.
-  **When to use:** To reduce jumpiness between adjacent horizons.
-
-- **`hfi`**
-  Horizontal Full Interpolation for maximum horizon smoothness.
-  **When to use:** To generate smoother forecast curves using prior stabilized values.
-
-## Notes
-
-- The `series` module exports functions from `outlier`, `forecastability`, `stability`, `interpolation`, `metric`, and `diagnostic`.
-- For decomposed forecasting wrappers such as `DMSTLWrapper`, see `tinyshift.forecasting`.
-
-## Summary: Function Quick Reference
-
-### Forecastability & Complexity
-| Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
-|----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **foreca**                             | 0 → 1         | Forecastability (1 = highly predictable, 0 = noise)       | "How predictable is this time series?"                             |
-| **ADI / CV**                           | ADI: 1 → ∞    | Intermittency and variability                              | "Is this series intermittent or erratic?"                          |
-| **Sample Entropy**                     | 0 → ∞         | Complexity/irregularity                                     | "How complex or irregular is this time series?"                    |
-| **Permutation Entropy**                | 0 → 1         | Ordinal complexity/randomness                               | "How random is the order of this time series?"                     |
-| **Regularity Index**                   | 0 → 1         | Temporal regularity                                         | "How consistent are the values over time?"                        |
-| **Theoretical Limit**                  | 0 → 1         | Predictability ceiling from ordinal structure               | "What is the maximum ordinal predictability?"                     |
-| **PAMI**                               | 0 → ∞         | Lagged ordinal dependency                                   | "How much does recent behavior inform the future?"               |
-
-### Forecast Accuracy Metrics
-| Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
-|----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **WAPE**                               | 0 → ∞         | Volume-weighted accuracy                                     | "How far off are my forecasts in aggregate volume terms?"          |
-| **PBias**                              | -∞ → ∞       | Directional bias                                             | "Am I systematically over- or under-forecasting?"                  |
-| **Score**                              | 0 → ∞         | Accuracy + bias composite                                    | "How do accuracy and bias trade off in one metric?"               |
-| **Economic Loss**                      | 0 → ∞         | Financial cost of understock and overstock                    | "What is the business cost of this forecast?"                    |
-| **RMAE**                               | 0 → ∞         | Value against a baseline                                      | "Does this model outperform a benchmark?"                         |
-| **FVA RMAE**                           | 0 → ∞         | Forecast Value Added                                          | "Does this model add operational value?"                          |
-| **Forecast Instability**               | 0 → ∞         | Revision instability                                           | "How much do forecasts change between origins?"                   |
-
-### Diagnostics & Decomposition
-| Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
-|----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **detect_seasonal_periods**            | N/A           | Candidate season length detection                            | "What are the dominant season lengths?"                            |
-| **Hurst Exponent**                     | 0 → 1         | Trend persistence / long memory                              | "Does the series have long-term memory?"                          |
-| **Trend Significance**                 | 0 → 1         | Linear trend strength and significance                        | "Is there a meaningful linear trend?"                             |
-| **Seasonal Significance**              | 0 → 1         | Seasonal strength and significance                            | "Is seasonality statistically significant?"                      |
-| **extract_mstl_components**            | N/A           | MSTL decomposition extraction                                 | "How do I convert MSTL output into a DataFrame?"                 |
-
-### Forecast Stability Metrics
-| Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
-|----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **MAC(V)**                             | 0 → ∞         | Vertical stability across origins                             | "How much do forecasts change between updates?"                   |
-| **MAC(H)**                             | 0 → ∞         | Horizontal smoothness in one window                           | "How smooth is the forecast curve?"                               |
-| **MASC(V)**                            | 0 → ∞         | Scaled vertical stability                                      | "How stable are forecasts relative to seasonality?"               |
-| **MASC(H)**                            | 0 → ∞         | Scaled horizontal stability                                    | "How smooth are forecasts relative to seasonality?"              |
-| **RMSSC(V)**                           | 0 → ∞         | RMS scaled vertical stability                                  | "How stable are large vertical revisions?"                       |
-| **RMSSC(H)**                           | 0 → ∞         | RMS scaled horizontal stability                                | "How stable are large horizontal revisions?"                     |
-
-### Forecast Stabilization
-| Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
-|----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **VI**                                 | Depends on data | Vertical forecast stabilization                               | "How can I stabilize individual forecast points?"                 |
-| **HPI**                                | Depends on data | Partial horizontal smoothing                                   | "How can I smooth jumps between adjacent horizons?"              |
-| **HFI**                                | Depends on data | Full horizontal smoothing                                      | "How can I create a maximally smooth forecast trajectory?"       |
-
-### Outlier Detection & Stats
-| Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
-|----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **Hampel Filter**                      | 0 or 1        | Local outlier detection                                       | "Is this point an outlier relative to its local window?"          |
-| **Bollinger Bands**                    | 0 or 1        | Volatility breakout detection                                 | "Is the value outside the expected volatility range?"            |
+For forecast metrics, stabilization, or decomposed forecasting wrappers, see
+[`tinyshift.forecasting`](../forecasting/README.md).

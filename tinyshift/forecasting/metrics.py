@@ -2,10 +2,10 @@
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-import pandas as pd
-from typing import Union, List, Literal
+from typing import List, Union
+
 import numpy as np
-from tinyshift.stats import rolling_window
+import pandas as pd
 
 
 def wape(
@@ -197,11 +197,13 @@ def rmae(
     id_col: str = "unique_id",
     target_col: str = "y",
 ) -> pd.DataFrame:
-    """Calculate Relative Mean Absolute Error (RMAE) for multiple models against a baseline.
+    """Calculate Relative Mean Absolute Error (RMAE) against a baseline.
 
     RMAE measures model efficiency by comparing the Mean Absolute Error (MAE)
     of candidate forecasting models against the MAE of a benchmark baseline
-    forecast: MAE(model) / MAE(baseline).
+    forecast: ``MAE(model) / MAE(baseline)``. This ratio directly measures
+    Forecast Value Added: values below one indicate improvement over the
+    baseline, while values above one indicate degradation.
 
     Parameters
     ----------
@@ -212,7 +214,9 @@ def rmae(
         List of column names corresponding to candidate forecasting models to evaluate.
     baseline_col : str
         Column name corresponding to the benchmark baseline forecast
-        (e.g., 'naive', 'seasonal_naive', 'moving_average').
+        (e.g., ``"naive"``, ``"seasonal_naive"``, or ``"moving_average"``).
+        Baseline values must already be aligned with the evaluated forecast
+        horizon.
     id_col : str, default="unique_id"
         Column name identifying unique series or group identifiers.
     target_col : str, default="y"
@@ -279,91 +283,6 @@ def rmae(
 
     res.insert(1, "metric", "rmae")
     return res
-
-
-def fva_rmae(
-    y_true: Union[np.ndarray, List[float]],
-    y_pred: Union[np.ndarray, List[float]],
-    nlags: int = 1,
-    baseline_type: Literal["naive", "moving_average"] = "naive",
-    window_size: int = 5,
-) -> float:
-    """Calculate Relative Mean Absolute Error (RMAE) to evaluate Forecast Value Added.
-
-    Parameters
-    ----------
-    y_true : Union[np.ndarray, List[float]]
-        Ground-truth target values ordered chronologically.
-    y_pred : Union[np.ndarray, List[float]]
-        Predictions from the forecasting model to be evaluated.
-    nlags : int, default=1
-        The operational lead time or shift period (e.g., nlags=3 means decisions
-        are made 3 periods prior).
-    baseline_type : {"naive", "moving_average"}, default="naive"
-        Type of baseline forecast to compare against.
-        - "naive": Uses the value at lag-`nlags` (y[t - nlags]).
-        - "moving_average": Uses trailing moving average ending at (t - nlags).
-    window_size : int, default=5
-        Window size for the moving average baseline (used when baseline_type="moving_average").
-
-    Returns
-    -------
-    float
-        The RMAE value (MAE_model / MAE_baseline).
-        - RMAE < 1.0: Model adds value (FVA is positive).
-        - RMAE > 1.0: Model destroys value compared to baseline.
-
-    References
-    ----------
-    - Morlidge, S. (2014). The Little Book of Business Forecasting:
-        A Practical Guide to Measuring and Improving Forecast Performance.
-        Business Forecasting Press.
-    - Gilliland, M. (2010). The Business Forecasting Deal: Exposing the
-        Myths, Eliminating the Waste, and Practicing the Realities. John Wiley & Sons.
-    """
-    y_true = np.asarray(y_true, dtype=np.float64)
-    y_pred = np.asarray(y_pred, dtype=np.float64)
-
-    if y_true.ndim != 1 or y_pred.ndim != 1:
-        raise ValueError("All inputs must be 1-dimensional arrays.")
-
-    if len(y_true) != len(y_pred):
-        raise ValueError("y_true and y_pred must have the same length.")
-
-    if nlags >= len(y_true):
-        raise ValueError(
-            "Number of lags cannot be greater than or equal to array length."
-        )
-
-    if nlags < 1:
-        raise ValueError("Number of lags must be a positive integer >= 1.")
-
-    y_true_eval = y_true[nlags:]
-    y_pred_eval = y_pred[nlags:]
-
-    if baseline_type == "naive":
-        y_baseline_eval = y_true[:-nlags]
-
-    elif baseline_type == "moving_average":
-        if window_size < 2:
-            raise ValueError("window_size must be >= 2 for moving_average baseline.")
-
-        ma_series = rolling_window(y_true, window_size=window_size, func=np.mean)
-        y_baseline_eval = ma_series[:-nlags]
-
-    else:
-        raise ValueError(
-            f"Invalid baseline_type '{baseline_type}'. "
-            "Supported options are 'naive' or 'moving_average'."
-        )
-
-    mae_model = np.mean(np.abs(y_true_eval - y_pred_eval))
-    mae_baseline = np.mean(np.abs(y_true_eval - y_baseline_eval))
-
-    if mae_baseline == 0:
-        return np.nan if mae_model > 0 else 1.0
-
-    return float(mae_model / mae_baseline)
 
 
 def forecast_instability(

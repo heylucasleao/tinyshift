@@ -101,8 +101,8 @@ class TestDMSTLWrapper:
         assert len(wrapper.residual_mlforecast_.frame) == 4
 
     def test_fit_batches_skus_sharing_default_trend_and_seasonal_factories(self):
-        from sklearn.linear_model import LinearRegression
         from mlforecast import MLForecast
+        from sklearn.linear_model import LinearRegression
 
         def residual_model_callable(nlags, freq):
             return MLForecast(models=[LinearRegression()], lags=nlags, freq=freq)
@@ -158,8 +158,8 @@ class TestDMSTLWrapper:
 
         expected_msg = (
             "Series for unique_id 'sku_101' has length 12, which is too short "
-            "for seasonal period 7 \(MSTL requires at least 14 observations\)\. "
-            "Adjust your train window / step_size or set a smaller period for this SKU\."
+            r"for seasonal period 7 \(MSTL requires at least 14 observations\)\. "
+            r"Adjust your train window / step_size or set a smaller period for this SKU\."
         )
 
         with pytest.raises(ValueError, match=expected_msg):
@@ -199,8 +199,8 @@ class TestDMSTLWrapper:
 
         expected_msg = (
             "Series for unique_id 'sku_202' has length 24, which is too short "
-            "for seasonal period 12 \(MSTL requires at least 24 observations\)\. "
-            "Adjust your train window / step_size or set a smaller period for this SKU\."
+            r"for seasonal period 12 \(MSTL requires at least 24 observations\)\. "
+            r"Adjust your train window / step_size or set a smaller period for this SKU\."
         )
 
         with pytest.raises(ValueError, match=expected_msg):
@@ -215,13 +215,46 @@ class TestDMSTLWrapper:
         ):
             wrapper._resolve_seasonal_periods("sku_303", series)
 
-    @patch("tinyshift.forecasting.dmstl.base.detect_seasonal_periods")
-    def test_auto_detection_failure_raises_value_error(self, mock_detect):
-        mock_detect.return_value = []
+    def test_auto_detection_failure_raises_value_error(self):
         wrapper = DMSTLLocalWrapper(season_length="auto")
+        wrapper.seasonal_detector_ = Mock(
+            results_={"sku_404": {"candidate_periods": []}}
+        )
         series = np.array([10.0] * 12)
 
         with pytest.raises(
             ValueError, match="Could not automatically detect seasonal periods"
         ):
             wrapper._resolve_seasonal_periods("sku_404", series)
+
+    @patch("tinyshift.forecasting.dmstl.base.SeasonalPeriodDetector")
+    def test_auto_detection_fits_the_complete_panel_once(self, detector_class):
+        frame = pd.DataFrame(
+            {
+                "series": ["a"] * 4 + ["b"] * 4 + ["fixed"] * 4,
+                "date": list(range(4)) * 3,
+                "value": np.arange(12, dtype=float),
+            }
+        )
+        detector = detector_class.return_value
+        detector.fit.return_value = detector
+        detector.results_ = {
+            "a": {"candidate_periods": [2]},
+            "b": {"candidate_periods": [2]},
+        }
+        wrapper = DMSTLLocalWrapper(
+            season_length={"a": "auto", "b": "auto", "fixed": 2}
+        )
+        wrapper.id_col_ = "series"
+        wrapper.time_col_ = "date"
+        wrapper.target_col_ = "value"
+
+        wrapper._detect_panel_seasonal_periods(frame)
+
+        detector.fit.assert_called_once()
+        detected_frame = detector.fit.call_args.args[0]
+        assert set(detected_frame["series"]) == {"a", "b"}
+        assert wrapper.seasonal_detector_.results_ == {
+            "a": {"candidate_periods": [2]},
+            "b": {"candidate_periods": [2]},
+        }
