@@ -36,6 +36,7 @@ from tinyshift.series.metric import (
     wape,
 )
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
+from tinyshift.series.profiler import SeriesProfiler
 
 
 def test_economic_loss_aggregates_understock_and_overstock_by_id():
@@ -409,6 +410,105 @@ class TestIntermittencyAnalyzer:
 
         with pytest.raises(ValueError, match="cv2_threshold"):
             IntermittencyAnalyzer(cv2_threshold=threshold)
+
+
+class TestSeriesProfiler:
+    def test_returns_complete_panel_profile(self):
+        steps = np.arange(64)
+        frame = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "unique_id": unique_id,
+                        "ds": steps[::-1],
+                        "y": 3.0
+                        + np.sin(2 * np.pi * steps[::-1] / period)
+                        + 0.01 * steps[::-1],
+                    }
+                )
+                for unique_id, period in [("a", 8), ("b", 16)]
+            ],
+            ignore_index=True,
+        )
+
+        profiler = SeriesProfiler(top_k=1).fit(frame)
+        result = profiler.profile()
+
+        assert result.columns.tolist() == [
+            "unique_id",
+            "adi",
+            "cv2",
+            "zero_prop",
+            "interval_cv",
+            "class",
+            "foreca",
+            "limit",
+            "hurst",
+            "trend_r2",
+            "trend_pvalue",
+            "spectral_conc",
+            "periods",
+        ]
+        assert result["unique_id"].tolist() == ["a", "b"]
+        assert result.set_index("unique_id").loc["a", "periods"] == [8]
+        assert result.set_index("unique_id").loc["b", "periods"] == [16]
+        assert (
+            result.drop(columns=["unique_id", "class", "periods"])
+            .apply(np.isfinite)
+            .all()
+            .all()
+        )
+        assert set(profiler.results_["a"]) == {
+            "demand_occurrence",
+            "predictability",
+            "temporal_structure",
+            "spectral_structure",
+        }
+
+        summary = profiler.summary()
+        assert summary["n_series"] == 2
+        assert summary["demand_classes"] == {"smooth": 2}
+        assert summary["period_frequency"] == {8: 1, 16: 1}
+        assert "foreca" in summary["metrics"].index
+
+    def test_accepts_custom_panel_column_names(self):
+        steps = np.arange(64)
+        frame = pd.DataFrame(
+            {
+                "item": "a",
+                "date": steps,
+                "demand": 2.0 + np.sin(2 * np.pi * steps / 8),
+            }
+        )
+
+        result = (
+            SeriesProfiler(top_k=1)
+            .fit(
+                frame,
+                id_col="item",
+                time_col="date",
+                target_col="demand",
+            )
+            .profile()
+        )
+
+        assert result.loc[0, "item"] == "a"
+        assert result.loc[0, "periods"] == [8]
+
+    def test_rejects_series_too_short_for_hurst(self):
+        frame = pd.DataFrame(
+            {"unique_id": "a", "ds": np.arange(20), "y": np.arange(20.0)}
+        )
+
+        with pytest.raises(ValueError, match="at least 30"):
+            SeriesProfiler().fit(frame)
+
+    def test_profile_and_summary_require_fit(self):
+        with pytest.raises(RuntimeError, match="fitted"):
+            SeriesProfiler().profile()
+
+        with pytest.raises(RuntimeError, match="fitted"):
+            SeriesProfiler().summary()
 
 
 class TestForecastability:
