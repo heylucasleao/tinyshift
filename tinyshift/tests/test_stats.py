@@ -12,7 +12,6 @@ from tinyshift.stats.statistical_interval import StatisticalInterval
 from tinyshift.stats.utils import (
     assess_comparability,
     chebyshev_guaranteed_percentage,
-    expanding_window,
     generate_lag,
     generate_panel_lags,
     is_obsolete,
@@ -20,7 +19,6 @@ from tinyshift.stats.utils import (
     jacknife,
     mad,
     remove_leading_zeros,
-    rolling_window,
 )
 
 
@@ -29,31 +27,6 @@ def test_chebyshev_guaranteed_percentage_matches_theoretical_bound():
     value = chebyshev_guaranteed_percentage(x, interval=(1, 5))
 
     assert value == pytest.approx(0.375, rel=1e-3)
-
-
-def test_rolling_window_returns_expected_shape_and_values():
-    x = np.array([1, 2, 3, 4])
-    result = rolling_window(x, window_size=2, func=np.mean)
-
-    assert result.shape == (4,)
-    np.testing.assert_allclose(result, np.array([1.5, 1.5, 2.5, 3.5]))
-
-
-def test_rolling_window_rejects_invalid_configuration():
-    with pytest.raises(ValueError, match="larger"):
-        rolling_window([1, 2], window_size=3, func=np.mean)
-    with pytest.raises(TypeError, match="callable"):
-        rolling_window([1, 2], window_size=2)
-    with pytest.raises(ValueError, match="integer"):
-        rolling_window([1, 2], window_size=True, func=np.mean)
-
-
-def test_expanding_window_returns_expected_shape_and_values():
-    x = np.array([1, 2, 3, 4])
-    result = expanding_window(x, func=np.mean, window_size=2)
-
-    assert result.shape == (4,)
-    np.testing.assert_allclose(result, np.array([1.5, 1.5, 2.0, 2.5]))
 
 
 def test_jackknife_and_mad_and_generate_lag():
@@ -133,18 +106,6 @@ def test_remove_leading_zeros_and_is_obsolete():
 
 
 def test_validation_paths_for_stats_utils():
-    with pytest.raises(ValueError, match="window_size"):
-        rolling_window([1, 2, 3], window_size=1)
-
-    with pytest.raises(ValueError, match="1-dimensional"):
-        rolling_window([[1], [2], [3]], window_size=2)
-
-    with pytest.raises(ValueError, match="window_size"):
-        expanding_window([1, 2], window_size=0)
-
-    with pytest.raises(ValueError, match="larger"):
-        expanding_window([1, 2], window_size=3)
-
     with pytest.raises(ValueError, match="1-dimensional"):
         jacknife([[1], [2], [3]])
 

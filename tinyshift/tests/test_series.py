@@ -813,9 +813,9 @@ class TestOutlier:
         assert outliers.dtype == bool
         assert len(outliers) == len(x)
 
-    def test_bollinger_bands_preserves_population_standard_deviation(self):
+    def test_bollinger_bands_uses_sample_standard_deviation(self):
         x = np.array([0.0, 2.0, 4.0])
 
         result = bollinger_bands(x, window_size=2, factor=0.8)
 
-        assert result.tolist() == [True, True, True]
+        assert result.tolist() == [False, False, False]
