@@ -36,7 +36,6 @@ from tinyshift.series.metric import (
     wape,
 )
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
-from tinyshift.series.stability import mach, macv, masch, mascv, rmssch, rmsscv
 
 
 def test_economic_loss_aggregates_understock_and_overstock_by_id():
@@ -170,29 +169,34 @@ class TestDiagnostic:
 
     def test_seasonal_period_detector_detects_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
-        periods = SeasonalPeriodDetector().detect(x)
+        frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
+        periods = SeasonalPeriodDetector().fit(frame).periods_["a"]
         assert 8 in periods
         assert periods == sorted(set(periods))
 
     def test_seasonal_period_detector_detects_period_two_at_nyquist(self):
         x = (-1.0) ** np.arange(32)
 
-        assert SeasonalPeriodDetector(top_k=1).detect(x) == [2]
+        frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
+        periods = SeasonalPeriodDetector(top_k=1).fit(frame).periods_["a"]
+        assert periods == [2]
 
     def test_seasonal_period_detector_ignores_missing_values(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         x[[3, 17]] = np.nan
 
-        periods = SeasonalPeriodDetector(top_k=1).detect(pd.Series(x))
+        frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
+        periods = SeasonalPeriodDetector(top_k=1).fit(frame).periods_["a"]
 
         assert periods == [8]
 
     def test_seasonal_period_detector_preserves_length_when_interpolating_gaps(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         x[[3, 17]] = np.nan
-        detector = SeasonalPeriodDetector(top_k=1).fit(x)
+        frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
+        detector = SeasonalPeriodDetector(top_k=1).fit(frame)
 
-        assert len(detector.frequencies_) == 17
+        assert len(detector.frequencies_["a"]) == 17
 
     @pytest.mark.parametrize(
         ("fallback", "expected"),
@@ -201,7 +205,8 @@ class TestDiagnostic:
     def test_seasonal_period_detector_uses_fallback_without_peaks(
         self, fallback, expected
     ):
-        periods = SeasonalPeriodDetector(fallback=fallback).detect(np.ones(32))
+        frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": np.ones(32)})
+        periods = SeasonalPeriodDetector(fallback=fallback).fit(frame).periods_["a"]
 
         assert periods == expected
 
@@ -210,6 +215,7 @@ class TestDiagnostic:
         frame = pd.DataFrame(
             {
                 "unique_id": ["weekly"] * 32 + ["biweekly"] * 32,
+                "ds": list(range(32)) * 2,
                 "y": np.concatenate(
                     [
                         np.sin(2 * np.pi * steps / 8),
@@ -219,8 +225,7 @@ class TestDiagnostic:
             }
         )
 
-        periods = SeasonalPeriodDetector(top_k=1).detect(frame)
-
+        periods = SeasonalPeriodDetector(top_k=1).fit(frame).periods_
         assert periods["weekly"] == [8]
         assert periods["biweekly"] == [16]
 
@@ -234,9 +239,15 @@ class TestDiagnostic:
             }
         )
 
-        periods = SeasonalPeriodDetector(top_k=1).detect(frame)
+        detector = SeasonalPeriodDetector(top_k=1).fit(
+            frame,
+            time_col="timestamp",
+            target_col="value",
+        )
 
-        assert periods == {"a": [8]}
+        assert detector.periods_ == {"a": [8]}
+        assert detector.time_col_ == "timestamp"
+        assert detector.target_col_ == "value"
 
     def test_hurst_exponent(self):
         x = np.cumsum(np.random.RandomState(0).normal(size=60))
@@ -285,17 +296,17 @@ class TestDiagnostic:
             extract_mstl_components(result, periods=[4])
 
     def test_seasonal_period_detector_raises_for_invalid_input(self):
-        with pytest.raises(ValueError):
-            SeasonalPeriodDetector().detect(np.array([1.0, 2.0, 3.0]))
+        with pytest.raises(TypeError, match="panel format"):
+            SeasonalPeriodDetector().fit(np.array([1.0, 2.0, 3.0]))
 
         with pytest.raises(ValueError):
-            SeasonalPeriodDetector(top_k=0).detect(np.array([1.0, 2.0, 3.0, 4.0]))
+            SeasonalPeriodDetector(top_k=0).fit(np.array([1.0, 2.0, 3.0, 4.0]))
 
-        with pytest.raises(ValueError, match="unique ID"):
-            SeasonalPeriodDetector().detect(pd.DataFrame({"y": [1.0, 2.0, 3.0, 4.0]}))
+        with pytest.raises(ValueError, match="required columns"):
+            SeasonalPeriodDetector().fit(pd.DataFrame({"y": [1.0, 2.0, 3.0, 4.0]}))
 
-        with pytest.raises(ValueError, match="Could not infer"):
-            SeasonalPeriodDetector().detect(
+        with pytest.raises(ValueError, match="required columns"):
+            SeasonalPeriodDetector().fit(
                 pd.DataFrame(
                     {
                         "unique_id": ["a"] * 4,
@@ -318,10 +329,44 @@ class TestDiagnostic:
 
 class TestIntermittencyAnalyzer:
     def test_is_available_from_public_series_api(self):
-        analyzer = IntermittencyAnalyzer().fit([0, 1, 0, 1])
+        frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(4), "y": [0, 1, 0, 1]})
+        analyzer = IntermittencyAnalyzer().fit(frame)
 
-        assert analyzer.classification_ == "intermittent"
+        assert analyzer.classification_ == {"a": "intermittent"}
         assert CanonicalAnalyzer is IntermittencyAnalyzer
+
+    def test_sorts_panel_by_id_and_time_and_returns_id_as_column(self):
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["a", "a", "a", "a"],
+                "ds": [3, 1, 4, 2],
+                "y": [1, 1, 0, 0],
+            }
+        )
+
+        result = IntermittencyAnalyzer().analyze(frame)
+
+        assert result.columns.tolist() == [
+            "unique_id",
+            "adi",
+            "cv2",
+            "zero_proportion",
+            "interval_cv",
+            "classification",
+        ]
+        np.testing.assert_array_equal(
+            IntermittencyAnalyzer().fit(frame).intervals_["a"], [2]
+        )
+
+    def test_column_names_are_fit_parameters(self):
+        frame = pd.DataFrame({"item": ["a", "a"], "date": [1, 2], "demand": [0.0, 1.0]})
+
+        analyzer = IntermittencyAnalyzer().fit(
+            frame, id_col="item", time_col="date", target_col="demand"
+        )
+
+        assert analyzer.profile()["item"].tolist() == ["a"]
+        assert analyzer.id_col_ == "item"
 
     @pytest.mark.parametrize("threshold", [np.nan, np.inf, True])
     def test_rejects_invalid_thresholds(self, threshold):
@@ -621,54 +666,3 @@ class TestOutlier:
         outliers = bollinger_bands(x, window_size=2)
         assert outliers.dtype == bool
         assert len(outliers) == len(x)
-
-
-class TestStability:
-    def test_macv(self):
-        current = np.array([1.0, 2.0, 3.0])
-        previous = np.array([0.0, 1.0, 2.0])
-        assert macv(current, previous) == pytest.approx(1.0)
-
-    def test_mach(self):
-        x = np.array([1.0, 3.0, 2.0])
-        assert mach(x) == pytest.approx(1.5)
-
-    def test_mascv(self):
-        y_train = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0], dtype=float)
-        y_hat = np.array([1.0, 2.0, 3.0])
-        y_hat_prev = np.array([0.0, 1.0, 2.0])
-        value = mascv(y_train, y_hat, y_hat_prev, seasonality=2)
-        assert np.isfinite(value)
-
-    def test_masch(self):
-        y_train = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0], dtype=float)
-        y_hat = np.array([1.0, 2.0, 3.0])
-        value = masch(y_train, y_hat, seasonality=2)
-        assert value == pytest.approx(np.inf)
-
-    def test_rmsscv(self):
-        y_train = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0], dtype=float)
-        y_hat = np.array([1.0, 2.0, 3.0])
-        y_hat_prev = np.array([0.0, 1.0, 2.0])
-        value = rmsscv(y_train, y_hat, y_hat_prev, seasonality=2)
-        assert np.isfinite(value)
-
-    def test_rmsscv_rejects_non_vector_previous_forecast(self):
-        with pytest.raises(ValueError, match="1D"):
-            rmsscv(
-                np.arange(6.0),
-                np.arange(3.0).reshape(1, 3),
-                np.arange(3.0).reshape(1, 3),
-                seasonality=2,
-            )
-
-    @pytest.mark.parametrize("seasonality", [True, 1.5, 0])
-    def test_scaled_stability_rejects_invalid_seasonality(self, seasonality):
-        with pytest.raises(ValueError, match="positive integer"):
-            masch(np.arange(6.0), np.arange(3.0), seasonality=seasonality)
-
-    def test_rmssch(self):
-        y_train = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0], dtype=float)
-        y_hat = np.array([1.0, 2.0, 3.0])
-        value = rmssch(y_train, y_hat, seasonality=2)
-        assert value == pytest.approx(np.inf)

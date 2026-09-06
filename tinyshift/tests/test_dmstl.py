@@ -101,8 +101,8 @@ class TestDMSTLWrapper:
         assert len(wrapper.residual_mlforecast_.frame) == 4
 
     def test_fit_batches_skus_sharing_default_trend_and_seasonal_factories(self):
-        from sklearn.linear_model import LinearRegression
         from mlforecast import MLForecast
+        from sklearn.linear_model import LinearRegression
 
         def residual_model_callable(nlags, freq):
             return MLForecast(models=[LinearRegression()], lags=nlags, freq=freq)
@@ -217,7 +217,7 @@ class TestDMSTLWrapper:
 
     @patch("tinyshift.forecasting.dmstl.base.SeasonalPeriodDetector")
     def test_auto_detection_failure_raises_value_error(self, mock_detect):
-        mock_detect.return_value.detect.return_value = []
+        mock_detect.return_value.fit.return_value.periods_ = {"sku_404": []}
         wrapper = DMSTLLocalWrapper(season_length="auto")
         series = np.array([10.0] * 12)
 
