@@ -76,22 +76,9 @@ class SeasonalPeriodDetector:
 
     Attributes
     ----------
-    periods_ : list of int or dict
-        Detected candidate periods after calling :meth:`fit`.
-
-        Dictionary mapping each unique ID to its detected periods.
-
-    frequencies_ : numpy.ndarray or dict
-        Fourier frequencies computed during fitting.
-
-        For panel data, values are stored per unique ID.
-
-    power_ : numpy.ndarray or dict
-        Spectral power associated with ``frequencies_``.
-
-    peaks_ : numpy.ndarray or dict
-        Indices of the significant spectral peaks retained before conversion
-        into candidate periods.
+    results_ : dict
+        Mapping from each unique ID to its periods, frequencies, spectral
+        power, and peak indices.
 
     Notes
     -----
@@ -118,7 +105,7 @@ class SeasonalPeriodDetector:
     >>> detector = SeasonalPeriodDetector()
     >>> detector.fit(data, id_col="unique_id", time_col="ds", target_col="y")
     SeasonalPeriodDetector(...)
-    >>> detector.periods_
+    >>> detector.results_
     {
         "series_a": [7],
         "series_b": [7, 30],
@@ -403,8 +390,7 @@ class SeasonalPeriodDetector:
 
         Notes
         -----
-        Calling ``fit`` updates the fitted attributes ``periods_``,
-        ``frequencies_``, ``power_``, and ``peaks_``.
+        Calling ``fit`` updates the fitted attribute ``results_``.
         """
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame in panel format.")
@@ -432,21 +418,34 @@ class SeasonalPeriodDetector:
                 sort=False,
             )
         }
-
-        self.periods_ = {
-            unique_id: result["periods"] for unique_id, result in results.items()
-        }
-
-        self.frequencies_ = {
-            unique_id: result["frequencies"] for unique_id, result in results.items()
-        }
-
-        self.power_ = {
-            unique_id: result["power"] for unique_id, result in results.items()
-        }
-
-        self.peaks_ = {
-            unique_id: result["peaks"] for unique_id, result in results.items()
-        }
+        self.results_ = results
 
         return self
+
+    def profile(self) -> pd.DataFrame:
+        """Return detected candidate periods with one row per series.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ID column and detected candidate periods.
+
+        Raises
+        ------
+        RuntimeError
+            If the detector has not been fitted.
+        """
+        if not hasattr(self, "results_"):
+            raise RuntimeError(
+                "The detector must be fitted before calling `profile()`."
+            )
+
+        columns = ["periods"]
+        rows = [
+            {
+                self.id_col_: unique_id,
+                **{column: result[column] for column in columns},
+            }
+            for unique_id, result in self.results_.items()
+        ]
+        return pd.DataFrame(rows, columns=[self.id_col_, *columns])

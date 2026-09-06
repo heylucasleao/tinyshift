@@ -34,24 +34,8 @@ class IntermittencyAnalyzer:
 
     Attributes
     ----------
-    adi_ : float or dict
-        Average Demand Interval.
-
-    cv2_ : float or dict
-        Squared coefficient of variation of positive demand values.
-
-    zero_proportion_ : float or dict
-        Proportion of observations with zero demand.
-
-    intervals_ : numpy.ndarray or dict
-        Distances, in numbers of observations, between consecutive
-        positive-demand occurrences.
-
-    interval_cv_ : float or dict
-        Coefficient of variation of inter-demand intervals.
-
-    classification_ : str, None, or dict
-        Intermittency classification.
+    results_ : dict
+        Mapping from each unique ID to its intermittency diagnostics.
 
         Possible values are:
 
@@ -359,14 +343,7 @@ class IntermittencyAnalyzer:
 
         Notes
         -----
-        Calling ``fit`` updates the fitted attributes:
-
-        - ``adi_``
-        - ``cv2_``
-        - ``zero_proportion_``
-        - ``interval_cv_``
-        - ``intervals_``
-        - ``classification_``
+        Calling ``fit`` updates the fitted attribute ``results_``.
         """
         if not isinstance(df, pd.DataFrame):
             raise TypeError("df must be a pandas DataFrame in panel format.")
@@ -394,27 +371,7 @@ class IntermittencyAnalyzer:
                 sort=False,
             )
         }
-
-        self.adi_ = {unique_id: result["adi"] for unique_id, result in results.items()}
-
-        self.cv2_ = {unique_id: result["cv2"] for unique_id, result in results.items()}
-
-        self.zero_proportion_ = {
-            unique_id: result["zero_proportion"]
-            for unique_id, result in results.items()
-        }
-
-        self.interval_cv_ = {
-            unique_id: result["interval_cv"] for unique_id, result in results.items()
-        }
-
-        self.intervals_ = {
-            unique_id: result["intervals"] for unique_id, result in results.items()
-        }
-
-        self.classification_ = {
-            unique_id: result["classification"] for unique_id, result in results.items()
-        }
+        self.results_ = results
 
         return self
 
@@ -439,47 +396,23 @@ class IntermittencyAnalyzer:
         ``intervals_`` is not included in the profile because it contains a
         variable-length array rather than a scalar summary statistic.
         """
-        if not hasattr(self, "adi_"):
+        if not hasattr(self, "results_"):
             raise RuntimeError(
                 "The analyzer must be fitted before calling `profile()`."
             )
 
-        profile = pd.DataFrame(
+        columns = [
+            "adi",
+            "cv2",
+            "zero_proportion",
+            "interval_cv",
+            "classification",
+        ]
+        rows = [
             {
-                "adi": self.adi_,
-                "cv2": self.cv2_,
-                "zero_proportion": (self.zero_proportion_),
-                "interval_cv": (self.interval_cv_),
-                "classification": (self.classification_),
+                self.id_col_: unique_id,
+                **{column: result[column] for column in columns},
             }
-        )
-
-        profile.index.name = self.id_col_
-        return profile.reset_index()
-
-    def analyze(
-        self,
-        df: pd.DataFrame,
-        id_col: str = "unique_id",
-        time_col: str = "ds",
-        target_col: str = "y",
-    ) -> pd.DataFrame:
-        """
-        Fit the analyzer and return the intermittency profile directly.
-
-        This is a convenience method equivalent to calling ``fit(df)`` followed
-        by ``profile()``.
-
-        Parameters
-        ----------
-        df : pandas.DataFrame
-            Panel data containing the configured ID, time, and target columns.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Intermittency profile with one row per series.
-        """
-        self.fit(df, id_col=id_col, time_col=time_col, target_col=target_col)
-
-        return self.profile()
+            for unique_id, result in self.results_.items()
+        ]
+        return pd.DataFrame(rows, columns=[self.id_col_, *columns])

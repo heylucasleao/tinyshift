@@ -102,7 +102,7 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
 
         if configured_periods == "auto":
             periods = (
-                self.seasonal_detector_.periods_.get(uid, [])
+                self.seasonal_detector_.results_.get(uid, {}).get("periods", [])
                 if self.seasonal_detector_ is not None
                 else []
             )
