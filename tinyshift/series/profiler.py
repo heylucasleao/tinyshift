@@ -1,4 +1,3 @@
-from collections import Counter
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -13,7 +12,7 @@ from .seasonality import SeasonalPeriodDetector
 class SeriesProfiler:
     """Build a structured diagnostic profile for a Nixtla-style panel."""
 
-    profile_columns = [
+    summary_columns = [
         "adi",
         "cv2",
         "zero_prop",
@@ -25,7 +24,7 @@ class SeriesProfiler:
         "trend_r2",
         "trend_pvalue",
         "spectral_conc",
-        "periods",
+        "candidate_periods",
     ]
 
     def __init__(
@@ -98,7 +97,7 @@ class SeriesProfiler:
         """Calculate and select spectral-structure diagnostics."""
         return {
             "spectral_conc": spectral_concentration(values, detrend=detrend),
-            "periods": result["periods"],
+            "candidate_periods": result["candidate_periods"],
         }
 
     @staticmethod
@@ -182,11 +181,11 @@ class SeriesProfiler:
             }
         return self
 
-    def profile(self) -> pd.DataFrame:
+    def summary(self) -> pd.DataFrame:
         """Return the nested results as one flat row per series."""
         if not hasattr(self, "results_"):
             raise RuntimeError(
-                "The profiler must be fitted before calling `profile()`."
+                "The profiler must be fitted before calling `summary()`."
             )
 
         rows = []
@@ -195,22 +194,4 @@ class SeriesProfiler:
             for section in sections.values():
                 row.update(section)
             rows.append(row)
-        return pd.DataFrame(rows, columns=[self.id_col_, *self.profile_columns])
-
-    def summary(self) -> Dict[str, Any]:
-        """Return aggregate numeric, demand-class, and seasonal summaries."""
-        profile = self.profile()
-        numeric = profile.drop(columns=self.id_col_).select_dtypes(include=[np.number])
-        metrics = numeric.describe(percentiles=[0.5]).T.rename(
-            columns={"50%": "median"}
-        )
-        class_counts = profile["class"].value_counts(dropna=False)
-        period_counts = Counter(
-            period for periods in profile["periods"] for period in periods
-        )
-        return {
-            "n_series": len(profile),
-            "metrics": metrics,
-            "demand_classes": class_counts.to_dict(),
-            "period_frequency": dict(sorted(period_counts.items())),
-        }
+        return pd.DataFrame(rows, columns=[self.id_col_, *self.summary_columns])
