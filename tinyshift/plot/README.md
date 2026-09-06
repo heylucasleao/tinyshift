@@ -247,15 +247,15 @@ corr_heatmap(X, width=800, height=600)
 
 ### 4. Time Series Diagnostics (`diagnostic.py`)
 
-#### **`seasonal_decompose`**
+#### **`mstl_diagnostics`**
 Performs MSTL (Multiple Seasonal-Trend decomposition using Loess) with trend significance testing and residual analysis.
 
 ```python
-from tinyshift.plot import seasonal_decompose
+from tinyshift.plot import mstl_diagnostics
 import pandas as pd
 
 # Multiple seasonality decomposition
-seasonal_decompose(
+mstl_diagnostics(
     X=time_series,
     periods=[7, 365],  # Weekly and yearly patterns
     nlags=10,
@@ -422,7 +422,7 @@ fig = forest_plot(
 | Function | Purpose | Input Type | Key Output | Best Use Case |
 |----------|---------|------------|------------|---------------|
 | **`corr_heatmap`** | Correlation visualization | Tabular data | Interactive heatmap | Feature selection, multicollinearity detection |
-| **`seasonal_decompose`** | Time series decomposition | Time series | Trend/seasonal/residual components | Seasonal pattern analysis, forecasting prep |
+| **`mstl_diagnostics`** | MSTL decomposition diagnostics | Time series | Trend/seasonal/residual components and statistical summary | Seasonal pattern analysis, forecasting prep |
 | **`stationarity_analysis`** | Stationarity testing | Time series | ADF test + rolling stats | ARIMA modeling prep, trend detection |
 | **`residual_analysis`** | Model diagnostics | Residuals | Multiple diagnostic plots | Model validation, assumption testing |
 | **`pami`** | Nonlinear correlation | Time series | Mutual information by lag | Nonlinear dependency detection |
@@ -476,7 +476,7 @@ stationarity_analysis(target_series)
 residual_analysis(model.residuals_)
 
 # 10. Seasonal validation for time series models
-seasonal_decompose(y_true - y_pred, periods=[7, 30])
+mstl_diagnostics(y_true - y_pred, periods=[7, 30])
 ```
 
 ### **Advanced Pattern Detection**

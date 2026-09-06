@@ -218,7 +218,7 @@ beta_confidence_analysis(
 TinyShift provides comprehensive time series analysis capabilities:
 
 ```python
-from tinyshift.plot import seasonal_decompose
+from tinyshift.plot import mstl_diagnostics
 from tinyshift.series import (
     IntermittencyAnalyzer,
     PredictabilityAnalyzer,
@@ -235,7 +235,7 @@ from tinyshift.series import (
     bollinger_bands
 )
 
-seasonal_decompose(
+mstl_diagnostics(
     time_series, 
     periods=[7, 365],  # Weekly and yearly patterns
     width=1200, 
