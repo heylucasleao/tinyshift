@@ -3,11 +3,12 @@
 # Licensed under the MIT License
 
 
-from typing import Union, List
+from typing import List, Union
+
 import numpy as np
-from tinyshift.stats import StatisticalInterval
-from tinyshift.stats import rolling_window
 import pandas as pd
+
+from tinyshift.utils.imports import requires_extra
 
 
 def hampel_filter(
@@ -105,12 +106,11 @@ def hampel_filter(
     return pd.Series(is_outlier, index=index)
 
 
+@requires_extra("series")
 def bollinger_bands(
     X: Union[np.ndarray, List[float]],
     window_size: int = 20,
-    center: int = np.mean,
-    spread: int = np.std,
-    factor: int = 2,
+    factor: float = 2.0,
 ) -> pd.Series:
     """
     Feature transformer that computes the Bollinger Bands for a given time series.
@@ -126,10 +126,6 @@ def bollinger_bands(
         The number of periods to use for calculating the moving average and standard deviation.
     factor : float, optional (default=2)
         The number of standard deviations to use for the upper and lower bands.
-    center : callable, optional (default=np.mean)
-        Function to compute the center (e.g., mean or median) of the window.
-    spread : callable, optional (default=np.std)
-        Function to compute the spread (e.g., standard deviation or MAD) of the window.
 
     Returns
     -------
@@ -149,24 +145,30 @@ def bollinger_bands(
     if (
         isinstance(window_size, (bool, np.bool_))
         or not isinstance(window_size, (int, np.integer))
-        or window_size < 1
+        or window_size < 2
     ):
-        raise ValueError("window_size must be a positive integer")
-    if not callable(center) or not callable(spread):
-        raise TypeError("center and spread must be callable")
+        raise ValueError("window_size must be an integer >= 2")
     if not np.isfinite(factor) or factor <= 0:
         raise ValueError("factor must be a positive finite number")
+    if window_size > X.shape[0]:
+        raise ValueError("window_size cannot be larger than the length of X")
 
-    is_outlier = np.zeros(X.shape[0], dtype=bool)
-    bounds = rolling_window(
-        X,
-        window_size=window_size,
-        func=StatisticalInterval.calculate_interval,
-        center=center,
-        spread=spread,
-        factor=factor,
+    from coreforecast.rolling import rolling_mean, rolling_std
+
+    centers = rolling_mean(X, window_size=window_size)
+    spreads = rolling_std(X, window_size=window_size)
+
+    # coreforecast uses the sample standard deviation; Bollinger Bands use the
+    # population standard deviation in TinyShift.
+    spreads *= np.sqrt((window_size - 1) / window_size)
+
+    first = window_size - 1
+    centers[:first] = centers[first]
+    spreads[:first] = spreads[first]
+    bounds = np.column_stack(
+        (centers - factor * spreads, centers + factor * spreads)
     )
 
-    is_outlier = np.where((X < bounds[:, 0]) | (X > bounds[:, 1]), True, is_outlier)
+    is_outlier = (X < bounds[:, 0]) | (X > bounds[:, 1])
 
     return pd.Series(is_outlier, index=index)
