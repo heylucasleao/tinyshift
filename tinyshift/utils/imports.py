@@ -12,7 +12,6 @@ R = TypeVar("R")
 
 EXTRA_DEPENDENCIES: dict[str, list[str]] = {
     "series": [
-        "coreforecast",
         "statsforecast",
         "mlforecast",
         "utilsforecast",

@@ -227,7 +227,38 @@ class TestDMSTLWrapper:
         ):
             wrapper._resolve_seasonal_periods("sku_404", series)
 
-    @patch("tinyshift.forecasting.dmstl.base.SeasonalPeriodDetector")
+    def test_auto_detection_uses_significant_periods(self):
+        wrapper = DMSTLLocalWrapper(season_length="auto")
+        wrapper.seasonal_detector_ = Mock(
+            results_={
+                "sku_405": {
+                    "candidate_periods": [7, 30],
+                    "significant_periods": [7],
+                }
+            }
+        )
+
+        assert wrapper._resolve_seasonal_periods("sku_405", np.ones(60)) == [7]
+
+    def test_auto_detection_uses_configured_fallback_without_significant_periods(
+        self,
+    ):
+        wrapper = DMSTLLocalWrapper(
+            season_length="auto",
+            seasonal_detection_params={"fallback": 7},
+        )
+        wrapper.seasonal_detector_ = Mock(
+            results_={
+                "sku_406": {
+                    "candidate_periods": [30],
+                    "significant_periods": [],
+                }
+            }
+        )
+
+        assert wrapper._resolve_seasonal_periods("sku_406", np.ones(20)) == [7]
+
+    @patch("tinyshift.forecasting.dmstl.base.SeasonalityAnalyzer")
     def test_auto_detection_fits_the_complete_panel_once(self, detector_class):
         frame = pd.DataFrame(
             {

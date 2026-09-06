@@ -12,8 +12,8 @@ import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 
 from tinyshift.forecasting.stabilization import hfi, hpi
-from tinyshift.series.decomposition import detrend
-from tinyshift.series.dependence import select_pami_lag
+from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
+from tinyshift.forecasting.dtl.utils import detrend
 
 
 class BaseDTL(BaseEstimator, RegressorMixin):
@@ -64,10 +64,17 @@ class BaseDTL(BaseEstimator, RegressorMixin):
     def _get_residual_lags(self, uid, residual_part: np.ndarray) -> List[int]:
         config = self._get_sku_config(self.nlags, uid)
         if config == "auto":
-            selected, _, _ = select_pami_lag(residual_part, **(self.pami_params or {}))
-            if isinstance(selected, int):
-                return [selected] if selected > 0 else [1]
-            return selected or [1]
+            params = dict(self.pami_params or {})
+            mode = params.pop("mode", "range")
+            fallback = params.pop("fallback", 1)
+            short = params.pop("short", 1)
+            result = PAMIAnalyzer(**params).analyze(residual_part)
+            return create_pami_lags(
+                {uid: result.local_minima},
+                mode=mode,
+                fallback=fallback,
+                short=short,
+            )[uid]
         if isinstance(config, int) and not isinstance(config, bool):
             if config < 1:
                 raise ValueError("nlags must be positive")

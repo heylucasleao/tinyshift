@@ -50,6 +50,7 @@ the residual learner across the panel.
 |---|---|
 | `wrapper.py` | Public facade, strategy selection and fitted-attribute forwarding |
 | `base.py` | LOWESS decomposition, trend fitting, lag resolution and forecast recombination |
+| `utils.py` | Internal LOWESS detrending helper for panel data |
 | `local_.py` | Per-series residual MLForecast fitting and prediction |
 | `global_.py` | Shared panel residual MLForecast fitting and prediction |
 | `__init__.py` | Public export of `DTLWrapper` |
@@ -122,6 +123,8 @@ shared residual model.
   batched.
 - Apply inverse transformations and stabilization only after component
   recombination.
+- Keep the panel LOWESS helper in `utils.py` rather than exposing it through the
+  public series API.
 
 Tests live in `tinyshift/tests/test_dtl.py`:
 

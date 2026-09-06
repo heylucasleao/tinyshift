@@ -1,6 +1,6 @@
 [project]
 name = "tinyshift"
-version = "1.8.1"
+version = "1.8.2"
 description = "A small toolbox for mlops"
 license = { text = "MIT" }
 authors = [{ name = "Lucas Leão", email = "heylucasleao@gmail.com" }]
@@ -22,7 +22,6 @@ dependencies = [
 
 [project.optional-dependencies]
 series = [
-    "coreforecast>=0.0.18",
     "statsforecast>=1.4.0",
     "mlforecast>=0.7.0",
     "utilsforecast>=0.1.0",

@@ -1,14 +1,13 @@
-# Copyright (c) 2024-2025 Lucas Leão
+# Copyright (c) 2024-2026 Lucas Leão
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
 
-from typing import List, Union
+from typing import Union
 
 import numpy as np
 import pandas as pd
 from statsmodels.nonparametric.smoothers_lowess import lowess
-from statsmodels.tsa.seasonal import DecomposeResult
 
 
 def detrend(
@@ -24,29 +23,37 @@ def detrend(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        Nixtla long-format panel with identifier, timestamp and target columns.
-        Additional columns are preserved. Missing values in the target are linearly
-        interpolated only while estimating the trend; original values are
-        preserved in the output.
+    df : pandas.DataFrame
+        Panel containing one row per observation and the identifier, time, and
+        target columns.
     frac : float, default=0.2
-        Fraction of observations used for each local LOWESS regression.
-        Larger values produce a smoother trend.
+        Fraction of observations used when estimating each LOWESS neighborhood.
     robust : bool, default=True
-        Whether to perform robustifying LOWESS iterations that down-weight
-        outliers.
+        Whether to perform robust LOWESS iterations.
     id_col : str, default="unique_id"
-        Column identifying each time series.
+        Name of the series identifier column.
     time_col : str, default="ds"
-        Column containing timestamps or integer time steps.
+        Name of the time column.
     target_col : str, default="y"
-        Column containing the observed target values.
+        Name of the target column.
 
     Returns
     -------
-    pd.DataFrame
-        Copy of ``df`` with ``trend`` and ``detrended`` appended. Rows retain
-        their original order.
+    pandas.DataFrame
+        Copy of ``df`` with ``trend`` and ``detrended`` columns added.
+
+    Raises
+    ------
+    TypeError
+        If ``df`` is not a pandas DataFrame.
+    ValueError
+        If ``frac`` is outside (0, 1], required columns are missing, or a
+        series contains fewer than two observations.
+
+    Notes
+    -----
+    Missing target values are linearly interpolated for trend estimation. The
+    returned rows preserve the original order and index of ``df``.
     """
     if not 0 < frac <= 1:
         raise ValueError("frac must be greater than 0 and less than or equal to 1.")
@@ -90,40 +97,3 @@ def detrend(
     result["detrended"] = result[target_col] - result["trend"]
 
     return result.loc[df.index]
-
-
-def extract_mstl_components(
-    result: DecomposeResult,
-    periods: Union[int, List[int]],
-) -> pd.DataFrame:
-    """Convert a statsmodels MSTL decomposition result to a DataFrame."""
-    if not isinstance(result, DecomposeResult):
-        raise TypeError(
-            "Expected 'result' to be a statsmodels DecomposeResult, got "
-            f"{type(result).__name__}."
-        )
-
-    period_list = [periods] if isinstance(periods, int) else list(periods)
-    components = pd.DataFrame(
-        {
-            "data": result.observed,
-            "trend": result.trend,
-        }
-    )
-    seasonal = np.asarray(result.seasonal)
-    n_seasonal_channels = 1 if seasonal.ndim == 1 else seasonal.shape[1]
-    if len(period_list) != n_seasonal_channels:
-        raise ValueError(
-            f"Number of provided periods ({len(period_list)}) does not match "
-            "the number of seasonal components in result "
-            f"({n_seasonal_channels})."
-        )
-
-    if seasonal.ndim == 1:
-        components[f"seasonal_{period_list[0]}"] = seasonal
-    else:
-        for index, period in enumerate(period_list):
-            components[f"seasonal_{period}"] = seasonal[:, index]
-
-    components["resid"] = result.resid
-    return components
