@@ -9,7 +9,27 @@ AnalyzerT = TypeVar("AnalyzerT", bound="BaseSeriesAnalyzer")
 
 
 class BaseSeriesAnalyzer(ABC):
-    """Base class implementing validation, ordering, and panel iteration."""
+    """Abstract lifecycle for analyzers operating on panel time series.
+
+    Subclasses implement the analysis of one ordered target series through
+    :meth:`_fit_single` and expose a compact tabular view through
+    :meth:`summary`. The shared :meth:`fit` implementation validates the panel,
+    sorts observations by identifier and time, and stores one result per ID.
+
+    Attributes
+    ----------
+    results_ : dict
+        Results keyed by series identifier. Created by :meth:`fit`; value types
+        are defined by each analyzer.
+    id_col_, time_col_, target_col_ : str
+        Column names used by the most recent call to :meth:`fit`.
+
+    Notes
+    -----
+    The base class validates panel structure only. Target-domain constraints,
+    such as non-negativity or missing-value handling, belong to subclasses via
+    :meth:`_validate_target` or :meth:`_fit_single`.
+    """
 
     @staticmethod
     def _validate_panel(
@@ -45,7 +65,33 @@ class BaseSeriesAnalyzer(ABC):
         time_col: str = "ds",
         target_col: str = "y",
     ) -> AnalyzerT:
-        """Analyze every series in a panel DataFrame."""
+        """Fit the analyzer independently to every series in a panel.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Long-format panel with identifier, time, and target columns.
+        id_col : str, default="unique_id"
+            Column identifying independent series.
+        time_col : str, default="ds"
+            Column defining observation order within each series.
+        target_col : str, default="y"
+            Column containing values analyzed by the subclass.
+
+        Returns
+        -------
+        BaseSeriesAnalyzer
+            The fitted subclass instance.
+
+        Raises
+        ------
+        TypeError
+            If ``df`` is not a pandas DataFrame.
+        ValueError
+            If required columns are missing, the panel is empty, identifiers
+            or times are missing, ID-time pairs are duplicated, or subclass
+            target validation fails.
+        """
         self._validate_panel(df, id_col, time_col, target_col)
         self._validate_target(df, target_col)
         self.id_col_ = id_col

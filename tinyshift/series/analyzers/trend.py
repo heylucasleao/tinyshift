@@ -11,7 +11,37 @@ from .base import BaseSeriesAnalyzer
 
 
 class TrendAnalyzer(BaseSeriesAnalyzer):
-    """Analyze linear trend magnitude and significance for each panel series."""
+    """Analyze linear trend magnitude and significance for panel series.
+
+    A least-squares regression of target values on observation order is fitted
+    independently per ID. The analyzer reports slope, explained variance, the
+    two-sided slope-test p-value, and a thresholded significance flag.
+
+    Parameters
+    ----------
+    significance_level : float, default=0.05
+        P-value threshold used for ``significant_trend``. Must lie strictly
+        between zero and one.
+
+    Attributes
+    ----------
+    results_ : dict
+        Mapping from ID to ``trend_slope``, ``trend_r2``, ``trend_pvalue``,
+        and ``significant_trend``.
+
+    Notes
+    -----
+    The slope is expressed in target units per observation. The time column is
+    used for ordering, not as a numeric regression covariate; irregularly
+    sampled panels should therefore be regularized before analysis.
+
+    Examples
+    --------
+    >>> analyzer = TrendAnalyzer(significance_level=0.05)
+    >>> analyzer.fit(df).summary()
+      unique_id  trend_slope  trend_r2  trend_pvalue  significant_trend
+    0         A          ...       ...           ...                ...
+    """
 
     def __init__(self, significance_level: float = 0.05) -> None:
         self.significance_level = significance_level
@@ -42,7 +72,18 @@ class TrendAnalyzer(BaseSeriesAnalyzer):
         }
 
     def summary(self) -> pd.DataFrame:
-        """Return linear-trend diagnostics with one row per series."""
+        """Return linear-trend diagnostics with one row per series.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ID plus slope, R², p-value, and significance flag columns.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        """
         if not hasattr(self, "results_"):
             raise RuntimeError("The analyzer must be fitted before calling `summary()`.")
         columns = ["trend_slope", "trend_r2", "trend_pvalue", "significant_trend"]
