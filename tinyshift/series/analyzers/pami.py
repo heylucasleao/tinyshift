@@ -68,7 +68,58 @@ def create_pami_lags(
 
 
 class PAMIAnalyzer(BaseSeriesAnalyzer):
-    """Find local minima in PAMI curves for one or more time series."""
+    """Detect candidate lags from permutation auto-mutual information curves.
+
+    The analyzer computes a permutation auto-mutual information (PAMI) curve for
+    each series in a panel and records the local minima of the resulting curve.
+    Those minima are interpreted as candidate lag values associated with the
+    strongest non-linear dependence structure in the signal.
+
+    Parameters
+    ----------
+    max_tau : int, default=365
+        Maximum lag to evaluate. The effective horizon is truncated by the
+        available sample size for the chosen embedding order and delay.
+    m : int, default=3
+        Embedding dimension used by the permutation auto-mutual information
+        estimator.
+    delay : int, default=1
+        Spacing between observations used to form each ordinal pattern.
+    normalize : bool, default=False
+        Whether to normalize the permutation auto-mutual information values.
+
+    Attributes
+    ----------
+    results_ : dict
+        Mapping from each unique ID to a :class:`PAMIResult` object containing the
+        evaluated lags, the PAMI curve, and the local minima found in that curve.
+
+    Notes
+    -----
+    PAMI measures dependence between a series and its lagged version using
+    ordinal-pattern entropy. Local minima often correspond to informative lags
+    where the memory structure is strongest or most rhythmically structured.
+
+    The class follows the panel-oriented workflow of
+    :class:`~tinyshift.series.analyzers.base.BaseSeriesAnalyzer`: every ID is
+    independently fitted, sorted by time, and summarized through a compact
+    per-series result table.
+
+    Examples
+    --------
+    >>> analyzer = PAMIAnalyzer(max_tau=60, m=3, delay=1)
+    >>> analyzer.fit(df, id_col="unique_id", time_col="ds", target_col="y")
+    PAMIAnalyzer(...)
+    >>> analyzer.summary().head()
+      unique_id                 local_minima
+    0       A                        [7, 14]
+    >>> analyzer.lags(mode="short", fallback=1, short=3)
+    {'A': [1, 2, 7, 14]}
+
+    See Also
+    --------
+    create_pami_lags : Construct a model-compatible lag dictionary from minima.
+    """
 
     def __init__(
         self,
@@ -98,12 +149,32 @@ class PAMIAnalyzer(BaseSeriesAnalyzer):
             ("delay", self.delay, 1),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-                raise ValueError(f"'{name}' must be an integer greater than or equal to {minimum}.")
+                raise ValueError(
+                    f"'{name}' must be an integer greater than or equal to {minimum}."
+                )
         if not isinstance(self.normalize, bool):
             raise TypeError("'normalize' must be a boolean.")
 
     def analyze(self, values: Sequence[float]) -> PAMIResult:
-        """Calculate a PAMI curve and locate all of its local minima."""
+        """Calculate a PAMI curve and locate all of its local minima.
+
+        Parameters
+        ----------
+        values : sequence of float
+            Univariate time series used to compute the PAMI curve.
+
+        Returns
+        -------
+        PAMIResult
+            Object containing the evaluated lag values, the corresponding PAMI
+            curve, and the local minima of that curve.
+
+        Raises
+        ------
+        ValueError
+            If the input is not one-dimensional, contains non-finite values, or
+            is too short for the configured embedding dimension and delay.
+        """
         values = np.asarray(values, dtype=np.float64)
         if values.ndim != 1:
             raise ValueError("Input data must be 1-dimensional.")
@@ -143,9 +214,23 @@ class PAMIAnalyzer(BaseSeriesAnalyzer):
         return self.analyze(values)
 
     def summary(self) -> pd.DataFrame:
-        """Return only the ID and local minima found for each series."""
+        """Return the detected lag minima for every fitted series.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A two-column table with the series identifier and the local minima
+            discovered in its PAMI curve.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        """
         if not hasattr(self, "results_"):
-            raise RuntimeError("The analyzer must be fitted before calling `summary()`.")
+            raise RuntimeError(
+                "The analyzer must be fitted before calling `summary()`."
+            )
         return pd.DataFrame(
             [
                 {self.id_col_: unique_id, "local_minima": result.local_minima}
@@ -161,7 +246,27 @@ class PAMIAnalyzer(BaseSeriesAnalyzer):
         fallback: int = 1,
         short: int = 1,
     ) -> dict[Any, list[int]]:
-        """Create a model-compatible lag dictionary from fitted minima."""
+        """Create a model-compatible lag dictionary from fitted minima.
+
+        Parameters
+        ----------
+        mode : {"short", "point", "range"}, default="range"
+            Strategy used to build the final lag list from each series minima.
+        fallback : int, default=1
+            Integer used when no valid local minimum is available.
+        short : int, default=1
+            Number of short lags to include when ``mode="short"``.
+
+        Returns
+        -------
+        dict
+            Mapping from each unique ID to the selected lag values.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        """
         if not hasattr(self, "results_"):
             raise RuntimeError("The analyzer must be fitted before creating lags.")
         return create_pami_lags(

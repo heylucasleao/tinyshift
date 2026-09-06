@@ -13,22 +13,45 @@ from .base import BaseSeriesAnalyzer
 
 
 class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
-    """Analyze serial dependence across horizons for panel time series.
+    """Diagnose serial dependence across multiple aggregation horizons.
+
+    The analyzer evaluates the variance-ratio statistic for each series in a
+    panel across one or more horizons. Values near one indicate weak serial
+    dependence, whereas systematic deviations from one suggest persistence or
+    mean-reversion at the evaluated scale.
 
     Parameters
     ----------
     horizons : list of int, optional
-        Aggregation horizons to evaluate. When omitted, powers of two are
-        generated independently for each series, up to the smaller of one
-        tenth of its length and ``max_horizon``.
+        Aggregation horizons to evaluate. When omitted, a power-of-two grid is
+        constructed automatically for each series up to the smaller of one tenth
+        of the series length and ``max_horizon``.
     max_horizon : int, default=64
-        Upper bound used only when generating horizons automatically.
+        Maximum horizon considered when generating default values automatically.
 
     Attributes
     ----------
     results_ : dict
-        Mapping from each unique ID to a mapping keyed by horizon. Each result
-        contains ``variance_ratio``, ``z_statistic``, and ``p_value``.
+        Mapping from each unique ID to a nested dictionary keyed by horizon. Each
+        horizon entry contains ``variance_ratio``, ``z_statistic``, and
+        ``p_value``.
+
+    Notes
+    -----
+    The test is computed on the original series and aggregated increments. The
+    variance-ratio statistic compares the variance of the aggregated process with
+    the variance implied by independent one-step shocks. The implementation is
+    most informative when the fitted panel is sufficiently long to support the
+    requested horizons.
+
+    Examples
+    --------
+    >>> analyzer = VarianceRatioAnalyzer(horizons=[2, 4, 8])
+    >>> analyzer.fit(df, id_col="unique_id", time_col="ds", target_col="y")
+    VarianceRatioAnalyzer(...)
+    >>> analyzer.summary().head()
+      unique_id  horizon  variance_ratio  z_statistic  p_value
+    0        A        2            ...          ...      ...
     """
 
     def __init__(
@@ -62,9 +85,7 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
         if not isinstance(self.horizons, (list, tuple)) or not self.horizons:
             raise ValueError("'horizons' must be a non-empty list of integers.")
         if any(
-            isinstance(horizon, bool)
-            or not isinstance(horizon, int)
-            or horizon <= 1
+            isinstance(horizon, bool) or not isinstance(horizon, int) or horizon <= 1
             for horizon in self.horizons
         ):
             raise ValueError("Every horizon must be an integer greater than 1.")
@@ -72,10 +93,7 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
     def _default_horizons(self, n: int) -> List[int]:
         """Generate power-of-two horizons supported by the sample size."""
         max_horizon = min(n // 10, self.max_horizon)
-        return [
-            1 << exponent
-            for exponent in range(1, max_horizon.bit_length())
-        ]
+        return [1 << exponent for exponent in range(1, max_horizon.bit_length())]
 
     def _resolve_horizons(self, n: int) -> List[int]:
         horizons = (
@@ -118,7 +136,19 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
             raise ValueError("Target values must be finite.")
 
     def summary(self) -> pd.DataFrame:
-        """Return one row per series and evaluated horizon."""
+        """Return one row per series and evaluated horizon.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Long-format table containing one row per ``(unique_id, horizon)``
+            pair and the variance-ratio diagnostics for that evaluation.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        """
         if not hasattr(self, "results_"):
             raise RuntimeError(
                 "The analyzer must be fitted before calling `summary()`."
