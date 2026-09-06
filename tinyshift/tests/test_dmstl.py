@@ -215,13 +215,41 @@ class TestDMSTLWrapper:
         ):
             wrapper._resolve_seasonal_periods("sku_303", series)
 
-    @patch("tinyshift.forecasting.dmstl.base.SeasonalPeriodDetector")
-    def test_auto_detection_failure_raises_value_error(self, mock_detect):
-        mock_detect.return_value.fit.return_value.periods_ = {"sku_404": []}
+    def test_auto_detection_failure_raises_value_error(self):
         wrapper = DMSTLLocalWrapper(season_length="auto")
+        wrapper.seasonal_detector_ = Mock(results_={"sku_404": {"periods": []}})
         series = np.array([10.0] * 12)
 
         with pytest.raises(
             ValueError, match="Could not automatically detect seasonal periods"
         ):
             wrapper._resolve_seasonal_periods("sku_404", series)
+
+    @patch("tinyshift.forecasting.dmstl.base.SeasonalPeriodDetector")
+    def test_auto_detection_fits_the_complete_panel_once(self, detector_class):
+        frame = pd.DataFrame(
+            {
+                "series": ["a"] * 4 + ["b"] * 4 + ["fixed"] * 4,
+                "date": list(range(4)) * 3,
+                "value": np.arange(12, dtype=float),
+            }
+        )
+        detector = detector_class.return_value
+        detector.fit.return_value = detector
+        detector.results_ = {"a": {"periods": [2]}, "b": {"periods": [2]}}
+        wrapper = DMSTLLocalWrapper(
+            season_length={"a": "auto", "b": "auto", "fixed": 2}
+        )
+        wrapper.id_col_ = "series"
+        wrapper.time_col_ = "date"
+        wrapper.target_col_ = "value"
+
+        wrapper._detect_panel_seasonal_periods(frame)
+
+        detector.fit.assert_called_once()
+        detected_frame = detector.fit.call_args.args[0]
+        assert set(detected_frame["series"]) == {"a", "b"}
+        assert wrapper.seasonal_detector_.results_ == {
+            "a": {"periods": [2]},
+            "b": {"periods": [2]},
+        }

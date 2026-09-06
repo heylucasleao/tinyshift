@@ -170,7 +170,7 @@ class TestDiagnostic:
     def test_seasonal_period_detector_detects_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector().fit(frame).periods_["a"]
+        periods = SeasonalPeriodDetector().fit(frame).results_["a"]["periods"]
         assert 8 in periods
         assert periods == sorted(set(periods))
 
@@ -178,7 +178,7 @@ class TestDiagnostic:
         x = (-1.0) ** np.arange(32)
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector(top_k=1).fit(frame).periods_["a"]
+        periods = SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]["periods"]
         assert periods == [2]
 
     def test_seasonal_period_detector_ignores_missing_values(self):
@@ -186,7 +186,7 @@ class TestDiagnostic:
         x[[3, 17]] = np.nan
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector(top_k=1).fit(frame).periods_["a"]
+        periods = SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]["periods"]
 
         assert periods == [8]
 
@@ -196,7 +196,7 @@ class TestDiagnostic:
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
         detector = SeasonalPeriodDetector(top_k=1).fit(frame)
 
-        assert len(detector.frequencies_["a"]) == 17
+        assert len(detector.results_["a"]["frequencies"]) == 17
 
     @pytest.mark.parametrize(
         ("fallback", "expected"),
@@ -206,7 +206,11 @@ class TestDiagnostic:
         self, fallback, expected
     ):
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": np.ones(32)})
-        periods = SeasonalPeriodDetector(fallback=fallback).fit(frame).periods_["a"]
+        periods = (
+            SeasonalPeriodDetector(fallback=fallback)
+            .fit(frame)
+            .results_["a"]["periods"]
+        )
 
         assert periods == expected
 
@@ -225,9 +229,9 @@ class TestDiagnostic:
             }
         )
 
-        periods = SeasonalPeriodDetector(top_k=1).fit(frame).periods_
-        assert periods["weekly"] == [8]
-        assert periods["biweekly"] == [16]
+        results = SeasonalPeriodDetector(top_k=1).fit(frame).results_
+        assert results["weekly"]["periods"] == [8]
+        assert results["biweekly"]["periods"] == [16]
 
     def test_seasonal_period_detector_infers_single_numeric_target(self):
         steps = np.arange(32)
@@ -245,7 +249,7 @@ class TestDiagnostic:
             target_col="value",
         )
 
-        assert detector.periods_ == {"a": [8]}
+        assert detector.results_["a"]["periods"] == [8]
         assert detector.time_col_ == "timestamp"
         assert detector.target_col_ == "value"
 
@@ -332,7 +336,7 @@ class TestIntermittencyAnalyzer:
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(4), "y": [0, 1, 0, 1]})
         analyzer = IntermittencyAnalyzer().fit(frame)
 
-        assert analyzer.classification_ == {"a": "intermittent"}
+        assert analyzer.results_["a"]["classification"] == "intermittent"
         assert CanonicalAnalyzer is IntermittencyAnalyzer
 
     def test_sorts_panel_by_id_and_time_and_returns_id_as_column(self):
@@ -344,7 +348,7 @@ class TestIntermittencyAnalyzer:
             }
         )
 
-        result = IntermittencyAnalyzer().analyze(frame)
+        result = IntermittencyAnalyzer().fit(frame).profile()
 
         assert result.columns.tolist() == [
             "unique_id",
@@ -355,7 +359,7 @@ class TestIntermittencyAnalyzer:
             "classification",
         ]
         np.testing.assert_array_equal(
-            IntermittencyAnalyzer().fit(frame).intervals_["a"], [2]
+            IntermittencyAnalyzer().fit(frame).results_["a"]["intervals"], [2]
         )
 
     def test_column_names_are_fit_parameters(self):
@@ -367,6 +371,36 @@ class TestIntermittencyAnalyzer:
 
         assert analyzer.profile()["item"].tolist() == ["a"]
         assert analyzer.id_col_ == "item"
+
+    def test_profile_requires_fit(self):
+        with pytest.raises(RuntimeError, match="fitted"):
+            IntermittencyAnalyzer().profile()
+
+        with pytest.raises(RuntimeError, match="fitted"):
+            SeasonalPeriodDetector().profile()
+
+    def test_seasonality_profile_returns_one_row_per_series(self):
+        steps = np.arange(32)
+        frame = pd.DataFrame(
+            {
+                "unique_id": ["a"] * 32 + ["b"] * 32,
+                "ds": list(steps) * 2,
+                "y": np.tile(np.sin(2 * np.pi * steps / 8), 2),
+            }
+        )
+
+        profile = SeasonalPeriodDetector(top_k=1).fit(frame).profile()
+
+        assert profile.to_dict("records") == [
+            {"unique_id": "a", "periods": [8]},
+            {"unique_id": "b", "periods": [8]},
+        ]
+        assert set(SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]) == {
+            "periods",
+            "frequencies",
+            "power",
+            "peaks",
+        }
 
     @pytest.mark.parametrize("threshold", [np.nan, np.inf, True])
     def test_rejects_invalid_thresholds(self, threshold):
