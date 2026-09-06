@@ -3,6 +3,7 @@
 # Licensed under the MIT License
 
 
+from numbers import Real
 from typing import Any, List, Optional
 
 import numpy as np
@@ -28,13 +29,16 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
         of the series length and ``max_horizon``.
     max_horizon : int, default=64
         Maximum horizon considered when generating default values automatically.
+    significance_level : float, default=0.05
+        P-value threshold used for ``significant_variance``. Must lie strictly
+        between zero and one.
 
     Attributes
     ----------
     results_ : dict
         Mapping from each unique ID to a nested dictionary keyed by horizon. Each
-        horizon entry contains ``variance_ratio``, ``z_statistic``, and
-        ``p_value``.
+        horizon entry contains ``variance_ratio``, ``z_statistic``, ``p_value``,
+        and ``significant_variance``.
 
     Notes
     -----
@@ -50,24 +54,27 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
     >>> analyzer.fit(df, id_col="unique_id", time_col="ds", target_col="y")
     VarianceRatioAnalyzer(...)
     >>> analyzer.summary().head()
-      unique_id  horizon  variance_ratio  z_statistic  p_value
-    0        A        2            ...          ...      ...
+            unique_id  horizon  variance_ratio  significant_variance
+        0        A        2            ...                    ...
     """
 
     def __init__(
         self,
         horizons: Optional[List[int]] = None,
         max_horizon: int = 64,
+        significance_level: float = 0.05,
     ) -> None:
         self.horizons = horizons
         self.max_horizon = max_horizon
+        self.significance_level = significance_level
         self._validate_params()
 
     def __repr__(self) -> str:
         return (
             "VarianceRatioAnalyzer("
             f"horizons={self.horizons!r}, "
-            f"max_horizon={self.max_horizon}"
+            f"max_horizon={self.max_horizon}, "
+            f"significance_level={self.significance_level}"
             ")"
         )
 
@@ -78,6 +85,14 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
             or self.max_horizon <= 1
         ):
             raise ValueError("'max_horizon' must be an integer greater than 1.")
+
+        if (
+            isinstance(self.significance_level, bool)
+            or not isinstance(self.significance_level, Real)
+            or not np.isfinite(self.significance_level)
+            or not 0 < self.significance_level < 1
+        ):
+            raise ValueError("'significance_level' must be between 0 and 1.")
 
         if self.horizons is None:
             return
@@ -125,6 +140,9 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
                 "variance_ratio": ratio,
                 "z_statistic": z_statistic,
                 "p_value": p_value,
+                "significant_variance": bool(
+                    np.isfinite(p_value) and p_value < self.significance_level
+                ),
             }
 
         return results
@@ -142,7 +160,8 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
         -------
         pandas.DataFrame
             Long-format table containing one row per ``(unique_id, horizon)``
-            pair and the variance-ratio diagnostics for that evaluation.
+            pair, the variance-ratio estimate, and its significance flag. The
+            z-statistic and p-value remain available in ``results_``.
 
         Raises
         ------
@@ -163,11 +182,5 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
             for unique_id, horizon_results in self.results_.items()
             for horizon, result in horizon_results.items()
         ]
-        columns = [
-            self.id_col_,
-            "horizon",
-            "variance_ratio",
-            "z_statistic",
-            "p_value",
-        ]
+        columns = [self.id_col_, "horizon", "variance_ratio", "significant_variance"]
         return pd.DataFrame(rows, columns=columns)
