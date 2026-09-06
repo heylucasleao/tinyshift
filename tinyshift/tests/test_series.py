@@ -19,7 +19,9 @@ from tinyshift.forecasting.metrics import (
 from tinyshift.forecasting.stabilization import hfi, hpi, vi
 from tinyshift.series import (
     IntermittencyAnalyzer,
+    PredictabilityAnalyzer,
     SeasonalityAnalyzer,
+    TrendAnalyzer,
     VarianceRatioAnalyzer,
 )
 from tinyshift.series.decomposition import detrend, extract_mstl_components
@@ -44,7 +46,6 @@ from tinyshift.series.analyzers.intermittency import (
     IntermittencyAnalyzer as CanonicalAnalyzer,
 )
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
-from tinyshift.series.profiler import SeriesProfiler
 from tinyshift.series.spectral import _prepare_spectrum, foreca
 
 
@@ -352,7 +353,8 @@ class TestVarianceRatioAnalyzer:
 
     def test_trend_significance(self):
         x = np.linspace(0, 10, 40)
-        r_squared, p_value = trend_significance(x)
+        slope, r_squared, p_value = trend_significance(x)
+        assert slope > 0.0
         assert r_squared >= 0.0
         assert np.isfinite(p_value)
 
@@ -511,8 +513,42 @@ class TestIntermittencyAnalyzer:
             IntermittencyAnalyzer(cv2_threshold=threshold)
 
 
-class TestSeriesProfiler:
-    def test_returns_complete_panel_profile(self):
+class TestPredictabilityAndTrendAnalyzers:
+    def test_predictability_summary(self):
+        steps = np.arange(32)
+        frame = pd.DataFrame(
+            {
+                "unique_id": "a",
+                "ds": steps,
+                "y": 2.0 + np.sin(2 * np.pi * steps / 8),
+            }
+        )
+
+        result = PredictabilityAnalyzer().fit(frame).summary()
+
+        assert result.columns.tolist() == [
+            "unique_id",
+            "foreca",
+            "limit",
+            "spectral_concentration",
+        ]
+        assert np.isfinite(result.iloc[0, 1:].to_numpy(dtype=float)).all()
+
+    def test_trend_summary_includes_direction_and_significance(self):
+        steps = np.arange(32)
+        frame = pd.DataFrame(
+            {"unique_id": "a", "ds": steps, "y": 1.0 + 2.0 * steps}
+        )
+
+        result = TrendAnalyzer().fit(frame).summary()
+
+        assert result.loc[0, "trend_slope"] == pytest.approx(2.0)
+        assert result.loc[0, "trend_r2"] == pytest.approx(1.0)
+        assert result.loc[0, "significant_trend"]
+
+
+class TestAnalyzerComposition:
+    def test_summaries_can_be_merged(self):
         steps = np.arange(64)
         frame = pd.concat(
             [
@@ -530,75 +566,37 @@ class TestSeriesProfiler:
             ignore_index=True,
         )
 
-        profiler = SeriesProfiler(top_k=1).fit(frame)
-        result = profiler.summary()
+        analyzers = [
+            IntermittencyAnalyzer(),
+            PredictabilityAnalyzer(),
+            TrendAnalyzer(),
+            SeasonalityAnalyzer(top_k=1),
+        ]
+        summaries = [analyzer.fit(frame).summary() for analyzer in analyzers]
+        result = summaries[0]
+        for summary in summaries[1:]:
+            result = result.merge(summary, on="unique_id", validate="one_to_one")
 
         assert result.columns.tolist() == [
             "unique_id",
             "adi",
             "cv2",
-            "zero_prop",
+            "zero_proportion",
             "interval_cv",
-            "class",
+            "classification",
             "foreca",
             "limit",
+            "spectral_concentration",
+            "trend_slope",
             "trend_r2",
             "trend_pvalue",
-            "spectral_conc",
+            "significant_trend",
             "candidate_periods",
+            "significant_periods",
         ]
         assert result["unique_id"].tolist() == ["a", "b"]
         assert result.set_index("unique_id").loc["a", "candidate_periods"] == [8]
         assert result.set_index("unique_id").loc["b", "candidate_periods"] == [16]
-        assert (
-            result.drop(columns=["unique_id", "class", "candidate_periods"])
-            .apply(np.isfinite)
-            .all()
-            .all()
-        )
-        assert set(profiler.results_["a"]) == {
-            "demand_occurrence",
-            "predictability",
-            "temporal_structure",
-            "spectral_structure",
-        }
-
-    def test_accepts_custom_panel_column_names(self):
-        steps = np.arange(64)
-        frame = pd.DataFrame(
-            {
-                "item": "a",
-                "date": steps,
-                "demand": 2.0 + np.sin(2 * np.pi * steps / 8),
-            }
-        )
-
-        result = (
-            SeriesProfiler(top_k=1)
-            .fit(
-                frame,
-                id_col="item",
-                time_col="date",
-                target_col="demand",
-            )
-            .summary()
-        )
-
-        assert result.loc[0, "item"] == "a"
-        assert result.loc[0, "candidate_periods"] == [8]
-
-    def test_accepts_series_shorter_than_variance_ratio_minimum(self):
-        frame = pd.DataFrame(
-            {"unique_id": "a", "ds": np.arange(20), "y": np.arange(20.0)}
-        )
-
-        result = SeriesProfiler().fit(frame).summary()
-
-        assert result.loc[0, "unique_id"] == "a"
-
-    def test_summary_requires_fit(self):
-        with pytest.raises(RuntimeError, match="fitted"):
-            SeriesProfiler().summary()
 
 
 class TestForecastability:
@@ -717,7 +715,9 @@ class TestForecastability:
     def test_analyzers_expose_summary_without_profile(self):
         for analyzer in (
             IntermittencyAnalyzer(),
+            PredictabilityAnalyzer(),
             SeasonalityAnalyzer(),
+            TrendAnalyzer(),
             VarianceRatioAnalyzer(),
             PAMIAnalyzer(),
         ):

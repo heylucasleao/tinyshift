@@ -12,7 +12,9 @@ from .analyzers import (
     IntermittencyAnalyzer,
     PAMIAnalyzer,
     PAMIResult,
+    PredictabilityAnalyzer,
     SeasonalityAnalyzer,
+    TrendAnalyzer,
     VarianceRatioAnalyzer,
     create_pami_lags,
 )
@@ -23,13 +25,11 @@ from .entropy import (
     theoretical_limit,
 )
 from .outlier import bollinger_bands, hampel_filter
-from .profiler import SeriesProfiler
 from .spectral import foreca, spectral_concentration
 
 __all__ = [
     "IntermittencyAnalyzer",
     "SeasonalityAnalyzer",
-    "SeriesProfiler",
     "bollinger_bands",
     "detrend",
     "extract_mstl_components",
@@ -43,6 +43,8 @@ __all__ = [
     "seasonal_strength",
     "PAMIAnalyzer",
     "PAMIResult",
+    "PredictabilityAnalyzer",
+    "TrendAnalyzer",
     "create_pami_lags",
     "spectral_concentration",
     "theoretical_limit",

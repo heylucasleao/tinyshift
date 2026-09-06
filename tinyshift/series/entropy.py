@@ -67,7 +67,7 @@ def sample_entropy(
         raise ValueError("Input data must contain only finite values")
 
     if detrend:
-        r_squared, p_value = trend_significance(X)
+        _, r_squared, p_value = trend_significance(X)
         if r_squared > 0.3 and p_value < 0.05:
             X = signal.detrend(X, type="linear")
         else:
@@ -294,4 +294,3 @@ def theoretical_limit(
     pe = permutation_entropy(X, m=m, delay=delay, normalize=True)
 
     return 1 - pe
-

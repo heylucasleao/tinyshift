@@ -58,12 +58,16 @@ lags = pami.lags(mode="short", short=2, fallback=1)
 ```python
 from tinyshift.series import (
     IntermittencyAnalyzer,
+    PredictabilityAnalyzer,
     SeasonalityAnalyzer,
+    TrendAnalyzer,
     VarianceRatioAnalyzer,
 )
 
 intermittency = IntermittencyAnalyzer().fit(df).summary()
+predictability = PredictabilityAnalyzer().fit(df).summary()
 seasonality = SeasonalityAnalyzer(top_k=2).fit(df).summary()
+trend = TrendAnalyzer().fit(df).summary()
 dependence = VarianceRatioAnalyzer().fit(df).summary()
 ```
 
@@ -81,25 +85,27 @@ mean reversion at logarithmically spaced horizons for each series.
 - `detrend`: LOWESS trend and residual extraction for panel data.
 - `extract_mstl_components`: conversion of an MSTL result into a tidy frame.
 
-## Series Profiler
+## Combining Analyzer Summaries
 
-`SeriesProfiler` combines demand occurrence, predictability, temporal structure,
-and spectral structure into one row per series:
+Analyzer summaries can be combined explicitly with validated one-to-one merges:
 
 ```python
-from tinyshift.series import SeriesProfiler
+analyzers = [
+    IntermittencyAnalyzer(),
+    PredictabilityAnalyzer(),
+    TrendAnalyzer(),
+    SeasonalityAnalyzer(top_k=2),
+]
 
-summary = SeriesProfiler(top_k=2).fit(
-    df,
-    id_col="unique_id",
-    time_col="ds",
-    target_col="y",
-).summary()
+summaries = [analyzer.fit(df).summary() for analyzer in analyzers]
+summary = summaries[0]
+for section in summaries[1:]:
+    summary = summary.merge(section, on="unique_id", validate="one_to_one")
 ```
 
-The result contains `adi`, `cv2`, `zero_prop`, `interval_cv`, `class`, `foreca`,
-`limit`, `trend_r2`, `trend_pvalue`, `spectral_conc`, and
-`candidate_periods`. Variance-ratio analysis remains available independently
+The result contains `adi`, `cv2`, `zero_proportion`, `interval_cv`, `classification`, `foreca`,
+`limit`, `spectral_concentration`, the linear-trend diagnostics, and candidate
+and significant seasonal periods. Variance-ratio analysis remains available independently
 through `VarianceRatioAnalyzer`.
 
 ## Outlier Detection

@@ -129,12 +129,12 @@ def variance_ratio(
 
 def trend_significance(
     X: Union[np.ndarray, List[float]],
-) -> Tuple[float, float]:
+) -> Tuple[float, float, float]:
     """
     Performs a linear regression against time (index) to check for a significant
     linear trend in the input data.
 
-    The function calculates the R-squared value and the p-value of the
+    The function calculates the slope, R-squared value, and p-value of the
     hypothesis test where the null hypothesis is that the slope of the
     regression line is zero (i.e., no linear trend).
 
@@ -145,8 +145,10 @@ def trend_significance(
 
     Returns
     -------
-    Tuple[float, float]
-        (R-squared, p-value)
+    Tuple[float, float, float]
+        (slope, R-squared, p-value)
+        slope : float
+            Linear change in the target per observation.
         r_squared : float
             The coefficient of determination (R²), representing the proportion
             of variance in the data explained by the linear trend.
@@ -179,10 +181,10 @@ def trend_significance(
         raise ValueError("Input data must be 1-dimensional")
 
     time_index = np.arange(len(X))
-    _, _, r_value, p_value, _ = scipy.stats.linregress(time_index, X)
+    slope, _, r_value, p_value, _ = scipy.stats.linregress(time_index, X)
     r_squared = r_value**2
 
-    return r_squared, p_value
+    return float(slope), float(r_squared), float(p_value)
 
 
 def seasonal_strength(

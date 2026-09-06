@@ -220,6 +220,10 @@ TinyShift provides comprehensive time series analysis capabilities:
 ```python
 from tinyshift.plot import seasonal_decompose
 from tinyshift.series import (
+    IntermittencyAnalyzer,
+    PredictabilityAnalyzer,
+    SeasonalityAnalyzer,
+    TrendAnalyzer,
     trend_significance, 
     foreca, 
     sample_entropy,
@@ -227,7 +231,6 @@ from tinyshift.series import (
     theoretical_limit,
     variance_ratio,
     VarianceRatioAnalyzer,
-    SeriesProfiler,
     hampel_filter,
     bollinger_bands
 )
@@ -240,7 +243,7 @@ seasonal_decompose(
 )
 
 # Test for significant trends
-r_squared, p_value = trend_significance(time_series)
+slope, r_squared, p_value = trend_significance(time_series)
 
 # Assess forecastability
 forecastability = foreca(time_series)
@@ -265,7 +268,16 @@ ratio, z_statistic, p_value = variance_ratio(time_series, horizon=7)
 vr_summary = VarianceRatioAnalyzer().fit(df).summary()
 
 # Combined diagnostics for a Nixtla-style panel
-summary = SeriesProfiler().fit(df).summary()
+analyzers = [
+    IntermittencyAnalyzer(),
+    PredictabilityAnalyzer(),
+    TrendAnalyzer(),
+    SeasonalityAnalyzer(top_k=2),
+]
+summaries = [analyzer.fit(df).summary() for analyzer in analyzers]
+summary = summaries[0]
+for section in summaries[1:]:
+    summary = summary.merge(section, on="unique_id", validate="one_to_one")
 
 # Outlier detection in time series
 outliers = hampel_filter(time_series, window_size=5)
@@ -609,7 +621,6 @@ tinyshift/
 │   ├── entropy.py               # Entropy and ordinal complexity metrics
 │   ├── intermittency.py         # Intermittent-demand analysis
 │   ├── outlier.py               # Time series outlier detection
-│   ├── profiler.py              # Combined series profiling
 │   ├── seasonality.py           # Seasonal-period detection
 │   └── spectral.py              # Spectral analysis and forecastability metrics
 └── stats/                       # Statistical utilities

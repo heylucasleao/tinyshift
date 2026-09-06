@@ -97,7 +97,7 @@ def seasonal_decompose(
     result_mstl = mstl.fit()
     components_df = extract_mstl_components(result_mstl, period_list)
 
-    r_squared, p_value_trend = trend_significance(X_series.values)
+    _, r_squared, p_value_trend = trend_significance(X_series.values)
     trend_summary = f"R²={r_squared:.4f}, p={p_value_trend:.4f}"
 
     ljung_box = acorr_ljungbox(components_df["resid"].dropna(), lags=[nlags])
