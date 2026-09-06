@@ -275,11 +275,11 @@ pami(time_series, nlags=20, m=3, delay=1, normalize=False)
 
 ### 6. Forecast Accuracy Metrics
 
-TinyShift also includes forecast evaluation utilities in the series metrics module, implemented in [tinyshift/series/metric.py](tinyshift/series/metric.py). This module provides functions such as `wape`, `pbias`, `score`, `rmae`, and `fva_rmae` to compare forecasting models using aggregate error, bias, and baseline-relative performance:
+TinyShift also includes forecast evaluation utilities in the series metrics module, implemented in [tinyshift/series/metric.py](tinyshift/series/metric.py). This module provides functions such as `wape`, `pbias`, `score`, and `rmae` to compare forecasting models using aggregate error, bias, and baseline-relative performance:
 
 ```python
 import pandas as pd
-from tinyshift.series import wape, pbias, score, rmae, fva_rmae
+from tinyshift.series import wape, pbias, score, rmae
 
 # Example evaluation dataframe
 # df must contain actual values in the 'y' column and model predictions as columns
@@ -289,9 +289,6 @@ pbias_df = pbias(df, models=["model_a", "model_b"], id_col="unique_id", target_c
 score_df = score(df, models=["model_a", "model_b"], id_col="unique_id", target_col="y")
 rmae_df = rmae(df, models=["model_a", "model_b"], baseline_col="naive", id_col="unique_id", target_col="y")
 
-# Single-series Forecast Value Added (FVA) analysis
-fva = fva_rmae(y_true, y_pred, nlags=1, baseline_type="naive")
-print(f"FVA RMAE: {fva}")
 ```
 
 These utilities cover:
@@ -300,7 +297,6 @@ These utilities cover:
 - `score`: composite score combining WAPE and absolute bias
 - `economic_loss`: financial loss from understock and overstock costs
 - `rmae`: relative mean absolute error versus a baseline model
-- `fva_rmae`: lead-time-aware RMAE for Forecast Value Added analysis
 
 ### 7. Forecast Interpolation
 

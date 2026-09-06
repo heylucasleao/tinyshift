@@ -20,9 +20,10 @@ The `series` module of tinyshift provides quantitative tools for time series ana
   Measures the forecastability (ForeCA omega index) of a series from its spectral density.
   **When to use:** To assess whether a series is structured or noise-like.
 
-- **`adi_cv`**
-  Computes Average Demand Interval (ADI) and Coefficient of Variation (CV).
-  **When to use:** To classify series as intermittent, erratic, or smooth.
+- **`IntermittencyAnalyzer`**
+  Computes ADI, CV², zero proportion, interval CV, and demand classification
+  for every series in a panel.
+  **When to use:** To classify demand as smooth, intermittent, erratic, or lumpy.
 
 - **`sample_entropy`**
   Calculates Sample Entropy for complexity and irregularity.
@@ -67,10 +68,6 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 - **`rmae`**
   Computes Relative Mean Absolute Error against a baseline forecast.
   **When to use:** To evaluate whether a model adds value over a benchmark.
-
-- **`fva_rmae`**
-  Computes Forecast Value Added RMAE using naive or moving average baselines.
-  **When to use:** To measure whether a model outperforms operational baselines.
 
 - **`forecast_instability`**
   Measures instability across consecutive forecast origins.
@@ -128,6 +125,13 @@ series because the profile includes the Hurst exponent.
   Identifies candidate seasonal periods via FFT and spectral peak detection.
   **When to use:** To discover seasonality for decomposition or modeling.
 
+```python
+from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
+
+intermittency = IntermittencyAnalyzer().fit(df).profile()
+seasonality = SeasonalPeriodDetector(top_k=2).fit(df).profile()
+```
+
 - **`hurst_exponent`**
   Estimates the Hurst exponent and a p-value for the random walk hypothesis.
   **When to use:** To assess long-term memory and trend persistence.
@@ -160,7 +164,9 @@ series because the profile includes the Hurst exponent.
 
 ## Notes
 
-- The `series` module exports functions from `outlier`, `forecastability`, `interpolation`, `metric`, and `diagnostic`.
+- The `series` module exports the analyzers and functions from `decomposition`,
+  `diagnostic`, `forecastability`, `intermittency`, `interpolation`, `metric`,
+  `outlier`, `profiler`, and `seasonality`.
 - For decomposed forecasting wrappers such as `DMSTLWrapper`, see `tinyshift.forecasting`.
 
 ## Summary: Function Quick Reference
@@ -184,7 +190,6 @@ series because the profile includes the Hurst exponent.
 | **Score**                              | 0 → ∞         | Accuracy + bias composite                                    | "How do accuracy and bias trade off in one metric?"               |
 | **Economic Loss**                      | 0 → ∞         | Financial cost of understock and overstock                    | "What is the business cost of this forecast?"                    |
 | **RMAE**                               | 0 → ∞         | Value against a baseline                                      | "Does this model outperform a benchmark?"                         |
-| **FVA RMAE**                           | 0 → ∞         | Forecast Value Added                                          | "Does this model add operational value?"                          |
 | **Forecast Instability**               | 0 → ∞         | Revision instability                                           | "How much do forecasts change between origins?"                   |
 
 ### Diagnostics & Decomposition
