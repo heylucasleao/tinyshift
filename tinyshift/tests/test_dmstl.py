@@ -158,8 +158,8 @@ class TestDMSTLWrapper:
 
         expected_msg = (
             "Series for unique_id 'sku_101' has length 12, which is too short "
-            "for seasonal period 7 \(MSTL requires at least 14 observations\)\. "
-            "Adjust your train window / step_size or set a smaller period for this SKU\."
+            r"for seasonal period 7 \(MSTL requires at least 14 observations\)\. "
+            r"Adjust your train window / step_size or set a smaller period for this SKU\."
         )
 
         with pytest.raises(ValueError, match=expected_msg):
@@ -199,8 +199,8 @@ class TestDMSTLWrapper:
 
         expected_msg = (
             "Series for unique_id 'sku_202' has length 24, which is too short "
-            "for seasonal period 12 \(MSTL requires at least 24 observations\)\. "
-            "Adjust your train window / step_size or set a smaller period for this SKU\."
+            r"for seasonal period 12 \(MSTL requires at least 24 observations\)\. "
+            r"Adjust your train window / step_size or set a smaller period for this SKU\."
         )
 
         with pytest.raises(ValueError, match=expected_msg):

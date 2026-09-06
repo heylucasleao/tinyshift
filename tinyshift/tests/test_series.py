@@ -33,7 +33,6 @@ from tinyshift.series.metric import (
     pbias,
     rmae,
     score,
-    wape,
 )
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
 from tinyshift.series.profiler import SeriesProfiler
