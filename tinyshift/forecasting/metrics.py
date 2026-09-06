@@ -42,10 +42,10 @@ def wape(
     -----
     Interpretation:
     - Measures overall volume deviation relative to total demand.
-    - Expressed as a percentage (%): 0.0% represents a perfect forecast.
-    - Always non-negative (>= 0%). Lower values indicate higher accuracy.
-    - Equivalent to MAE % (MAE divided by mean actual demand).
-    - Example: A WAPE of 15.0% means total forecast errors account for 15%
+    - Expressed as a proportion: 0.0 represents a perfect forecast.
+    - Always non-negative (>= 0). Lower values indicate higher accuracy.
+    - Equivalent to MAE divided by mean actual demand.
+    - Example: A WAPE of 0.15 means total forecast errors account for 15%
       of total actual volume across the period.
     """
     if not models:
@@ -66,7 +66,7 @@ def wape(
 
     demand = df[target_col].abs().groupby(df[id_col], observed=True).sum().values
 
-    res = errors.div(demand, axis=0).mul(100.0).reset_index()
+    res = errors.div(demand, axis=0).reset_index()
     res[models] = np.where(
         demand[:, None] == 0, np.where(errors == 0, 0.0, np.nan), res[models]
     )
@@ -107,11 +107,11 @@ def pbias(
     -----
     Interpretation:
     - Measures systematic overestimation or underestimation tendencies.
-    - Expressed as a percentage (%):
-      * 0.0%: Perfectly unbiased forecast on aggregate volume.
-      * Positive (> 0%): Systematic overestimation (overforecast / excess inventory risk).
-      * Negative (< 0%): Systematic underestimation (underforecast / stockout risk).
-    - Example: A PBias of +10.0% means the model predicted 10% more volume
+    - Expressed as a proportion:
+      * 0.0: Perfectly unbiased forecast on aggregate volume.
+      * Positive (> 0): Systematic overestimation (overforecast / excess inventory risk).
+      * Negative (< 0): Systematic underestimation (underforecast / stockout risk).
+    - Example: A PBias of +0.10 means the model predicted 10% more volume
       than actual total demand.
     """
     if not models:
@@ -127,7 +127,7 @@ def pbias(
     )
 
     demand = df[target_col].groupby(df[id_col], observed=True).sum().values
-    res = errors.div(demand, axis=0).mul(100.0).reset_index()
+    res = errors.div(demand, axis=0).reset_index()
     res[models] = np.where(
         demand[:, None] == 0, np.where(errors == 0, 0.0, np.nan), res[models]
     )
@@ -169,7 +169,7 @@ def score(
     -----
     Interpretation:
     - Acts as a composite loss metric penalizing both total volume error and systematic bias.
-    - Expressed as a percentage (%): 0.0% represents a perfect forecast.
+    - Expressed as a proportion: 0.0 represents a perfect forecast.
     - Lower values are better.
     - Internally calls `wape` and `pbias` functions to build the composite score.
     References
@@ -322,11 +322,11 @@ def forecast_instability(
     -----
     Interpretation & Aggregation:
     - Measures forecast revision magnitude and operational instability across consecutive periods.
-    - Expressed as a percentage (%):
-      * 0.0%: Perfectly stable forecast (zero revisions across periods).
+    - Expressed as a proportion:
+      * 0.0: Perfectly stable forecast (zero revisions across periods).
       * Lower values indicate higher stability.
-      * Stability percentage can be derived as: Stability = 100% - Forecast Instability.
-    - Unbounded upper limit: Can exceed 100% when forecast revisions are aggressive.
+      * A percentage can be obtained by multiplying the result by 100.
+    - Unbounded upper limit: Can exceed 1.0 when forecast revisions are aggressive.
     - Aggregation Mechanics per Series (`id_col`):
       * For a series with N time steps, creates N-1 consecutive pairs (F_{t-1}, F_t).
       * Numerator: Sums absolute differences `sum(|F_{t-1} - F_t|)` and net directional drift
@@ -335,7 +335,7 @@ def forecast_instability(
         `sum(F_t)`, taking their joint average `0.5 * (sum(F_{t-1}) + sum(F_t))`.
       * Internally reuses `score()` treating `F_{t-1}` as target, then applies the volume
         scaling factor `sum(F_prev) / (0.5 * (sum(F_prev) + sum(F_curr)))`.
-    - Example: An instability of 15.0% means period-over-period forecast adjustments
+    - Example: An instability of 0.15 means period-over-period forecast adjustments
       account for 15% of the average projected volume across all consecutive periods.
 
     References
