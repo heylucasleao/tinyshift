@@ -309,7 +309,7 @@ class TestVarianceRatioAnalyzer:
             "unique_id",
             "horizon",
             "variance_ratio",
-            "significant_variance",
+            "significant_dependence",
         ]
         assert result.groupby("unique_id")["horizon"].apply(list).to_dict() == {
             "a": [2, 4, 8],
@@ -320,7 +320,7 @@ class TestVarianceRatioAnalyzer:
             "variance_ratio",
             "z_statistic",
             "p_value",
-            "significant_variance",
+            "significant_dependence",
         }
 
     def test_uses_explicit_horizons_and_sorts_panel(self):
@@ -342,7 +342,7 @@ class TestVarianceRatioAnalyzer:
 
         assert result["horizon"].tolist() == [2]
         assert result["variance_ratio"].isna().all()
-        assert not result["significant_variance"].any()
+        assert not result["significant_dependence"].any()
 
     def test_profile_requires_fit(self):
         with pytest.raises(RuntimeError, match="fitted"):

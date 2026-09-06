@@ -30,15 +30,15 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
     max_horizon : int, default=64
         Maximum horizon considered when generating default values automatically.
     significance_level : float, default=0.05
-        P-value threshold used for ``significant_variance``. Must lie strictly
-        between zero and one.
+        P-value threshold used for ``significant_dependence``. Must lie
+        strictly between zero and one.
 
     Attributes
     ----------
     results_ : dict
         Mapping from each unique ID to a nested dictionary keyed by horizon. Each
         horizon entry contains ``variance_ratio``, ``z_statistic``, ``p_value``,
-        and ``significant_variance``.
+        and ``significant_dependence``.
 
     Notes
     -----
@@ -54,7 +54,7 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
     >>> analyzer.fit(df, id_col="unique_id", time_col="ds", target_col="y")
     VarianceRatioAnalyzer(...)
     >>> analyzer.summary().head()
-            unique_id  horizon  variance_ratio  significant_variance
+            unique_id  horizon  variance_ratio  significant_dependence
         0        A        2            ...                    ...
     """
 
@@ -140,7 +140,7 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
                 "variance_ratio": ratio,
                 "z_statistic": z_statistic,
                 "p_value": p_value,
-                "significant_variance": bool(
+                "significant_dependence": bool(
                     np.isfinite(p_value) and p_value < self.significance_level
                 ),
             }
@@ -182,5 +182,10 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
             for unique_id, horizon_results in self.results_.items()
             for horizon, result in horizon_results.items()
         ]
-        columns = [self.id_col_, "horizon", "variance_ratio", "significant_variance"]
+        columns = [
+            self.id_col_,
+            "horizon",
+            "variance_ratio",
+            "significant_dependence",
+        ]
         return pd.DataFrame(rows, columns=columns)
