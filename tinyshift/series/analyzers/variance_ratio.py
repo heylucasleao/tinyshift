@@ -9,9 +9,10 @@ import numpy as np
 import pandas as pd
 
 from ..diagnostic import variance_ratio
+from .base import BaseSeriesAnalyzer
 
 
-class VarianceRatioAnalyzer:
+class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
     """Analyze serial dependence across horizons for panel time series.
 
     Parameters
@@ -110,42 +111,11 @@ class VarianceRatioAnalyzer:
 
         return results
 
-    def fit(
-        self,
-        df: pd.DataFrame,
-        id_col: str = "unique_id",
-        time_col: str = "ds",
-        target_col: str = "y",
-    ) -> "VarianceRatioAnalyzer":
-        """Fit the analyzer to each series in a panel DataFrame."""
-        if not isinstance(df, pd.DataFrame):
-            raise TypeError("df must be a pandas DataFrame in panel format.")
-
-        required = [id_col, time_col, target_col]
-        missing = [column for column in required if column not in df.columns]
-        if missing:
-            raise ValueError(f"DataFrame is missing required columns: {missing}.")
-        if df.empty:
-            raise ValueError("Panel input must contain at least one series.")
-        if df[required].isna().any().any():
-            raise ValueError("ID, time, and target values must not be missing.")
-        if df.duplicated([id_col, time_col]).any():
-            raise ValueError("Panel contains duplicate ID-time observations.")
+    def _validate_target(self, df: pd.DataFrame, target_col: str) -> None:
         if not pd.api.types.is_numeric_dtype(df[target_col]):
             raise ValueError(f"Target column {target_col!r} must be numeric.")
         if not np.isfinite(df[target_col].to_numpy(dtype=float)).all():
             raise ValueError("Target values must be finite.")
-
-        self.id_col_ = id_col
-        self.time_col_ = time_col
-        self.target_col_ = target_col
-
-        ordered = df.sort_values([id_col, time_col])
-        self.results_ = {
-            unique_id: self._fit_single(group[target_col].to_numpy(dtype=float))
-            for unique_id, group in ordered.groupby(id_col, sort=False, observed=True)
-        }
-        return self
 
     def summary(self) -> pd.DataFrame:
         """Return one row per series and evaluated horizon."""

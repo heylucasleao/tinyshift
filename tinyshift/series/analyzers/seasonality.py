@@ -11,6 +11,7 @@ import pandas as pd
 from scipy.signal import find_peaks
 
 from ..spectral import _prepare_spectrum
+from .base import BaseSeriesAnalyzer
 
 SeriesLike = Union[
     np.ndarray,
@@ -19,7 +20,7 @@ SeriesLike = Union[
 ]
 
 
-class SeasonalPeriodDetector:
+class SeasonalPeriodDetector(BaseSeriesAnalyzer):
     """
     Detect dominant candidate seasonal periods from spectral peaks.
 
@@ -199,19 +200,6 @@ class SeasonalPeriodDetector:
 
         return list(self.fallback)
 
-    def _resolve_target_column(
-        self,
-        data: pd.DataFrame,
-    ) -> str:
-        """
-        Resolve the target column for panel time-series input.
-        """
-        required = [self.id_col_, self.time_col_, self.target_col_]
-        missing = [column for column in required if column not in data.columns]
-        if missing:
-            raise ValueError(f"DataFrame is missing required columns: {missing}.")
-        return self.target_col_
-
     @staticmethod
     def _spectral_background(
         power: np.ndarray,
@@ -371,66 +359,6 @@ class SeasonalPeriodDetector:
             "power": power,
             "peaks": peaks,
         }
-
-    def fit(
-        self,
-        df: pd.DataFrame,
-        id_col: str = "unique_id",
-        time_col: str = "ds",
-        target_col: str = "y",
-    ) -> "SeasonalPeriodDetector":
-        """
-        Fit the seasonal-period detector.
-
-        Parameters
-        ----------
-        df : pandas.DataFrame
-            Panel data containing the configured ID, time, and target columns.
-        id_col : str, default="unique_id"
-            Column identifying individual series.
-        time_col : str, default="ds"
-            Column defining temporal order within each series.
-        target_col : str, default="y"
-            Numeric target column.
-
-        Returns
-        -------
-        SeasonalPeriodDetector
-            The fitted detector instance.
-
-        Notes
-        -----
-        Calling ``fit`` updates the fitted attribute ``results_``.
-        """
-        if not isinstance(df, pd.DataFrame):
-            raise TypeError("df must be a pandas DataFrame in panel format.")
-
-        self.id_col_ = id_col
-        self.time_col_ = time_col
-        self.target_col_ = target_col
-
-        target_col = self._resolve_target_column(df)
-
-        if df.empty:
-            raise ValueError("Panel input must contain at least one series.")
-
-        if df[[self.id_col_, self.time_col_]].isna().any().any():
-            raise ValueError("ID and time values must not be missing.")
-        if df.duplicated([self.id_col_, self.time_col_]).any():
-            raise ValueError("Panel contains duplicate ID-time observations.")
-
-        data = df.sort_values([self.id_col_, self.time_col_])
-
-        results = {
-            unique_id: self._fit_single(group[target_col])
-            for unique_id, group in data.groupby(
-                self.id_col_,
-                sort=False,
-            )
-        }
-        self.results_ = results
-
-        return self
 
     def summary(self) -> pd.DataFrame:
         """Return detected candidate periods with one row per series.

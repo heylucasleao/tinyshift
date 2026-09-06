@@ -27,6 +27,7 @@ from tinyshift.series.dependence import (
     permutation_auto_mutual_information,
 )
 from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
+from tinyshift.series.analyzers.base import BaseSeriesAnalyzer
 from tinyshift.series.diagnostic import (
     seasonal_significance,
     trend_significance,
@@ -286,6 +287,10 @@ class TestDiagnostic:
 
 
 class TestVarianceRatioAnalyzer:
+    def test_base_analyzer_cannot_be_instantiated(self):
+        with pytest.raises(TypeError, match="abstract"):
+            BaseSeriesAnalyzer()
+
     def test_profiles_each_series_and_default_horizon(self):
         random = np.random.RandomState(0)
         frame = pd.concat(
