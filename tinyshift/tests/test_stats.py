@@ -16,7 +16,6 @@ from tinyshift.stats.utils import (
     generate_panel_lags,
     is_obsolete,
     jackknife,
-    jacknife,
     mad,
     remove_leading_zeros,
 )
@@ -32,13 +31,11 @@ def test_chebyshev_guaranteed_percentage_matches_theoretical_bound():
 def test_jackknife_and_mad_and_generate_lag():
     x = np.array([1, 3, 5, 7])
 
-    jackknife_result = jacknife(x, func=np.mean)
+    jackknife_result = jackknife(x, func=np.mean)
     assert jackknife_result.shape == (4,)
     np.testing.assert_allclose(
         jackknife_result, np.array([5.0, 4.333333333333333, 3.6666666666666665, 3.0])
     )
-    np.testing.assert_allclose(jackknife(x, func=np.mean), jackknife_result)
-
     assert mad(x) == pytest.approx(2.0)
 
     lagged = generate_lag(x, lag=2)
@@ -107,10 +104,18 @@ def test_remove_leading_zeros_and_is_obsolete():
 
 def test_validation_paths_for_stats_utils():
     with pytest.raises(ValueError, match="1-dimensional"):
-        jacknife([[1], [2], [3]])
+        jackknife([[1], [2], [3]])
 
     with pytest.raises(ValueError, match="one-dimensional"):
         generate_lag(np.array([[1, 2], [3, 4]]))
+
+
+def test_misspelled_jacknife_name_is_not_public():
+    import tinyshift.stats as stats
+    import tinyshift.stats.utils as stats_utils
+
+    assert not hasattr(stats, "jacknife")
+    assert not hasattr(stats_utils, "jacknife")
 
 
 def test_assess_comparability_returns_expected_rows():
