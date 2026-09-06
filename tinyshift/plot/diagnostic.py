@@ -10,7 +10,7 @@ from tinyshift.utils.imports import requires_extra
 
 
 @requires_extra("plot")
-def seasonal_decompose(
+def mstl_diagnostics(
     X: Union[np.ndarray, List[float], pd.Series],
     periods: Union[int, List[int]],
     nlags: int = 10,
@@ -19,7 +19,7 @@ def seasonal_decompose(
     fig_type: Optional[str] = None,
 ):
     """
-    Performs seasonal decomposition of a time series using MSTL and plots the components.
+    Plot an MSTL decomposition with trend, seasonality, and residual diagnostics.
 
     This function uses the MSTL (Multiple Seasonal-Trend decomposition using Loess) method
     from statsmodels to separate a time series into trend, seasonal, and residual components.
