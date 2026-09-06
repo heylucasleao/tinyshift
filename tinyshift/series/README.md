@@ -105,6 +105,26 @@ label. Costs can also be provided as fixed scalar values, such as
 
 ### 4. Diagnostics & Decomposition
 
+- **`SeriesProfiler`**
+  Produces one diagnostic row per series from a Nixtla-style panel with
+  `unique_id`, `ds`, and `y` columns. It combines demand occurrence,
+  predictability, temporal structure, and spectral structure metrics.
+
+```python
+from tinyshift.series import SeriesProfiler
+
+profiler = SeriesProfiler().fit(
+    df, id_col="unique_id", time_col="ds", target_col="y"
+)
+profile = profiler.profile()
+summary = profiler.summary()
+```
+
+The result contains `adi`, `cv2`, `zero_prop`, `interval_cv`, `class`,
+`foreca`, `limit`, `hurst`, `trend_r2`, `trend_pvalue`, `spectral_conc`,
+and `periods` for each unique ID. At least 30 observations are required per
+series because the profile includes the Hurst exponent.
+
 - **`SeasonalPeriodDetector`**
   Identifies candidate seasonal periods via FFT and spectral peak detection.
   **When to use:** To discover seasonality for decomposition or modeling.
