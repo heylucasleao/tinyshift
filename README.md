@@ -298,31 +298,20 @@ These utilities cover:
 - `rmae`: relative mean absolute error versus a baseline model
 - `fva_rmae`: lead-time-aware RMAE for Forecast Value Added analysis
 
-### 7. Forecast Stability and Interpolation
+### 7. Forecast Interpolation
 
-TinyShift includes forecast stability metrics and interpolation methods:
+TinyShift includes forecast interpolation methods and a panel instability metric:
 
 ```python
 from tinyshift.series import (
     forecast_instability,          # Period-over-period forecast instability
-    macv, mach,           # Mean Absolute Change metrics
-    mascv, masch,         # Mean Absolute Scaled Change metrics
-    rmsscv, rmssch,       # Root Mean Squared Scaled Change metrics
     vi, hpi, hfi          # Interpolation methods
 )
-
-# Calculate forecast stability metrics
-vertical_stability = macv(y_hat, y_hat_t_minus_1)
-horizontal_stability = mach(y_hat) 
 
 # Calculate period-over-period forecast variability (instability)
 # `df` should contain `unique_id`, `ds` (ordered dates) and model forecast columns.
 # Example: `forecast_instability(df, models=["model_a", "model_b"], ds_col="ds")`
 instability_scores = forecast_instability(df, models=["model_a"], ds_col="ds")
-
-# Scaled stability metrics
-scaled_v_stability = mascv(y_train, y_hat, y_hat_t_minus_1, seasonality=12)
-scaled_h_stability = masch(y_train, y_hat, seasonality=12)
 
 # Apply forecast stabilization techniques
 # Vertical Interpolation
@@ -609,7 +598,6 @@ tinyshift/
 │   ├── interpolation.py         # Forecast stabilization methods
 │   ├── metric.py                # Forecast accuracy and stability metrics
 │   ├── outlier.py               # Time series outlier detection
-│   └── stability.py             # Forecast stability metrics
 └── stats/                       # Statistical utilities
     ├── __init__.py              # Package exports
     ├── bootstrap_bca.py         # Bootstrap confidence intervals

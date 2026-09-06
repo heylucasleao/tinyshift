@@ -1,6 +1,6 @@
 # Time Series Module (`series`)
 
-The `series` module of tinyshift provides quantitative tools for time series analysis, focusing on key features for MLOps, forecasting, and pattern detection. It covers metrics and transformations for volatility, intermittency, seasonality strength, trend, entropy, complexity, and forecast stability.
+The `series` module of tinyshift provides quantitative tools for time series analysis, focusing on key features for MLOps, forecasting, and pattern detection. It covers metrics and transformations for volatility, intermittency, seasonality strength, trend, entropy, and complexity.
 
 ## Features
 
@@ -125,33 +125,7 @@ label. Costs can also be provided as fixed scalar values, such as
   Converts `statsmodels` MSTL results into a tidy DataFrame of decomposed components.
   **When to use:** To work with MSTL decomposition output in tabular form.
 
-### 5. Forecast Stability Metrics
-
-- **`macv`**
-  Mean Absolute Change Vertical (MAC(V)) for stability across forecast origins.
-  **When to use:** To measure revision magnitude between consecutive forecast updates.
-
-- **`mach`**
-  Mean Absolute Change Horizontal (MAC(H)) for within-horizon smoothness.
-  **When to use:** To assess the smoothness of a forecast window.
-
-- **`mascv`**
-  Mean Absolute Scaled Change Vertical (MASC(V)).
-  **When to use:** To compare vertical stability normalized by seasonality.
-
-- **`masch`**
-  Mean Absolute Scaled Change Horizontal (MASC(H)).
-  **When to use:** To compare horizontal stability normalized by seasonality.
-
-- **`rmsscv`**
-  Root Mean Squared Scaled Change Vertical (RMSSC(V)).
-  **When to use:** To penalize larger vertical revisions more heavily.
-
-- **`rmssch`**
-  Root Mean Squared Scaled Change Horizontal (RMSSC(H)).
-  **When to use:** To penalize larger horizontal revisions more heavily.
-
-### 6. Forecast Stabilization
+### 5. Forecast Stabilization
 
 - **`vi`**
   Vertical Interpolation for stabilized forecasts using previous-origin anchors.
@@ -167,7 +141,7 @@ label. Costs can also be provided as fixed scalar values, such as
 
 ## Notes
 
-- The `series` module exports functions from `outlier`, `forecastability`, `stability`, `interpolation`, `metric`, and `diagnostic`.
+- The `series` module exports functions from `outlier`, `forecastability`, `interpolation`, `metric`, and `diagnostic`.
 - For decomposed forecasting wrappers such as `DMSTLWrapper`, see `tinyshift.forecasting`.
 
 ## Summary: Function Quick Reference
@@ -202,16 +176,6 @@ label. Costs can also be provided as fixed scalar values, such as
 | **Trend Significance**                 | 0 → 1         | Linear trend strength and significance                        | "Is there a meaningful linear trend?"                             |
 | **Seasonal Significance**              | 0 → 1         | Seasonal strength and significance                            | "Is seasonality statistically significant?"                      |
 | **extract_mstl_components**            | N/A           | MSTL decomposition extraction                                 | "How do I convert MSTL output into a DataFrame?"                 |
-
-### Forecast Stability Metrics
-| Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
-|----------------------------------------|---------------|------------------------------------------------------------|--------------------------------------------------------------------|
-| **MAC(V)**                             | 0 → ∞         | Vertical stability across origins                             | "How much do forecasts change between updates?"                   |
-| **MAC(H)**                             | 0 → ∞         | Horizontal smoothness in one window                           | "How smooth is the forecast curve?"                               |
-| **MASC(V)**                            | 0 → ∞         | Scaled vertical stability                                      | "How stable are forecasts relative to seasonality?"               |
-| **MASC(H)**                            | 0 → ∞         | Scaled horizontal stability                                    | "How smooth are forecasts relative to seasonality?"              |
-| **RMSSC(V)**                           | 0 → ∞         | RMS scaled vertical stability                                  | "How stable are large vertical revisions?"                       |
-| **RMSSC(H)**                           | 0 → ∞         | RMS scaled horizontal stability                                | "How stable are large horizontal revisions?"                     |
 
 ### Forecast Stabilization
 | Metric/Function                        | Range         | Interpretation                                             | Question You Want to Answer                                         |
