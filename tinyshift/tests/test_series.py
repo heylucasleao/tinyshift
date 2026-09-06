@@ -171,7 +171,7 @@ class TestDiagnostic:
     def test_seasonal_period_detector_detects_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector().fit(frame).results_["a"]["periods"]
+        periods = SeasonalPeriodDetector().fit(frame).results_["a"]["candidate_periods"]
         assert 8 in periods
         assert periods == sorted(set(periods))
 
@@ -179,7 +179,11 @@ class TestDiagnostic:
         x = (-1.0) ** np.arange(32)
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]["periods"]
+        periods = (
+            SeasonalPeriodDetector(top_k=1)
+            .fit(frame)
+            .results_["a"]["candidate_periods"]
+        )
         assert periods == [2]
 
     def test_seasonal_period_detector_ignores_missing_values(self):
@@ -187,7 +191,11 @@ class TestDiagnostic:
         x[[3, 17]] = np.nan
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]["periods"]
+        periods = (
+            SeasonalPeriodDetector(top_k=1)
+            .fit(frame)
+            .results_["a"]["candidate_periods"]
+        )
 
         assert periods == [8]
 
@@ -210,7 +218,7 @@ class TestDiagnostic:
         periods = (
             SeasonalPeriodDetector(fallback=fallback)
             .fit(frame)
-            .results_["a"]["periods"]
+            .results_["a"]["candidate_periods"]
         )
 
         assert periods == expected
@@ -231,8 +239,8 @@ class TestDiagnostic:
         )
 
         results = SeasonalPeriodDetector(top_k=1).fit(frame).results_
-        assert results["weekly"]["periods"] == [8]
-        assert results["biweekly"]["periods"] == [16]
+        assert results["weekly"]["candidate_periods"] == [8]
+        assert results["biweekly"]["candidate_periods"] == [16]
 
     def test_seasonal_period_detector_infers_single_numeric_target(self):
         steps = np.arange(32)
@@ -250,7 +258,7 @@ class TestDiagnostic:
             target_col="value",
         )
 
-        assert detector.results_["a"]["periods"] == [8]
+        assert detector.results_["a"]["candidate_periods"] == [8]
         assert detector.time_col_ == "timestamp"
         assert detector.target_col_ == "value"
 
@@ -393,11 +401,11 @@ class TestIntermittencyAnalyzer:
         profile = SeasonalPeriodDetector(top_k=1).fit(frame).profile()
 
         assert profile.to_dict("records") == [
-            {"unique_id": "a", "periods": [8]},
-            {"unique_id": "b", "periods": [8]},
+            {"unique_id": "a", "candidate_periods": [8]},
+            {"unique_id": "b", "candidate_periods": [8]},
         ]
         assert set(SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]) == {
-            "periods",
+            "candidate_periods",
             "frequencies",
             "power",
             "peaks",
@@ -432,7 +440,7 @@ class TestSeriesProfiler:
         )
 
         profiler = SeriesProfiler(top_k=1).fit(frame)
-        result = profiler.profile()
+        result = profiler.summary()
 
         assert result.columns.tolist() == [
             "unique_id",
@@ -447,13 +455,13 @@ class TestSeriesProfiler:
             "trend_r2",
             "trend_pvalue",
             "spectral_conc",
-            "periods",
+            "candidate_periods",
         ]
         assert result["unique_id"].tolist() == ["a", "b"]
-        assert result.set_index("unique_id").loc["a", "periods"] == [8]
-        assert result.set_index("unique_id").loc["b", "periods"] == [16]
+        assert result.set_index("unique_id").loc["a", "candidate_periods"] == [8]
+        assert result.set_index("unique_id").loc["b", "candidate_periods"] == [16]
         assert (
-            result.drop(columns=["unique_id", "class", "periods"])
+            result.drop(columns=["unique_id", "class", "candidate_periods"])
             .apply(np.isfinite)
             .all()
             .all()
@@ -464,12 +472,6 @@ class TestSeriesProfiler:
             "temporal_structure",
             "spectral_structure",
         }
-
-        summary = profiler.summary()
-        assert summary["n_series"] == 2
-        assert summary["demand_classes"] == {"smooth": 2}
-        assert summary["period_frequency"] == {8: 1, 16: 1}
-        assert "foreca" in summary["metrics"].index
 
     def test_accepts_custom_panel_column_names(self):
         steps = np.arange(64)
@@ -489,11 +491,11 @@ class TestSeriesProfiler:
                 time_col="date",
                 target_col="demand",
             )
-            .profile()
+            .summary()
         )
 
         assert result.loc[0, "item"] == "a"
-        assert result.loc[0, "periods"] == [8]
+        assert result.loc[0, "candidate_periods"] == [8]
 
     def test_rejects_series_too_short_for_hurst(self):
         frame = pd.DataFrame(
@@ -503,10 +505,7 @@ class TestSeriesProfiler:
         with pytest.raises(ValueError, match="at least 30"):
             SeriesProfiler().fit(frame)
 
-    def test_profile_and_summary_require_fit(self):
-        with pytest.raises(RuntimeError, match="fitted"):
-            SeriesProfiler().profile()
-
+    def test_summary_requires_fit(self):
         with pytest.raises(RuntimeError, match="fitted"):
             SeriesProfiler().summary()
 
