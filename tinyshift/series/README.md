@@ -1,22 +1,18 @@
 # Time Series Analysis (`tinyshift.series`)
 
-Tools for analyzing observed time series: decomposition, temporal dependence,
-entropy, intermittency, outliers, seasonality, spectral structure, and combined
-profiling. Forecast evaluation and stabilization belong to
+Tools for analyzing observed time series: temporal dependence, entropy,
+intermittency, seasonality, spectral structure, and combined profiling. Forecast
+decomposition, evaluation, and stabilization belong to
 `tinyshift.forecasting`.
 
 ## Modules
 
-- `decomposition`: LOWESS detrending and MSTL component extraction.
-- `dependence`: permutation auto-mutual information (PAMI) and lag selection.
-- `diagnostic`: Hurst exponent and trend/seasonal significance.
+- `dependence`: permutation auto-mutual information (PAMI).
+- `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
   theoretical predictability limit.
-- `intermittency`: ADI, CV², zero proportion, interval variability, and demand
-  classification.
-- `outlier`: univariate temporal Hampel and Bollinger detectors.
-- `profiler`: one combined diagnostic summary per panel series.
-- `seasonality`: FFT-based candidate-period detection.
+- `analyzers`: panel-oriented intermittency, PAMI, seasonality, and
+  variance-ratio analyzers with a shared `fit()`/`summary()` convention.
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
 
 ## Spectral, Entropy, and Dependence Metrics
@@ -30,14 +26,41 @@ profiling. Forecast evaluation and stabilization belong to
   permutation entropy.
 - `permutation_auto_mutual_information`: non-linear dependence between ordinal
   patterns separated by a lag.
-- `select_pami_lag`: selects a lag from the first local minimum of the PAMI curve.
+- `PAMIAnalyzer`: finds every local minimum of each panel series' PAMI curve.
+- `create_pami_lags`: converts minima into DTL/DMSTL lag dictionaries.
+
+## Forecastability Dimensions
+
+Forecastability is best understood as a multidimensional diagnostic rather than
+as a single score. The tools in this module inspect complementary sources of
+predictable structure:
+
+$$
+\mathrm{Forecastability}
+\;\leftarrow\;
+\begin{cases}
+\mathrm{regularity} & \mathrm{sample\ entropy\ and\ regularity\ index} \\
+\mathrm{periodicity} & \mathrm{seasonality\ analyzer\ and\ harmonic\ tests} \\
+\mathrm{spectral\ structure} & \mathrm{ForeCA\ and\ spectral\ concentration} \\
+\mathrm{persistence} & \mathrm{variance\ ratio\ and\ temporal\ dependence} \\
+\mathrm{intermittency} & \mathrm{intermittency\ analyzer} \\
+\mathrm{ordinal\ predictability} & \mathrm{permutation\ entropy\ and\ theoretical\ limit}
+\end{cases}
+$$
+
+These dimensions should be interpreted together. For example, a series may have
+strong periodicity but weak persistence, or a concentrated spectrum while still
+being highly intermittent. The resulting profile is useful for choosing a
+forecasting strategy and model assumptions, but it is not an additive
+forecastability formula.
 
 ```python
 from tinyshift.series import (
     foreca,
+    PAMIAnalyzer,
+    create_pami_lags,
     permutation_auto_mutual_information,
     permutation_entropy,
-    select_pami_lag,
     spectral_concentration,
     theoretical_limit,
 )
@@ -47,57 +70,67 @@ concentration = spectral_concentration(values)
 complexity = permutation_entropy(values)
 limit = theoretical_limit(values)
 pami = permutation_auto_mutual_information(values, tau=7)
-lags, selected_pami, curve = select_pami_lag(values, max_tau=30, fallback=1)
+pami = PAMIAnalyzer(max_tau=30).fit(df)
+minima = pami.summary()
+lags = pami.lags(mode="short", short=2, fallback=1)
 ```
 
-## Intermittency and Seasonality
+## Intermittency, Seasonality, and Variance Ratio
 
 ```python
-from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
+from tinyshift.series import (
+    IntermittencyAnalyzer,
+    PredictabilityAnalyzer,
+    SeasonalityAnalyzer,
+    TrendAnalyzer,
+    VarianceRatioAnalyzer,
+)
 
-intermittency = IntermittencyAnalyzer().fit(df).profile()
-seasonality = SeasonalPeriodDetector(top_k=2).fit(df).profile()
+intermittency = IntermittencyAnalyzer().fit(df).summary()
+predictability = PredictabilityAnalyzer().fit(df).summary()
+seasonality = SeasonalityAnalyzer(top_k=2).fit(df).summary()
+trend = TrendAnalyzer().fit(df).summary()
+dependence = VarianceRatioAnalyzer().fit(df).summary()
 ```
 
 `IntermittencyAnalyzer` classifies demand as smooth, intermittent, erratic, or
-lumpy. `SeasonalPeriodDetector` identifies candidate seasonal periods from
-significant spectral peaks.
+lumpy. `SeasonalityAnalyzer` identifies spectral candidates and tests their
+harmonic significance. `VarianceRatioAnalyzer` reports persistence or
+mean reversion at logarithmically spaced horizons for each series.
 
 ## Diagnostics and Decomposition
 
-- `hurst_exponent`: long-memory estimate and random-walk p-value.
+- `variance_ratio`: persistence or mean reversion at one aggregation horizon.
 - `trend_significance`: linear trend R² and slope p-value.
-- `seasonal_significance`: seasonal strength and harmonic-regression F-test.
-- `detrend`: LOWESS trend and residual extraction for panel data.
-- `extract_mstl_components`: conversion of an MSTL result into a tidy frame.
+- `harmonic_significance`: harmonic-regression F-test for a candidate period.
 
-## Series Profiler
+`seasonal_strength`, `detrend`, and `extract_mstl_components` are internal
+forecasting helpers. They live in `tinyshift.forecasting.dmstl.utils` and
+`tinyshift.forecasting.dtl.utils`, respectively, rather than in the public
+`tinyshift.series` API.
 
-`SeriesProfiler` combines demand occurrence, predictability, temporal structure,
-and spectral structure into one row per series:
+## Combining Analyzer Summaries
+
+Analyzer summaries can be combined explicitly with validated one-to-one merges:
 
 ```python
-from tinyshift.series import SeriesProfiler
+analyzers = [
+    IntermittencyAnalyzer(),
+    PredictabilityAnalyzer(),
+    TrendAnalyzer(),
+    SeasonalityAnalyzer(top_k=2),
+]
 
-summary = SeriesProfiler(top_k=2).fit(
-    df,
-    id_col="unique_id",
-    time_col="ds",
-    target_col="y",
-).summary()
+summaries = [analyzer.fit(df).summary() for analyzer in analyzers]
+summary = summaries[0]
+for section in summaries[1:]:
+    summary = summary.merge(section, on="unique_id", validate="one_to_one")
 ```
 
-The result contains `adi`, `cv2`, `zero_prop`, `interval_cv`, `class`, `foreca`,
-`limit`, `hurst`, `trend_r2`, `trend_pvalue`, `spectral_conc`, and
-`candidate_periods`. Each series needs at least 30 observations because the
-profile includes the Hurst exponent.
-
-## Outlier Detection
-
-- `hampel_filter`: robust rolling median/MAD detector.
-- `bollinger_bands`: rolling volatility-envelope detector.
-
-Both return a boolean `pandas.Series` and preserve a supplied Series index.
+The result contains `adi`, `cv2`, `zero_proportion`, `interval_cv`, `classification`, `foreca`,
+`limit`, `spectral_concentration`, the linear-trend diagnostics, and candidate
+and significant seasonal periods. Variance-ratio analysis remains available independently
+through `VarianceRatioAnalyzer`.
 
 For forecast metrics, stabilization, or decomposed forecasting wrappers, see
 [`tinyshift.forecasting`](../forecasting/README.md).

@@ -50,7 +50,7 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
         In global mode, the resulting lags are combined into their sorted union
         before the shared residual model is created.
     pami_params : dict, optional
-        Keyword arguments passed to ``select_pami_lag`` when ``nlags="auto"``.
+        PAMI analyzer and lag-creation options used when ``nlags="auto"``.
 
     Attributes
     ----------

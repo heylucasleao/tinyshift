@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
+from .base import BaseSeriesAnalyzer
+
 ArrayLike = Union[
     np.ndarray,
     List[float],
@@ -11,7 +13,7 @@ ArrayLike = Union[
 ]
 
 
-class IntermittencyAnalyzer:
+class IntermittencyAnalyzer(BaseSeriesAnalyzer):
     """
     Analyze intermittent-demand characteristics for one or more time series.
 
@@ -85,7 +87,7 @@ class IntermittencyAnalyzer:
     >>> analyzer.fit(data, id_col="unique_id", time_col="ds", target_col="y")
     IntermittencyAnalyzer(...)
 
-    >>> analyzer.profile()
+    >>> analyzer.summary()
       unique_id  adi   cv2  zero_proportion  interval_cv classification
     0     item_a  ...   ...              ...          ...            ...
     1     item_b  ...   ...              ...          ...            ...
@@ -156,19 +158,6 @@ class IntermittencyAnalyzer:
             raise ValueError("Demand values must be non-negative.")
 
         return X
-
-    def _resolve_target_column(
-        self,
-        data: pd.DataFrame,
-    ) -> str:
-        """
-        Resolve the target column used for panel input.
-        """
-        required = [self.id_col_, self.time_col_, self.target_col_]
-        missing = [column for column in required if column not in data.columns]
-        if missing:
-            raise ValueError(f"DataFrame is missing required columns: {missing}.")
-        return self.target_col_
 
     @staticmethod
     def _inter_demand_intervals(
@@ -315,67 +304,7 @@ class IntermittencyAnalyzer:
             "classification": classification,
         }
 
-    def fit(
-        self,
-        df: pd.DataFrame,
-        id_col: str = "unique_id",
-        time_col: str = "ds",
-        target_col: str = "y",
-    ) -> "IntermittencyAnalyzer":
-        """
-        Fit the intermittency analyzer.
-
-        Parameters
-        ----------
-        df : pandas.DataFrame
-            Panel data containing the configured ID, time, and target columns.
-        id_col : str, default="unique_id"
-            Column identifying individual time series.
-        time_col : str, default="ds"
-            Column defining temporal order within each series.
-        target_col : str, default="y"
-            Column containing non-negative demand values.
-
-        Returns
-        -------
-        IntermittencyAnalyzer
-            The fitted analyzer instance.
-
-        Notes
-        -----
-        Calling ``fit`` updates the fitted attribute ``results_``.
-        """
-        if not isinstance(df, pd.DataFrame):
-            raise TypeError("df must be a pandas DataFrame in panel format.")
-
-        self.id_col_ = id_col
-        self.time_col_ = time_col
-        self.target_col_ = target_col
-
-        target_col = self._resolve_target_column(df)
-
-        if df.empty:
-            raise ValueError("Panel input must contain at least one series.")
-
-        if df[[self.id_col_, self.time_col_]].isna().any().any():
-            raise ValueError("ID and time values must not be missing.")
-        if df.duplicated([self.id_col_, self.time_col_]).any():
-            raise ValueError("Panel contains duplicate ID-time observations.")
-
-        data = df.sort_values([self.id_col_, self.time_col_])
-
-        results = {
-            unique_id: self._fit_single(group[target_col])
-            for unique_id, group in data.groupby(
-                self.id_col_,
-                sort=False,
-            )
-        }
-        self.results_ = results
-
-        return self
-
-    def profile(
+    def summary(
         self,
     ) -> pd.DataFrame:
         """
@@ -399,7 +328,7 @@ class IntermittencyAnalyzer:
         """
         if not hasattr(self, "results_"):
             raise RuntimeError(
-                "The analyzer must be fitted before calling `profile()`."
+                "The analyzer must be fitted before calling `summary()`."
             )
 
         columns = [

@@ -220,13 +220,17 @@ TinyShift provides comprehensive time series analysis capabilities:
 ```python
 from tinyshift.plot import seasonal_decompose
 from tinyshift.series import (
+    IntermittencyAnalyzer,
+    PredictabilityAnalyzer,
+    SeasonalityAnalyzer,
+    TrendAnalyzer,
     trend_significance, 
     foreca, 
     sample_entropy,
     permutation_entropy,
     theoretical_limit,
-    hurst_exponent,
-    SeriesProfiler,
+    variance_ratio,
+    VarianceRatioAnalyzer,
     hampel_filter,
     bollinger_bands
 )
@@ -239,7 +243,7 @@ seasonal_decompose(
 )
 
 # Test for significant trends
-r_squared, p_value = trend_significance(time_series)
+slope, r_squared, p_value = trend_significance(time_series)
 
 # Assess forecastability
 forecastability = foreca(time_series)
@@ -257,12 +261,23 @@ print(f"Permutation Entropy: {perm_entropy}")
 theo_limit = theoretical_limit(time_series, m=3, delay=1)
 print(f"Theoretical Limit (Πmax): {theo_limit}")
 
-# Detect long-term memory
-hurst, p_value = hurst_exponent(time_series)
-print(f"Hurst Exponent: {hurst}, P-value: {p_value}")
+# Inspect persistence at one horizon
+ratio, z_statistic, p_value = variance_ratio(time_series, horizon=7)
+
+# Compare several horizons across a panel
+vr_summary = VarianceRatioAnalyzer().fit(df).summary()
 
 # Combined diagnostics for a Nixtla-style panel
-summary = SeriesProfiler().fit(df).summary()
+analyzers = [
+    IntermittencyAnalyzer(),
+    PredictabilityAnalyzer(),
+    TrendAnalyzer(),
+    SeasonalityAnalyzer(top_k=2),
+]
+summaries = [analyzer.fit(df).summary() for analyzer in analyzers]
+summary = summaries[0]
+for section in summaries[1:]:
+    summary = summary.merge(section, on="unique_id", validate="one_to_one")
 
 # Outlier detection in time series
 outliers = hampel_filter(time_series, window_size=5)
@@ -420,7 +435,12 @@ model = DMSTLWrapper(
     residual_model_callable=residual_model_callable,
     freq="D",
     season_length="auto",
-    seasonal_detection_params={"top_k": 2, "noise_threshold_factor": 1.5},
+    seasonal_detection_params={
+        "top_k": 2,
+        "noise_threshold_factor": 1.5,
+        "significance_level": 0.05,
+        "fallback": 7,
+    },
     nlags="auto",
     pami_params={"max_tau": 48, "m": 3, "delay": 1},
     log_transform=True,
@@ -562,7 +582,7 @@ tinyshift/
 │   ├── dtl.ipynb                # Trend/residual forecasting example
 │   ├── outlier.ipynb            # Outlier detection demos
 │   ├── power_analysis.ipynb     # Statistical power analysis
-│   ├── series_profiler.ipynb    # Time series profiling
+│   ├── diagnostic.ipynb         # Time series diagnostics and profiling
 │   ├── transaction_analyzer.ipynb  # Transaction analysis examples
 │   └── tsf.ipynb                # Probabilistic forecasting example
 ├── features/                    # Feature-engineering helpers
@@ -606,7 +626,6 @@ tinyshift/
 │   ├── entropy.py               # Entropy and ordinal complexity metrics
 │   ├── intermittency.py         # Intermittent-demand analysis
 │   ├── outlier.py               # Time series outlier detection
-│   ├── profiler.py              # Combined series profiling
 │   ├── seasonality.py           # Seasonal-period detection
 │   └── spectral.py              # Spectral analysis and forecastability metrics
 └── stats/                       # Statistical utilities

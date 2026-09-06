@@ -3,7 +3,6 @@
 # Licensed under the MIT License
 
 
-import math
 from typing import List, Tuple, Union
 
 import numpy as np
@@ -11,136 +10,139 @@ import pandas as pd
 import scipy
 
 
-def hurst_exponent(
+def variance_ratio(
     X: Union[np.ndarray, List[float]],
-    d: int = 1,
-) -> Tuple[float, float]:
+    horizon: int = 2,
+) -> Tuple[float, float, float]:
     """
-    Calculate the Hurst exponent using a rescaled range (R/S) analysis approach with p-value for random walk hypothesis.
+    Calculate the Lo-MacKinlay variance ratio test for serial dependence.
 
-    The Hurst exponent is a measure of long-term memory of time series. It relates
-    to the autocorrelations of the time series and the rate at which these decrease
-    as the lag between pairs of values increases.
+    The variance ratio compares the variance of changes over a horizon ``k``
+    with ``k`` times the variance of one-period changes. Under the random-walk
+    null hypothesis, the statistic is approximately one.
 
     Parameters
     ----------
     X : Union[np.ndarray, List[float]]
-        Input 1D time series data for which to calculate the Hurst exponent.
-        Must contain at least 30 samples.
-    d : int, default=1
-        The order of differencing to apply to the time series before analysis.
-        Can be 0 (no differencing), 1 (first difference), or 2 (second difference).
+        One-dimensional time series in level form.
+    horizon : int, default=2
+        Aggregation horizon ``k``. Must be greater than 1 and smaller than the
+        number of one-period increments.
 
     Returns
     -------
-    Tuple[float, float]
-        (Hurst exponent, p-value for H=0.5 hypothesis)
-        The estimated Hurst exponent value. Interpretation:
-        - 0 < H < 0.5: Mean-reverting (anti-persistent) series
-        - H = 0.5: Geometric Brownian motion (random walk)
-        - 0.5 < H < 1: Trending (persistent) series with long-term memory
-        - H = 1: Perfectly trending series
-        p-value interpretation:
-        - p < threshold: Reject random walk hypothesis (significant persistence/mean-reversion)
-        - p >= threshold: Cannot reject random walk hypothesis
+    Tuple[float, float, float]
+        (variance_ratio, z_statistic, p_value)
+        variance_ratio : float
+            Lo-MacKinlay variance ratio estimate.
+
+            - VR > 1: positive serial dependence / persistence
+            - VR = 1: behavior consistent with a random walk
+            - VR < 1: negative serial dependence / mean reversion
+
+        z_statistic: float
+            Lo-MacKinlay homoscedastic test statistic for H0: VR(k) = 1.
+
+        p_value : float
+            Two-sided p-value for the random-walk null hypothesis.
 
     Raises
     ------
     ValueError
-        If input data has less than 30 samples (insufficient for reliable estimation).
-    TypeError
-        If input is not a list or numpy array.
+        If the input is not one-dimensional, contains insufficient data,
+        or if `horizon` is invalid.
 
     Notes
     -----
-    - The method uses differencing of order `d` to remove trends/non-stationarities.
-    - The R/S analysis is performed over multiple window sizes to estimate the Hurst exponent.
-    - A hypothesis test is conducted to assess if the estimated Hurst exponent significantly differs from 0.5 (random walk).
+    Values greater than 1 indicate positive serial dependence (persistence),
+    while values below 1 indicate negative serial dependence (mean reversion or
+    anti-persistence). The implementation uses overlapping ``k``-period changes
+    and the finite-sample variance correction proposed by Lo and MacKinlay.
+
+    References
+    ----------
+    Lo, A. W., & MacKinlay, A. C. (1988). Stock market prices do not follow
+    random walks: Evidence from a simple specification test. Review of Financial
+    Studies, 1(1), 41-66.
     """
-    if d not in [0, 1, 2]:
-        raise ValueError("Differencing order 'd' must be either 0, 1, or 2")
 
     X = np.asarray(X, dtype=np.float64)
-    deltas = np.diff(X, n=d)
-    size = len(deltas)
 
-    if 30 > len(X):
+    if X.ndim != 1:
+        raise ValueError("Input data must be 1-dimensional")
+
+    if len(X) < 30:
         raise ValueError("Insufficient data points (minimum 30 required)")
 
-    def _calculate_rescaled_ranges(
-        deltas: np.ndarray, window_sizes: List[int]
-    ) -> np.ndarray:
-        """Helper function to calculate rescaled ranges (R/S) for each window size."""
-        r_s = np.zeros(len(window_sizes), dtype=np.float64)
+    if horizon <= 1:
+        raise ValueError("'horizon' must be greater than 1")
 
-        for i, window_size in enumerate(window_sizes):
-            n_windows = len(deltas) // window_size
-            truncated_size = n_windows * window_size
+    increments = np.diff(X)
+    n = len(increments)
 
-            windows = deltas[:truncated_size].reshape(n_windows, window_size)
+    if horizon >= n:
+        raise ValueError("'horizon' must be smaller than the number of increments")
 
-            means = np.mean(windows, axis=1, keepdims=True)
-            std_devs = np.std(windows, axis=1, ddof=1)
-            demeaned = windows - means
-            cumulative_sums = np.cumsum(demeaned, axis=1)
-            ranges = np.max(cumulative_sums, axis=1) - np.min(cumulative_sums, axis=1)
+    mean_increment = np.mean(increments)
 
-            r_s[i] = np.mean(ranges / std_devs)
+    # One-period variance estimator.
+    variance_1 = np.sum((increments - mean_increment) ** 2) / (n - 1)
 
-        return r_s
+    if variance_1 <= np.finfo(np.float64).eps:
+        raise ValueError(
+            "Variance ratio is undefined when one-period "
+            "increments have zero variance"
+        )
 
-    def _hypothesis_test_random_walk(hurst: float, se: float, n: int) -> float:
-        """Helper function to test if Hurst exponent is significantly different from random_walk (0.5)"""
-        random_walk = 0.5
-        t_stat = (hurst - random_walk) / se
-        ddof = n - 2
-        return 2 * scipy.stats.t.sf(abs(t_stat), ddof)
+    # Overlapping k-period changes.
+    k_period_changes = X[horizon:] - X[:-horizon]
 
-    max_power = int(np.floor(math.log2(size)))
-    window_sizes = [2**power for power in range(1, max_power + 1)]
+    # Finite-sample correction from Lo-MacKinlay.
+    m = horizon * (n - horizon + 1) * (1.0 - horizon / n)
 
-    rescaled_ranges = _calculate_rescaled_ranges(deltas, window_sizes)
+    variance_k = np.sum((k_period_changes - horizon * mean_increment) ** 2) / m
 
-    log_sizes = np.log(window_sizes)
-    log_r_s = np.log(rescaled_ranges)
-    slope, _, _, _, se = scipy.stats.linregress(log_sizes, log_r_s)
+    ratio = variance_k / variance_1
 
-    p_value = _hypothesis_test_random_walk(slope, se, len(window_sizes))
+    # Homoscedastic asymptotic variance of VR(k).
+    phi = 2.0 * (2.0 * horizon - 1.0) * (horizon - 1.0) / (3.0 * horizon * n)
 
-    return float(slope), float(p_value)
+    z_statistic = (ratio - 1.0) / np.sqrt(phi)
+
+    p_value = 2.0 * scipy.stats.norm.sf(abs(z_statistic))
+
+    return (
+        float(ratio),
+        float(z_statistic),
+        float(p_value),
+    )
 
 
 def trend_significance(
     X: Union[np.ndarray, List[float]],
-) -> Tuple[float, float]:
+) -> Tuple[float, float, float]:
     """
-    Performs a linear regression against time (index) to check for a significant
-    linear trend in the input data.
+    Test whether a linear trend is statistically significant.
 
-    The function calculates the R-squared value and the p-value of the
-    hypothesis test where the null hypothesis is that the slope of the
-    regression line is zero (i.e., no linear trend).
+    The function fits a least-squares line against the observation index and
+    evaluates whether the slope differs from zero. The result includes the slope,
+    the coefficient of determination, and the two-sided p-value.
 
     Parameters
     ----------
     X : Union[np.ndarray, List[float]]
-        One-dimensional array or time series data (e.g., a numpy array or list).
+        One-dimensional time series or sequence of observations.
 
     Returns
     -------
-    Tuple[float, float]
-        (R-squared, p-value)
+    Tuple[float, float, float]
+        (slope, r_squared, p_value)
+        slope : float
+            Linear change in the target per observation.
         r_squared : float
-            The coefficient of determination (R²), representing the proportion
-            of variance in the data explained by the linear trend.
+            Proportion of variance explained by the fitted linear trend.
         p_value : float
-            The two-sided p-value for a hypothesis test whose null hypothesis is
-            that the slope of the regression line is zero.
-
-    Raises
-    ------
-    ValueError
-        If the input data is not 1-dimensional.
+            Two-sided p-value for the null hypothesis that the slope is zero.
 
     Notes
     -----
@@ -162,53 +164,51 @@ def trend_significance(
         raise ValueError("Input data must be 1-dimensional")
 
     time_index = np.arange(len(X))
-    _, _, r_value, p_value, _ = scipy.stats.linregress(time_index, X)
+    slope, _, r_value, p_value, _ = scipy.stats.linregress(time_index, X)
     r_squared = r_value**2
 
-    return r_squared, p_value
+    return float(slope), float(r_squared), float(p_value)
 
 
-def seasonal_significance(
+def harmonic_significance(
     y_detrended: Union[np.ndarray, List[float], pd.Series],
-    seasonal_component: Union[np.ndarray, List[float], pd.Series],
-    residuals: Union[np.ndarray, List[float], pd.Series],
     period: int,
-) -> Tuple[float, float, float]:
+) -> Tuple[float, float]:
     """
-    Calculates seasonal strength (Hyndman's metric) and performs an F-test
-    for seasonal significance using harmonic regression terms.
+    Test whether a sinusoidal component at a candidate period is significant.
+
+    The function regresses the detrended series on sine and cosine terms for the
+    supplied period and returns the resulting F statistic and p-value.
 
     Parameters
     ----------
     y_detrended : Union[np.ndarray, List[float], pd.Series]
-        The time series data after trend removal.
-    seasonal_component : Union[np.ndarray, List[float], pd.Series]
-        The extracted seasonal component for the given period.
-    residuals : Union[np.ndarray, List[float], pd.Series]
-        The residual component from the decomposition.
+        One-dimensional detrended series.
     period : int
-        The length of the seasonal cycle (e.g., 7 for weekly, 12 for monthly).
+        Candidate seasonal period in observations. Must be greater than 1.
 
     Returns
     -------
-    Tuple[float, float, float]
-        (strength, f_stat, p_value)
-        strength : float
-            Seasonal strength index ranging from 0 to 1.
-        f_stat : float
-            F-statistic testing the joint significance of harmonic terms.
+    Tuple[float, float]
+        (f_statistic, p_value)
+        f_statistic : float
+            F statistic for the harmonic regression.
         p_value : float
-            p-value corresponding to the F-test.
+            p-value associated with the null hypothesis that the seasonal term is
+            not significant.
+
+    Notes
+    -----
+    This diagnostic is used to assess whether an apparent cycle at a given period
+    is statistically meaningful beyond a generic harmonic fluctuation.
     """
     y_detrended = np.asarray(y_detrended, dtype=np.float64)
-    seasonal_component = np.asarray(seasonal_component, dtype=np.float64)
-    residuals = np.asarray(residuals, dtype=np.float64)
-
-    var_resid = np.var(residuals, ddof=1)
-    var_seas_resid = np.var(seasonal_component + residuals, ddof=1)
-    strength = (
-        max(0.0, 1.0 - (var_resid / var_seas_resid)) if var_seas_resid > 0 else 0.0
-    )
+    if y_detrended.ndim != 1:
+        raise ValueError("Input data must be 1-dimensional")
+    if not np.isfinite(y_detrended).all():
+        raise ValueError("Input data must contain only finite values")
+    if isinstance(period, bool) or not isinstance(period, int) or period <= 1:
+        raise ValueError("'period' must be an integer greater than 1")
 
     n = len(y_detrended)
     t = np.arange(n)
@@ -222,13 +222,14 @@ def seasonal_significance(
     ss_res = np.sum((y_detrended - y_pred) ** 2)
     ss_reg = ss_tot - ss_res
 
-    df_reg = 2
-    df_res = n - 3
+    model_rank = np.linalg.matrix_rank(X_design)
+    df_reg = model_rank - 1
+    df_res = n - model_rank
 
-    if df_res > 0 and ss_res > 0:
+    if df_reg > 0 and df_res > 0 and ss_res > 0:
         f_stat = (ss_reg / df_reg) / (ss_res / df_res)
         p_val = scipy.stats.f.sf(f_stat, df_reg, df_res)
     else:
         f_stat, p_val = 0.0, 1.0
 
-    return float(strength), float(f_stat), float(p_val)
+    return float(f_stat), float(p_val)

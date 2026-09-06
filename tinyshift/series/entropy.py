@@ -20,34 +20,38 @@ def sample_entropy(
     detrend: bool = False,
 ) -> np.ndarray:
     """
-    Compute the Sample Entropy (SampEn) of a 1D time series.
+    Calculate the Sample Entropy (SampEn) of a univariate time series.
 
-    Sample Entropy is a measure of complexity or irregularity in a time series.
-    It quantifies the likelihood that similar patterns in the data will not be followed by additional similar patterns.
+    Sample Entropy measures the likelihood that two similar patterns of length
+    ``m`` remain similar when one more observation is included. Unlike
+    approximate entropy, it avoids counting self-matches, which reduces bias in
+    finite samples.
 
     Parameters
     ----------
     X : Union[np.ndarray, List[float]]
-        1D time series data.
-    m : int, optional, default=1
-        Length of sequences to be compared (embedding dimension).
+        One-dimensional time series data.
+    m : int, default=1
+        Length of the sequences to compare.
     tolerance : float, optional, default=None
-        Tolerance for accepting matches. If None, it is set to 0.2 * std(X).
-    detrend : bool, optional, default=False
-        Whether to detrend the series before calculating entropy.
+        Matching tolerance. If None, it is set to 0.2 times the standard
+        deviation of ``X``.
+    detrend : bool, default=False
+        Whether to detrend the series before computing the entropy.
 
     Returns
     -------
     float
-        The Sample Entropy of the time series. Returns np.nan if A or B is zero.
+        The sample entropy of the series. If no valid match counts are found,
+        the result is ``np.nan``.
 
     Notes
     -----
-    - SampEn is less biased than Approximate Entropy (ApEn) and does not count self-matches.
-    - Higher SampEn values indicate more complexity and irregularity in the time series.
-    - Employs Chebyshev distance (maximum norm) for pattern comparison
-    - The function assumes the input time series is 1-dimensional.
-    - If either A or B is zero, SampEn is undefined and np.nan is returned.
+    - SampEn is less biased than Approximate Entropy because self-matches are
+      excluded.
+    - Higher values indicate greater irregularity or complexity.
+    - The comparison uses the Chebyshev distance, i.e., the maximum absolute
+      coordinate difference between two templates.
 
     References
     ----------
@@ -67,7 +71,7 @@ def sample_entropy(
         raise ValueError("Input data must contain only finite values")
 
     if detrend:
-        r_squared, p_value = trend_significance(X)
+        _, r_squared, p_value = trend_significance(X)
         if r_squared > 0.3 and p_value < 0.05:
             X = signal.detrend(X, type="linear")
         else:
@@ -134,25 +138,22 @@ def regularity_index(
     detrend: bool = False,
 ) -> float:
     """
-    Calculate the Regularity Index based on Sample Entropy (SampEn).
+    Calculate the regularity index derived from Sample Entropy.
 
-    This function measures the temporal regularity and predictability of a time series by
-    inverting the Sample Entropy. It quantifies how consistent the values and patterns
-    are over time, considering both magnitude and sequential relationships.
-
-    The regularity is computed as: 1 / exp(SampEn), where higher values indicate
-    more regular and predictable behavior.
+    The regularity index is defined as the inverse exponential of the sample
+    entropy, so more regular and predictable series receive larger values.
 
     Parameters
     ----------
     X : Union[np.ndarray, List[float]]
-        The time series data (e.g., prices, returns, measurements).
+        One-dimensional time series data.
     m : int, optional, default=1
-        The embedding dimension (length of sequences to compare).
+        Embedding dimension used by the underlying sample entropy computation.
     tolerance : float, optional, default=None
-        The similarity criterion for matching patterns. If None, defaults to 0.2 * std(X).
+        Matching tolerance. If None, it defaults to 0.2 times the series
+        standard deviation.
     detrend : bool, optional, default=False
-        Whether to detrend the series before calculating entropy.
+        Whether to detrend the series before computing entropy.
 
     Returns
     -------
@@ -163,9 +164,9 @@ def regularity_index(
 
     Notes
     -----
-    - Uses Sample Entropy which considers actual value magnitudes and distances
-    - Higher tolerance allows more variation in "similar" patterns
-    - Complementary to ordinal-based measures like theoretical_limit()
+    This metric is complementary to ordinal-based measures such as
+    ``theoretical_limit``: it captures the regularity of temporal patterns by
+    reversing the entropy scale.
     """
     hrate = sample_entropy(X, m=m, tolerance=tolerance, detrend=detrend)
     return 1 / np.exp(hrate)
@@ -180,40 +181,35 @@ def permutation_entropy(
     """
     Calculate the Permutation Entropy of a time series.
 
-    Permutation Entropy (PE) is a complexity measure that quantifies the regularity
-    and predictability of a time series by analyzing ordinal patterns. It focuses on
-    the relative order of values rather than their actual magnitudes, making it robust
-    to noise and outliers.
+    Permutation Entropy measures the complexity of a signal by analyzing the
+    relative ordering of values within ordinal patterns. It focuses on rank
+    structure rather than absolute magnitude, which makes it robust to monotonic
+    transformations and moderate noise.
 
     Parameters
     ----------
     X : Union[np.ndarray, List[float]]
-        Time series data (e.g., closing prices, measurements).
+        One-dimensional time series data.
     m : int, optional, default=3
-        The embedding dimension (length of ordinal patterns to analyze).
-        Common values are 3-7, with 3-5 being most typical.
+        Embedding dimension, i.e., length of each ordinal pattern.
     delay : int, optional, default=1
-        The time delay (spacing between elements in patterns).
-        delay=1 uses consecutive elements.
+        Spacing between observations inside each pattern.
     normalize : bool, optional, default=True
-        If True, normalize PE by log₂(m!) to get values in [0,1].
-        If False, return raw entropy values.
+        If True, divide the entropy by ``log2(m!)`` so the value lies in the
+        interval [0, 1].
 
     Returns
     -------
     float
-        The Permutation Entropy of the time series:
-        - If normalized: 0 (completely regular) to 1 (completely random)
-        - If not normalized: 0 to log₂(m!)
+        The permutation entropy of the series. Lower values indicate a more
+        regular ordinal structure and higher predictability.
 
     Notes
     -----
-    - PE analyzes ordinal patterns by comparing relative ordering of m consecutive values
-    - Higher PE values indicate more complexity/randomness in ordinal structure
-    - Lower PE values suggest more regular/predictable ordinal patterns
-    - Robust to noise and non-linear dynamics
-    - Time complexity: O(N×m×log(m)) where N is series length
-    - Requires at least (m-1)×delay + 1 data points
+    - The method evaluates relative ordering rather than exact magnitudes.
+    - Higher values indicate more complexity and disorder in the ordinal
+      structure.
+    - The implementation requires at least ``(m - 1) * delay + 1`` points.
 
     References
     ----------
@@ -250,24 +246,21 @@ def theoretical_limit(
     delay: int = 1,
 ) -> float:
     """
-    Calculates the theoretical upper limit of predictability (Πmax) for a time series based on ordinal patterns.
+    Calculate the theoretical upper limit of predictability based on ordinal patterns.
 
-    This function computes the maximum achievable predictability by analyzing the structural
-    complexity of ordinal patterns in the time series, independent of magnitude. It uses
-    normalized Permutation Entropy: Πmax = 1 - PE_norm.
-
-    The theoretical limit represents the upper bound of predictability that any forecasting
-    method could achieve if it perfectly captured all ordinal patterns in the data, ignoring
-    actual value magnitudes.
+    This function computes the maximum achievable predictability implied by the
+    ordinal structure of the series. It is defined as one minus the normalized
+    permutation entropy, so larger values indicate a more regular and predictable
+    sequence.
 
     Parameters
     ----------
     X : Union[np.ndarray, List[float]]
-        The time series data.
+        One-dimensional time series data.
     m : int, optional, default=3
-        The embedding dimension (length of ordinal patterns to analyze).
+        Embedding dimension used to form ordinal patterns.
     delay : int, optional, default=1
-        The delay (spacing between elements in patterns).
+        Spacing between observations within each pattern.
 
     Returns
     -------
@@ -294,4 +287,3 @@ def theoretical_limit(
     pe = permutation_entropy(X, m=m, delay=delay, normalize=True)
 
     return 1 - pe
-

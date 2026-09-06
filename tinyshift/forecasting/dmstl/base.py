@@ -10,11 +10,10 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
-
 from tinyshift.forecasting.stabilization import hfi, hpi
-from tinyshift.series.decomposition import extract_mstl_components
-from tinyshift.series.dependence import select_pami_lag
-from tinyshift.series.seasonality import SeasonalPeriodDetector
+from tinyshift.forecasting.dmstl.utils import extract_mstl_components
+from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
+from tinyshift.series.analyzers.seasonality import SeasonalityAnalyzer
 
 
 class BaseDMSTL(BaseEstimator, RegressorMixin):
@@ -82,7 +81,7 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             detection_df = detection_df.copy()
             detection_df[self.target_col_] = np.log1p(detection_df[self.target_col_])
 
-        self.seasonal_detector_ = SeasonalPeriodDetector(
+        self.seasonal_detector_ = SeasonalityAnalyzer(
             **(self.seasonal_detection_params or {})
         ).fit(
             detection_df,
@@ -98,13 +97,19 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
             raise ValueError(f"No season_length configured for unique_id {uid!r}.")
 
         if configured_periods == "auto":
-            periods = (
-                self.seasonal_detector_.results_.get(uid, {}).get(
-                    "candidate_periods", []
-                )
+            result = (
+                self.seasonal_detector_.results_.get(uid, {})
                 if self.seasonal_detector_ is not None
-                else []
+                else {}
             )
+            if "significant_periods" in result:
+                periods = result["significant_periods"]
+                if not periods:
+                    fallback = (self.seasonal_detection_params or {}).get("fallback")
+                    if fallback is not None:
+                        periods = [fallback] if isinstance(fallback, int) else list(fallback)
+            else:
+                periods = result.get("candidate_periods", [])
             if not periods:
                 raise ValueError(
                     f"Could not automatically detect seasonal periods for unique_id {uid!r}. "
@@ -183,25 +188,17 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         """Calculate PAMI lags for one SKU, regardless of residual strategy."""
         configured_lags = self._get_sku_config(self.nlags, uid)
         if configured_lags == "auto":
-            selected_lag, _, _ = select_pami_lag(
-                residual_part, **(self.pami_params or {})
-            )
-
-            if selected_lag is None or (
-                isinstance(selected_lag, (list, tuple, np.ndarray))
-                and len(selected_lag) == 0
-            ):
-                raise ValueError(
-                    f"Could not automatically select residual lag via PAMI for unique_id {uid!r}. "
-                    f"Consider specifying explicit lags or a dictionary mapping in 'nlags' "
-                    f"(e.g., nlags={{{uid!r}: 1}} or nlags={{{uid!r}: [1, 2, 3]}}), "
-                    f"or adjusting 'pami_params'."
-                )
-
-            if isinstance(selected_lag, int):
-                return [max(selected_lag, 1)]
-
-            return list(selected_lag) or [1]
+            params = dict(self.pami_params or {})
+            mode = params.pop("mode", "range")
+            fallback = params.pop("fallback", 1)
+            short = params.pop("short", 1)
+            result = PAMIAnalyzer(**params).analyze(residual_part)
+            return create_pami_lags(
+                {uid: result.local_minima},
+                mode=mode,
+                fallback=fallback,
+                short=short,
+            )[uid]
 
         if isinstance(configured_lags, int) and configured_lags > 0:
             return list(range(1, configured_lags + 1))

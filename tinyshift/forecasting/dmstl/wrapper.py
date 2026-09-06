@@ -42,7 +42,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         independently for each series. A dictionary can configure one integer,
         list of integers, or ``"auto"`` per ``unique_id``.
     seasonal_detection_params : dict, optional
-        Keyword arguments used to configure ``SeasonalPeriodDetector`` when
+        Keyword arguments used to configure ``SeasonalityAnalyzer`` when
         ``season_length="auto"``.
     trend_model_callable : callable or dict of callable, optional
         Factory without arguments returning a StatsForecast trend model. A
@@ -58,7 +58,7 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
         In global mode, the resulting per-series lags are combined into their
         sorted union before the shared model is created.
     pami_params : dict, optional
-        Keyword arguments passed to ``select_pami_lag`` when ``nlags="auto"``.
+        PAMI analyzer and lag-creation options used when ``nlags="auto"``.
     log_transform : bool, default=False
         Apply ``log1p`` before decomposition and ``expm1`` after recombination.
 
