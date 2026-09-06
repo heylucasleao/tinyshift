@@ -14,6 +14,7 @@ from tinyshift.forecasting.metrics import (
     pbias,
     rmae,
     score,
+    wape,
 )
 from tinyshift.forecasting.stabilization import hfi, hpi, vi
 from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
@@ -713,6 +714,17 @@ class TestInterpolation:
 
 
 class TestMetric:
+    def test_wape(self):
+        df = pd.DataFrame(
+            {
+                "unique_id": ["A", "A"],
+                "y": [10.0, 20.0],
+                "model_a": [8.0, 24.0],
+            }
+        )
+        result = wape(df, models=["model_a"])
+        assert result.loc[0, "model_a"] == pytest.approx(0.2)
+
     def test_pbias(self):
         df = pd.DataFrame(
             {
@@ -722,7 +734,7 @@ class TestMetric:
             }
         )
         result = pbias(df, models=["model_a"])
-        assert result.loc[0, "model_a"] == pytest.approx(6.6666666667)
+        assert result.loc[0, "model_a"] == pytest.approx(0.0666666667)
 
     def test_score(self):
         df = pd.DataFrame(
@@ -733,7 +745,7 @@ class TestMetric:
             }
         )
         result = score(df, models=["model_a"])
-        assert result.loc[0, "model_a"] == pytest.approx(26.6666666667)
+        assert result.loc[0, "model_a"] == pytest.approx(0.2666666667)
 
     def test_rmae(self):
         df = pd.DataFrame(
@@ -771,8 +783,8 @@ class TestMetric:
 
         result = forecast_instability(df, models=["model_a", "model_b"])
 
-        assert result.loc[0, "model_a"] == pytest.approx(16.0)
-        assert result.loc[0, "model_b"] == pytest.approx(17.3913043478)
+        assert result.loc[0, "model_a"] == pytest.approx(0.16)
+        assert result.loc[0, "model_b"] == pytest.approx(0.173913043478)
 
 
 class TestOutlier:
