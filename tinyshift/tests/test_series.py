@@ -46,7 +46,6 @@ from tinyshift.series.entropy import (
 from tinyshift.series.analyzers.intermittency import (
     IntermittencyAnalyzer as CanonicalAnalyzer,
 )
-from tinyshift.series.outlier import bollinger_bands, hampel_filter
 from tinyshift.series.spectral import _prepare_spectrum, foreca
 
 
@@ -813,38 +812,3 @@ class TestMetric:
 
         assert result.loc[0, "model_a"] == pytest.approx(0.16)
         assert result.loc[0, "model_b"] == pytest.approx(0.173913043478)
-
-
-class TestOutlier:
-    def test_hampel_filter(self):
-        x = np.array([0.0, 1.0, 2.0, 100.0, 3.0, 4.0, 5.0])
-        outliers = hampel_filter(x, window_size=3)
-        assert outliers.dtype == bool
-        assert outliers.sum() >= 1
-
-    def test_hampel_filter_always_returns_series(self):
-        result = hampel_filter([1.0, 2.0], window_size=3)
-        assert isinstance(result, pd.Series)
-        assert result.tolist() == [False, False]
-
-    def test_hampel_filter_uses_nan_aware_rolling_statistics(self):
-        result = hampel_filter([1.0, np.nan, 1.0, 1.0, 100.0], window_size=3)
-        assert result.tolist() == [False, False, False, False, True]
-
-    @pytest.mark.parametrize("window_size", [True, 2, 3.5])
-    def test_hampel_filter_rejects_invalid_window_size(self, window_size):
-        with pytest.raises(ValueError, match="integer"):
-            hampel_filter([1.0, 2.0, 3.0], window_size=window_size)
-
-    def test_bollinger_bands(self):
-        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=float)
-        outliers = bollinger_bands(x, window_size=2)
-        assert outliers.dtype == bool
-        assert len(outliers) == len(x)
-
-    def test_bollinger_bands_uses_sample_standard_deviation(self):
-        x = np.array([0.0, 2.0, 4.0])
-
-        result = bollinger_bands(x, window_size=2, factor=0.8)
-
-        assert result.tolist() == [False, False, False]

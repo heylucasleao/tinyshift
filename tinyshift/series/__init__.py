@@ -23,15 +23,12 @@ from .entropy import (
     sample_entropy,
     theoretical_limit,
 )
-from .outlier import bollinger_bands, hampel_filter
 from .spectral import foreca, spectral_concentration
 
 __all__ = [
     "IntermittencyAnalyzer",
     "SeasonalityAnalyzer",
-    "bollinger_bands",
     "foreca",
-    "hampel_filter",
     "permutation_auto_mutual_information",
     "permutation_entropy",
     "regularity_index",
