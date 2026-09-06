@@ -8,6 +8,14 @@ import pandas as pd
 import pytest
 from statsmodels.tsa.seasonal import DecomposeResult
 
+from tinyshift.forecasting.metrics import (
+    economic_loss,
+    forecast_instability,
+    pbias,
+    rmae,
+    score,
+)
+from tinyshift.forecasting.stabilization import hfi, hpi, vi
 from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
 from tinyshift.series.decomposition import detrend, extract_mstl_components
 from tinyshift.series.diagnostic import (
@@ -25,14 +33,6 @@ from tinyshift.series.forecastability import (
     theoretical_limit,
 )
 from tinyshift.series.intermittency import IntermittencyAnalyzer as CanonicalAnalyzer
-from tinyshift.series.interpolation import hfi, hpi, vi
-from tinyshift.series.metric import (
-    economic_loss,
-    forecast_instability,
-    pbias,
-    rmae,
-    score,
-)
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
 from tinyshift.series.profiler import SeriesProfiler
 

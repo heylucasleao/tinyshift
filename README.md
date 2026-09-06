@@ -275,11 +275,15 @@ pami(time_series, nlags=20, m=3, delay=1, normalize=False)
 
 ### 6. Forecast Accuracy Metrics
 
-TinyShift also includes forecast evaluation utilities in the series metrics module, implemented in [tinyshift/series/metric.py](tinyshift/series/metric.py). This module provides functions such as `wape`, `pbias`, `score`, and `rmae` to compare forecasting models using aggregate error, bias, and baseline-relative performance:
+TinyShift also includes forecast evaluation utilities in the forecasting metrics
+module, implemented in
+[tinyshift/forecasting/metrics.py](tinyshift/forecasting/metrics.py). This module
+provides functions such as `wape`, `pbias`, `score`, and `rmae` to compare
+forecasting models using aggregate error, bias, and baseline-relative performance:
 
 ```python
 import pandas as pd
-from tinyshift.series import wape, pbias, score, rmae
+from tinyshift.forecasting import wape, pbias, score, rmae
 
 # Example evaluation dataframe
 # df must contain actual values in the 'y' column and model predictions as columns
@@ -303,7 +307,7 @@ These utilities cover:
 TinyShift includes forecast interpolation methods and a panel instability metric:
 
 ```python
-from tinyshift.series import (
+from tinyshift.forecasting import (
     forecast_instability,          # Period-over-period forecast instability
     vi, hpi, hfi          # Interpolation methods
 )

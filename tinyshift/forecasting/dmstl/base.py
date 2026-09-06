@@ -11,13 +11,10 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 
-from tinyshift.series import (
-    SeasonalPeriodDetector,
-    extract_mstl_components,
-    hfi,
-    hpi,
-    select_pami_lag,
-)
+from tinyshift.forecasting.stabilization import hfi, hpi
+from tinyshift.series.decomposition import extract_mstl_components
+from tinyshift.series.forecastability import select_pami_lag
+from tinyshift.series.seasonality import SeasonalPeriodDetector
 
 
 class BaseDMSTL(BaseEstimator, RegressorMixin):

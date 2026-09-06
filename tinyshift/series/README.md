@@ -47,6 +47,9 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 
 ### 3. Forecast Accuracy Metrics
 
+These utilities are part of the public `tinyshift.forecasting` API and are
+documented here because they operate on time-series forecasts.
+
 - **`wape`**
   Calculates Weighted Absolute Percentage Error for one or more models.
   **When to use:** To compare volume accuracy across forecasts, even with zero demand.
@@ -76,7 +79,7 @@ The `series` module of tinyshift provides quantitative tools for time series ana
 Example with per-row costs:
 
 ```python
-from tinyshift.series import economic_loss
+from tinyshift.forecasting import economic_loss
 
 loss = economic_loss(
     df,
@@ -150,6 +153,8 @@ seasonality = SeasonalPeriodDetector(top_k=2).fit(df).profile()
 
 ### 5. Forecast Stabilization
 
+Forecast stabilization is exposed canonically from `tinyshift.forecasting`.
+
 - **`vi`**
   Vertical Interpolation for stabilized forecasts using previous-origin anchors.
   **When to use:** To stabilize individual forecast points vertically.
@@ -164,9 +169,9 @@ seasonality = SeasonalPeriodDetector(top_k=2).fit(df).profile()
 
 ## Notes
 
-- The `series` module exports the analyzers and functions from `decomposition`,
-  `diagnostic`, `forecastability`, `intermittency`, `interpolation`, `metric`,
-  `outlier`, `profiler`, and `seasonality`.
+- The `series` module exposes analysis tools from `decomposition`, `diagnostic`,
+  `forecastability`, `intermittency`, `outlier`, `profiler`, and `seasonality`.
+- Forecast metrics and stabilization live in `tinyshift.forecasting`.
 - For decomposed forecasting wrappers such as `DMSTLWrapper`, see `tinyshift.forecasting`.
 
 ## Summary: Function Quick Reference
