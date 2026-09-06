@@ -3,7 +3,6 @@
 from .dependence import permutation_auto_mutual_information
 from .diagnostic import (
     harmonic_significance,
-    seasonal_strength,
     trend_significance,
     variance_ratio,
 )
@@ -34,7 +33,6 @@ __all__ = [
     "regularity_index",
     "sample_entropy",
     "harmonic_significance",
-    "seasonal_strength",
     "PAMIAnalyzer",
     "PAMIResult",
     "PredictabilityAnalyzer",

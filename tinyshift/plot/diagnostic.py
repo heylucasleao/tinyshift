@@ -76,10 +76,12 @@ def seasonal_decompose(
     import plotly.subplots as sp
     import plotly.express as px
     import plotly.graph_objs as go
-    from tinyshift.forecasting.dmstl.base import extract_mstl_components
+    from tinyshift.forecasting.dmstl.utils import (
+        extract_mstl_components,
+        seasonal_strength,
+    )
     from tinyshift.series import (
         harmonic_significance,
-        seasonal_strength,
         trend_significance,
     )
 

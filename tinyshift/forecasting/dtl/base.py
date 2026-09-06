@@ -10,63 +10,10 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
-from statsmodels.nonparametric.smoothers_lowess import lowess
 
 from tinyshift.forecasting.stabilization import hfi, hpi
 from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
-
-
-def detrend(
-    df: pd.DataFrame,
-    frac: float = 0.2,
-    robust: bool = True,
-    id_col: str = "unique_id",
-    time_col: str = "ds",
-    target_col: str = "y",
-) -> pd.DataFrame:
-    """Decompose a Nixtla-format panel into LOWESS trend and residual."""
-    if not 0 < frac <= 1:
-        raise ValueError("frac must be greater than 0 and less than or equal to 1.")
-
-    if not isinstance(df, pd.DataFrame):
-        raise TypeError("df must be a pandas DataFrame in Nixtla long format.")
-
-    required = [id_col, time_col, target_col]
-    missing = [column for column in required if column not in df.columns]
-    if missing:
-        raise ValueError(f"DataFrame is missing required columns: {missing}.")
-
-    result = df.copy()
-    counts = result.groupby(id_col, observed=True)[target_col].transform("count")
-    if (counts < 2).any():
-        raise ValueError(
-            "Each unique_id series must contain at least two observations."
-        )
-
-    result = result.sort_values([id_col, time_col])
-    clean_series = result.groupby(id_col, observed=True)[target_col].transform(
-        lambda group: group.interpolate(method="linear", limit_direction="both")
-    )
-    iterations = 3 if robust else 0
-
-    def _apply_lowess(series: pd.Series) -> pd.Series:
-        values = series.to_numpy(dtype=float)
-        time_index = np.arange(len(values))
-        trend = lowess(
-            values,
-            time_index,
-            frac=frac,
-            it=iterations,
-            return_sorted=False,
-        )
-        return pd.Series(trend, index=series.index)
-
-    result["trend"] = clean_series.groupby(result[id_col], observed=True).transform(
-        _apply_lowess
-    )
-    result["detrended"] = result[target_col] - result["trend"]
-
-    return result.loc[df.index]
+from tinyshift.forecasting.dtl.utils import detrend
 
 
 class BaseDTL(BaseEstimator, RegressorMixin):

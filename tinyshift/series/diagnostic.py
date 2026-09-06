@@ -170,46 +170,6 @@ def trend_significance(
     return float(slope), float(r_squared), float(p_value)
 
 
-def seasonal_strength(
-    seasonal_component: Union[np.ndarray, List[float], pd.Series],
-    residuals: Union[np.ndarray, List[float], pd.Series],
-) -> float:
-    """
-    Calculate Hyndman's seasonal-strength measure from decomposition components.
-
-    Seasonal strength compares the variance of the residual component with the
-    variance of the combined seasonal-plus-residual signal. Higher values imply
-    a stronger seasonal component relative to the noise term.
-
-    Parameters
-    ----------
-    seasonal_component : Union[np.ndarray, List[float], pd.Series]
-        Seasonal component extracted from a decomposition method.
-    residuals : Union[np.ndarray, List[float], pd.Series]
-        Residual component after removing the trend and seasonal effects.
-
-    Returns
-    -------
-    float
-        Seasonal-strength score between 0 and 1. Values closer to 1 indicate a
-        stronger seasonal signal.
-
-    Notes
-    -----
-    The measure is based on the relative reduction in variance when the seasonal
-    signal is included alongside the residuals. It is often used to summarize
-    how dominant a recurring seasonal pattern is in a series.
-    """
-    seasonal_component = np.asarray(seasonal_component, dtype=np.float64)
-    residuals = np.asarray(residuals, dtype=np.float64)
-
-    var_resid = np.var(residuals, ddof=1)
-    var_seas_resid = np.var(seasonal_component + residuals, ddof=1)
-    return float(
-        max(0.0, 1.0 - (var_resid / var_seas_resid)) if var_seas_resid > 0 else 0.0
-    )
-
-
 def harmonic_significance(
     y_detrended: Union[np.ndarray, List[float], pd.Series],
     period: int,

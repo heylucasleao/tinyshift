@@ -24,8 +24,8 @@ from tinyshift.series import (
     TrendAnalyzer,
     VarianceRatioAnalyzer,
 )
-from tinyshift.forecasting.dmstl.base import extract_mstl_components
-from tinyshift.forecasting.dtl.base import detrend
+from tinyshift.forecasting.dmstl.utils import extract_mstl_components, seasonal_strength
+from tinyshift.forecasting.dtl.utils import detrend
 from tinyshift.series.dependence import (
     permutation_auto_mutual_information,
 )
@@ -33,7 +33,6 @@ from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
 from tinyshift.series.analyzers.base import BaseSeriesAnalyzer
 from tinyshift.series.diagnostic import (
     harmonic_significance,
-    seasonal_strength,
     trend_significance,
     variance_ratio,
 )
