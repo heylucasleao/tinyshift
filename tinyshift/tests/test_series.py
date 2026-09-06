@@ -29,7 +29,6 @@ from tinyshift.series.interpolation import hfi, hpi, vi
 from tinyshift.series.metric import (
     economic_loss,
     forecast_instability,
-    fva_rmae,
     pbias,
     rmae,
     score,
@@ -737,25 +736,6 @@ class TestMetric:
         )
         result = rmae(df, models=["model_a"], baseline_col="baseline")
         assert result.loc[0, "model_a"] == pytest.approx(1.0)
-
-    def test_fva_rmae(self):
-        y_true = np.array([10.0, 20.0, 30.0, 40.0])
-        y_pred = np.array([10.0, 20.0, 30.0, 39.0])
-        value = fva_rmae(y_true, y_pred)
-        assert np.isfinite(value)
-
-    def test_fva_rmae_moving_average_preserves_initial_window_behavior(self):
-        y_true = np.array([1.0, 3.0, 5.0, 7.0])
-        y_pred = np.array([1.0, 2.0, 4.0, 6.0])
-
-        value = fva_rmae(
-            y_true,
-            y_pred,
-            baseline_type="moving_average",
-            window_size=2,
-        )
-
-        assert value == pytest.approx(3 / 7)
 
     def test_forecast_instability(self):
         df = pd.DataFrame(
