@@ -17,16 +17,20 @@ from tinyshift.forecasting.metrics import (
     wape,
 )
 from tinyshift.forecasting.stabilization import hfi, hpi, vi
-from tinyshift.series import IntermittencyAnalyzer, SeasonalPeriodDetector
+from tinyshift.series import (
+    IntermittencyAnalyzer,
+    SeasonalPeriodDetector,
+    VarianceRatioAnalyzer,
+)
 from tinyshift.series.decomposition import detrend, extract_mstl_components
 from tinyshift.series.dependence import (
     permutation_auto_mutual_information,
     select_pami_lag,
 )
 from tinyshift.series.diagnostic import (
-    hurst_exponent,
     seasonal_significance,
     trend_significance,
+    variance_ratio,
 )
 from tinyshift.series.entropy import (
     permutation_entropy,
@@ -271,11 +275,72 @@ class TestDiagnostic:
         assert detector.time_col_ == "timestamp"
         assert detector.target_col_ == "value"
 
-    def test_hurst_exponent(self):
+    def test_variance_ratio(self):
         x = np.cumsum(np.random.RandomState(0).normal(size=60))
-        h, pvalue = hurst_exponent(x)
-        assert np.isfinite(h)
+        ratio, z_statistic, pvalue = variance_ratio(x)
+        assert np.isfinite(ratio)
+        assert np.isfinite(z_statistic)
         assert np.isfinite(pvalue)
+
+
+class TestVarianceRatioAnalyzer:
+    def test_profiles_each_series_and_default_horizon(self):
+        random = np.random.RandomState(0)
+        frame = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "unique_id": unique_id,
+                        "ds": np.arange(100),
+                        "y": np.cumsum(random.normal(size=100)),
+                    }
+                )
+                for unique_id in ["a", "b"]
+            ],
+            ignore_index=True,
+        )
+
+        analyzer = VarianceRatioAnalyzer().fit(frame)
+        result = analyzer.profile()
+
+        assert result.columns.tolist() == [
+            "unique_id",
+            "horizon",
+            "variance_ratio",
+            "z_statistic",
+            "p_value",
+        ]
+        assert result.groupby("unique_id")["horizon"].apply(list).to_dict() == {
+            "a": [2, 4, 8],
+            "b": [2, 4, 8],
+        }
+        assert np.isfinite(result["variance_ratio"]).all()
+
+    def test_uses_explicit_horizons_and_sorts_panel(self):
+        values = np.cumsum(np.random.RandomState(1).normal(size=40))
+        frame = pd.DataFrame(
+            {"item": "a", "date": np.arange(40)[::-1], "value": values[::-1]}
+        )
+
+        analyzer = VarianceRatioAnalyzer(horizons=[8, 2, 4, 2]).fit(
+            frame, id_col="item", time_col="date", target_col="value"
+        )
+
+        assert analyzer.profile()["horizon"].tolist() == [2, 4, 8]
+
+    def test_constant_series_produces_undefined_statistics(self):
+        frame = pd.DataFrame(
+            {"unique_id": "a", "ds": np.arange(30), "y": np.ones(30)}
+        )
+
+        result = VarianceRatioAnalyzer().fit(frame).profile()
+
+        assert result["horizon"].tolist() == [2]
+        assert result[["variance_ratio", "z_statistic", "p_value"]].isna().all().all()
+
+    def test_profile_requires_fit(self):
+        with pytest.raises(RuntimeError, match="fitted"):
+            VarianceRatioAnalyzer().profile()
 
     def test_trend_significance(self):
         x = np.linspace(0, 10, 40)
@@ -460,7 +525,6 @@ class TestSeriesProfiler:
             "class",
             "foreca",
             "limit",
-            "hurst",
             "trend_r2",
             "trend_pvalue",
             "spectral_conc",
@@ -506,13 +570,14 @@ class TestSeriesProfiler:
         assert result.loc[0, "item"] == "a"
         assert result.loc[0, "candidate_periods"] == [8]
 
-    def test_rejects_series_too_short_for_hurst(self):
+    def test_accepts_series_shorter_than_variance_ratio_minimum(self):
         frame = pd.DataFrame(
             {"unique_id": "a", "ds": np.arange(20), "y": np.arange(20.0)}
         )
 
-        with pytest.raises(ValueError, match="at least 30"):
-            SeriesProfiler().fit(frame)
+        result = SeriesProfiler().fit(frame).summary()
+
+        assert result.loc[0, "unique_id"] == "a"
 
     def test_summary_requires_fit(self):
         with pytest.raises(RuntimeError, match="fitted"):
