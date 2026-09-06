@@ -3,7 +3,6 @@
 # Licensed under the MIT License
 
 
-import math
 from typing import List, Tuple, Union
 
 import numpy as np
@@ -11,103 +10,121 @@ import pandas as pd
 import scipy
 
 
-def hurst_exponent(
+def variance_ratio(
     X: Union[np.ndarray, List[float]],
-    d: int = 1,
-) -> Tuple[float, float]:
+    horizon: int = 2,
+) -> Tuple[float, float, float]:
     """
-    Calculate the Hurst exponent using a rescaled range (R/S) analysis approach with p-value for random walk hypothesis.
+    Performs the Lo-MacKinlay variance ratio test for serial dependence.
 
-    The Hurst exponent is a measure of long-term memory of time series. It relates
-    to the autocorrelations of the time series and the rate at which these decrease
-    as the lag between pairs of values increases.
+    The variance ratio compares the variance of changes over a horizon `k`
+    with `k` times the variance of one-period changes.
+
+    Under the random-walk null hypothesis:
+
+        VR(k) = 1
+
+    Values greater than 1 indicate positive serial dependence
+    (persistence), while values below 1 indicate negative serial dependence
+    (mean reversion / anti-persistence).
 
     Parameters
     ----------
-    X : Union[np.ndarray, List[float]]
-        Input 1D time series data for which to calculate the Hurst exponent.
-        Must contain at least 30 samples.
-    d : int, default=1
-        The order of differencing to apply to the time series before analysis.
-        Can be 0 (no differencing), 1 (first difference), or 2 (second difference).
+    X: Union[np.ndarray, List[float]]
+        One-dimensional time series in level form.
+
+    horizon: int, default=2
+        Aggregation horizon `k`. Must be greater than 1 and smaller than
+        the number of one-period increments.
 
     Returns
     -------
-    Tuple[float, float]
-        (Hurst exponent, p-value for H=0.5 hypothesis)
-        The estimated Hurst exponent value. Interpretation:
-        - 0 < H < 0.5: Mean-reverting (anti-persistent) series
-        - H = 0.5: Geometric Brownian motion (random walk)
-        - 0.5 < H < 1: Trending (persistent) series with long-term memory
-        - H = 1: Perfectly trending series
-        p-value interpretation:
-        - p < threshold: Reject random walk hypothesis (significant persistence/mean-reversion)
-        - p >= threshold: Cannot reject random walk hypothesis
+    Tuple[float, float, float]
+        (variance_ratio, z_statistic, p_value)
+
+        variance_ratio: float
+            Lo-MacKinlay variance ratio estimate.
+
+            - VR > 1: positive serial dependence / persistence
+            - VR = 1: behavior consistent with a random walk
+            - VR < 1: negative serial dependence / mean reversion
+
+        z_statistic: float
+            Lo-MacKinlay homoscedastic test statistic for H0: VR(k) = 1.
+
+        p_value : float
+            Two-sided p-value for the random-walk null hypothesis.
 
     Raises
     ------
     ValueError
-        If input data has less than 30 samples (insufficient for reliable estimation).
-    TypeError
-        If input is not a list or numpy array.
+        If the input is not one-dimensional, contains insufficient data,
+        or if `horizon` is invalid.
 
     Notes
     -----
-    - The method uses differencing of order `d` to remove trends/non-stationarities.
-    - The R/S analysis is performed over multiple window sizes to estimate the Hurst exponent.
-    - A hypothesis test is conducted to assess if the estimated Hurst exponent significantly differs from 0.5 (random walk).
+    The implementation uses overlapping k-period changes and the
+    finite-sample variance estimator proposed by Lo and MacKinlay.
+
+    The null hypothesis is:
+
+        H0: VR(k) = 1
+
+    which corresponds to uncorrelated one-period increments.
+
+    The test statistic assumes homoscedastic increments.
     """
-    if d not in [0, 1, 2]:
-        raise ValueError("Differencing order 'd' must be either 0, 1, or 2")
 
     X = np.asarray(X, dtype=np.float64)
-    deltas = np.diff(X, n=d)
-    size = len(deltas)
 
-    if 30 > len(X):
+    if X.ndim != 1:
+        raise ValueError("Input data must be 1-dimensional")
+
+    if len(X) < 30:
         raise ValueError("Insufficient data points (minimum 30 required)")
 
-    def _calculate_rescaled_ranges(
-        deltas: np.ndarray, window_sizes: List[int]
-    ) -> np.ndarray:
-        """Helper function to calculate rescaled ranges (R/S) for each window size."""
-        r_s = np.zeros(len(window_sizes), dtype=np.float64)
+    if horizon <= 1:
+        raise ValueError("'horizon' must be greater than 1")
 
-        for i, window_size in enumerate(window_sizes):
-            n_windows = len(deltas) // window_size
-            truncated_size = n_windows * window_size
+    increments = np.diff(X)
+    n = len(increments)
 
-            windows = deltas[:truncated_size].reshape(n_windows, window_size)
+    if horizon >= n:
+        raise ValueError("'horizon' must be smaller than the number of increments")
 
-            means = np.mean(windows, axis=1, keepdims=True)
-            std_devs = np.std(windows, axis=1, ddof=1)
-            demeaned = windows - means
-            cumulative_sums = np.cumsum(demeaned, axis=1)
-            ranges = np.max(cumulative_sums, axis=1) - np.min(cumulative_sums, axis=1)
+    mean_increment = np.mean(increments)
 
-            r_s[i] = np.mean(ranges / std_devs)
+    # One-period variance estimator.
+    variance_1 = np.sum((increments - mean_increment) ** 2) / (n - 1)
 
-        return r_s
+    if variance_1 <= np.finfo(np.float64).eps:
+        raise ValueError(
+            "Variance ratio is undefined when one-period "
+            "increments have zero variance"
+        )
 
-    def _hypothesis_test_random_walk(hurst: float, se: float, n: int) -> float:
-        """Helper function to test if Hurst exponent is significantly different from random_walk (0.5)"""
-        random_walk = 0.5
-        t_stat = (hurst - random_walk) / se
-        ddof = n - 2
-        return 2 * scipy.stats.t.sf(abs(t_stat), ddof)
+    # Overlapping k-period changes.
+    k_period_changes = X[horizon:] - X[:-horizon]
 
-    max_power = int(np.floor(math.log2(size)))
-    window_sizes = [2**power for power in range(1, max_power + 1)]
+    # Finite-sample correction from Lo-MacKinlay.
+    m = horizon * (n - horizon + 1) * (1.0 - horizon / n)
 
-    rescaled_ranges = _calculate_rescaled_ranges(deltas, window_sizes)
+    variance_k = np.sum((k_period_changes - horizon * mean_increment) ** 2) / m
 
-    log_sizes = np.log(window_sizes)
-    log_r_s = np.log(rescaled_ranges)
-    slope, _, _, _, se = scipy.stats.linregress(log_sizes, log_r_s)
+    ratio = variance_k / variance_1
 
-    p_value = _hypothesis_test_random_walk(slope, se, len(window_sizes))
+    # Homoscedastic asymptotic variance of VR(k).
+    phi = 2.0 * (2.0 * horizon - 1.0) * (horizon - 1.0) / (3.0 * horizon * n)
 
-    return float(slope), float(p_value)
+    z_statistic = (ratio - 1.0) / np.sqrt(phi)
+
+    p_value = 2.0 * scipy.stats.norm.sf(abs(z_statistic))
+
+    return (
+        float(ratio),
+        float(z_statistic),
+        float(p_value),
+    )
 
 
 def trend_significance(

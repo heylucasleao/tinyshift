@@ -3,7 +3,7 @@ from typing import Any, ClassVar
 import numpy as np
 import pandas as pd
 
-from .diagnostic import hurst_exponent, trend_significance
+from .diagnostic import trend_significance
 from .entropy import theoretical_limit
 from .intermittency import IntermittencyAnalyzer
 from .seasonality import SeasonalPeriodDetector
@@ -20,8 +20,7 @@ class SeriesProfiler:
     independently.
 
     The target represents demand and must therefore contain finite,
-    non-negative values. Every series must contain at least 30 observations,
-    which is the minimum required by :func:`hurst_exponent`.
+    non-negative values.
 
     Parameters
     ----------
@@ -42,8 +41,6 @@ class SeriesProfiler:
     spectral_detrend : {"linear", "constant", "none"}, default="linear"
         Detrending strategy shared by ForeCA, spectral concentration, and
         seasonal-period detection.
-    hurst_d : {0, 1, 2}, default=1
-        Differencing order applied before estimating the Hurst exponent.
     permutation_m : int, default=3
         Embedding dimension used to calculate permutation entropy and the
         theoretical predictability limit.
@@ -91,11 +88,6 @@ class SeriesProfiler:
         Ordinal predictability limit, calculated as one minus normalized
         permutation entropy. Values closer to 1 indicate more regular ordinal
         patterns.
-    hurst
-        Hurst exponent estimated through rescaled-range analysis. Values below
-        0.5 suggest anti-persistence, values near 0.5 random-walk-like behavior,
-        and values above 0.5 persistence. Finite-sample estimates can fall
-        outside the theoretical 0-to-1 interval.
     trend_r2
         R² from a linear regression of the target against observation order.
         Higher values indicate that a linear trend explains more variance.
@@ -133,7 +125,6 @@ class SeriesProfiler:
         "class",
         "foreca",
         "limit",
-        "hurst",
         "trend_r2",
         "trend_pvalue",
         "spectral_conc",
@@ -148,7 +139,6 @@ class SeriesProfiler:
         noise_threshold_factor: float = 2.0,
         fallback: int | list[int] | None = None,
         spectral_detrend: str = "linear",
-        hurst_d: int = 1,
         permutation_m: int = 3,
         permutation_delay: int = 1,
     ) -> None:
@@ -158,7 +148,6 @@ class SeriesProfiler:
         self.noise_threshold_factor = noise_threshold_factor
         self.fallback = fallback
         self.spectral_detrend = spectral_detrend
-        self.hurst_d = hurst_d
         self.permutation_m = permutation_m
         self.permutation_delay = permutation_delay
 
@@ -171,7 +160,6 @@ class SeriesProfiler:
             f"noise_threshold_factor={self.noise_threshold_factor}, "
             f"fallback={self.fallback!r}, "
             f"spectral_detrend={self.spectral_detrend!r}, "
-            f"hurst_d={self.hurst_d}, "
             f"permutation_m={self.permutation_m}, "
             f"permutation_delay={self.permutation_delay}"
             ")"
@@ -205,12 +193,12 @@ class SeriesProfiler:
         }
 
     @staticmethod
-    def temporal_structure(values: np.ndarray, *, hurst_d: int) -> dict[str, float]:
+    def temporal_structure(
+        values: np.ndarray,
+    ) -> dict[str, float]:
         """Calculate temporal-structure diagnostics for one series."""
-        hurst, _ = hurst_exponent(values, d=hurst_d)
         trend_r2, trend_pvalue = trend_significance(values)
         return {
-            "hurst": hurst,
             "trend_r2": trend_r2,
             "trend_pvalue": trend_pvalue,
         }
@@ -252,14 +240,6 @@ class SeriesProfiler:
         if not np.isfinite(df[target_col].to_numpy(dtype=float)).all():
             raise ValueError("Target values must be finite.")
 
-        counts = df.groupby(id_col, observed=True).size()
-        short_ids = counts[counts < 30].index.tolist()
-        if short_ids:
-            raise ValueError(
-                "Each series must contain at least 30 observations for the Hurst "
-                f"exponent; short series: {short_ids}."
-            )
-
     def fit(
         self,
         df: pd.DataFrame,
@@ -300,7 +280,6 @@ class SeriesProfiler:
             fallback=self.fallback,
             detrend=self.spectral_detrend,
         ).fit(df, id_col=id_col, time_col=time_col, target_col=target_col)
-
         self.results_ = {}
         ordered = df.sort_values([id_col, time_col])
         for unique_id, group in ordered.groupby(id_col, sort=False, observed=True):
@@ -316,7 +295,7 @@ class SeriesProfiler:
                     permutation_delay=self.permutation_delay,
                 ),
                 "temporal_structure": self.temporal_structure(
-                    values, hurst_d=self.hurst_d
+                    values,
                 ),
                 "spectral_structure": self.spectral_structure(
                     values,
@@ -334,7 +313,7 @@ class SeriesProfiler:
         pandas.DataFrame
             Columns are the fitted ID column followed by ``adi``, ``cv2``,
             ``zero_prop``, ``interval_cv``, ``class``, ``foreca``, ``limit``,
-            ``hurst``, ``trend_r2``, ``trend_pvalue``, ``spectral_conc``, and
+            ``trend_r2``, ``trend_pvalue``, ``spectral_conc``, and
             ``candidate_periods``.
 
         Raises
