@@ -10,11 +10,48 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
+from statsmodels.tsa.seasonal import DecomposeResult
 
 from tinyshift.forecasting.stabilization import hfi, hpi
-from tinyshift.series.decomposition import extract_mstl_components
 from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
 from tinyshift.series.analyzers.seasonality import SeasonalityAnalyzer
+
+
+def extract_mstl_components(
+    result: DecomposeResult,
+    periods: Union[int, List[int]],
+) -> pd.DataFrame:
+    """Convert a statsmodels MSTL decomposition result to a DataFrame."""
+    if not isinstance(result, DecomposeResult):
+        raise TypeError(
+            "Expected 'result' to be a statsmodels DecomposeResult, got "
+            f"{type(result).__name__}."
+        )
+
+    period_list = [periods] if isinstance(periods, int) else list(periods)
+    components = pd.DataFrame(
+        {
+            "data": result.observed,
+            "trend": result.trend,
+        }
+    )
+    seasonal = np.asarray(result.seasonal)
+    n_seasonal_channels = 1 if seasonal.ndim == 1 else seasonal.shape[1]
+    if len(period_list) != n_seasonal_channels:
+        raise ValueError(
+            f"Number of provided periods ({len(period_list)}) does not match "
+            "the number of seasonal components in result "
+            f"({n_seasonal_channels})."
+        )
+
+    if seasonal.ndim == 1:
+        components[f"seasonal_{period_list[0]}"] = seasonal
+    else:
+        for index, period in enumerate(period_list):
+            components[f"seasonal_{period}"] = seasonal[:, index]
+
+    components["resid"] = result.resid
+    return components
 
 
 class BaseDMSTL(BaseEstimator, RegressorMixin):

@@ -1,6 +1,5 @@
-"""Time-series analysis, diagnostics, decomposition, and profiling tools."""
+"""Time-series analysis, diagnostics, and profiling tools."""
 
-from .decomposition import detrend, extract_mstl_components
 from .dependence import permutation_auto_mutual_information
 from .diagnostic import (
     harmonic_significance,
@@ -31,8 +30,6 @@ __all__ = [
     "IntermittencyAnalyzer",
     "SeasonalityAnalyzer",
     "bollinger_bands",
-    "detrend",
-    "extract_mstl_components",
     "foreca",
     "hampel_filter",
     "permutation_auto_mutual_information",

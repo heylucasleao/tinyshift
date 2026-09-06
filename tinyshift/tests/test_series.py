@@ -24,7 +24,8 @@ from tinyshift.series import (
     TrendAnalyzer,
     VarianceRatioAnalyzer,
 )
-from tinyshift.series.decomposition import detrend, extract_mstl_components
+from tinyshift.forecasting.dmstl.base import extract_mstl_components
+from tinyshift.forecasting.dtl.base import detrend
 from tinyshift.series.dependence import (
     permutation_auto_mutual_information,
 )
@@ -95,9 +96,7 @@ def test_economic_loss_accepts_scalar_costs():
 
 
 def test_constant_signal_has_exactly_zero_detrended_spectral_power():
-    _, power, _ = _prepare_spectrum(
-        np.ones(32), detrend="linear", method="fft"
-    )
+    _, power, _ = _prepare_spectrum(np.ones(32), detrend="linear", method="fft")
 
     assert np.count_nonzero(power) == 0
 
@@ -198,9 +197,7 @@ class TestDiagnostic:
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
         periods = (
-            SeasonalityAnalyzer(top_k=1)
-            .fit(frame)
-            .results_["a"]["candidate_periods"]
+            SeasonalityAnalyzer(top_k=1).fit(frame).results_["a"]["candidate_periods"]
         )
         assert periods == [2]
 
@@ -210,9 +207,7 @@ class TestDiagnostic:
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
         periods = (
-            SeasonalityAnalyzer(top_k=1)
-            .fit(frame)
-            .results_["a"]["candidate_periods"]
+            SeasonalityAnalyzer(top_k=1).fit(frame).results_["a"]["candidate_periods"]
         )
 
         assert periods == [8]
@@ -338,9 +333,7 @@ class TestVarianceRatioAnalyzer:
         assert analyzer.summary()["horizon"].tolist() == [2, 4, 8]
 
     def test_constant_series_produces_undefined_statistics(self):
-        frame = pd.DataFrame(
-            {"unique_id": "a", "ds": np.arange(30), "y": np.ones(30)}
-        )
+        frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(30), "y": np.ones(30)})
 
         result = VarianceRatioAnalyzer().fit(frame).summary()
 
@@ -536,9 +529,7 @@ class TestPredictabilityAndTrendAnalyzers:
 
     def test_trend_summary_includes_direction_and_significance(self):
         steps = np.arange(32)
-        frame = pd.DataFrame(
-            {"unique_id": "a", "ds": steps, "y": 1.0 + 2.0 * steps}
-        )
+        frame = pd.DataFrame({"unique_id": "a", "ds": steps, "y": 1.0 + 2.0 * steps})
 
         result = TrendAnalyzer().fit(frame).summary()
 
@@ -708,9 +699,7 @@ class TestForecastability:
 
         result = PAMIAnalyzer(max_tau=3).fit(frame).summary()
 
-        assert result.to_dict("records") == [
-            {"unique_id": "a", "local_minima": [2]}
-        ]
+        assert result.to_dict("records") == [{"unique_id": "a", "local_minima": [2]}]
 
     def test_analyzers_expose_summary_without_profile(self):
         for analyzer in (
