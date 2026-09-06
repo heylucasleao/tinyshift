@@ -36,6 +36,7 @@ from tinyshift.series.metric import (
     wape,
 )
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
+from tinyshift.series.profiler import SeriesProfiler
 
 
 def test_economic_loss_aggregates_understock_and_overstock_by_id():
@@ -170,7 +171,7 @@ class TestDiagnostic:
     def test_seasonal_period_detector_detects_periods(self):
         x = np.sin(2 * np.pi * np.arange(32) / 8)
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector().fit(frame).results_["a"]["periods"]
+        periods = SeasonalPeriodDetector().fit(frame).results_["a"]["candidate_periods"]
         assert 8 in periods
         assert periods == sorted(set(periods))
 
@@ -178,7 +179,11 @@ class TestDiagnostic:
         x = (-1.0) ** np.arange(32)
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]["periods"]
+        periods = (
+            SeasonalPeriodDetector(top_k=1)
+            .fit(frame)
+            .results_["a"]["candidate_periods"]
+        )
         assert periods == [2]
 
     def test_seasonal_period_detector_ignores_missing_values(self):
@@ -186,7 +191,11 @@ class TestDiagnostic:
         x[[3, 17]] = np.nan
 
         frame = pd.DataFrame({"unique_id": "a", "ds": np.arange(32), "y": x})
-        periods = SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]["periods"]
+        periods = (
+            SeasonalPeriodDetector(top_k=1)
+            .fit(frame)
+            .results_["a"]["candidate_periods"]
+        )
 
         assert periods == [8]
 
@@ -209,7 +218,7 @@ class TestDiagnostic:
         periods = (
             SeasonalPeriodDetector(fallback=fallback)
             .fit(frame)
-            .results_["a"]["periods"]
+            .results_["a"]["candidate_periods"]
         )
 
         assert periods == expected
@@ -230,8 +239,8 @@ class TestDiagnostic:
         )
 
         results = SeasonalPeriodDetector(top_k=1).fit(frame).results_
-        assert results["weekly"]["periods"] == [8]
-        assert results["biweekly"]["periods"] == [16]
+        assert results["weekly"]["candidate_periods"] == [8]
+        assert results["biweekly"]["candidate_periods"] == [16]
 
     def test_seasonal_period_detector_infers_single_numeric_target(self):
         steps = np.arange(32)
@@ -249,7 +258,7 @@ class TestDiagnostic:
             target_col="value",
         )
 
-        assert detector.results_["a"]["periods"] == [8]
+        assert detector.results_["a"]["candidate_periods"] == [8]
         assert detector.time_col_ == "timestamp"
         assert detector.target_col_ == "value"
 
@@ -392,11 +401,11 @@ class TestIntermittencyAnalyzer:
         profile = SeasonalPeriodDetector(top_k=1).fit(frame).profile()
 
         assert profile.to_dict("records") == [
-            {"unique_id": "a", "periods": [8]},
-            {"unique_id": "b", "periods": [8]},
+            {"unique_id": "a", "candidate_periods": [8]},
+            {"unique_id": "b", "candidate_periods": [8]},
         ]
         assert set(SeasonalPeriodDetector(top_k=1).fit(frame).results_["a"]) == {
-            "periods",
+            "candidate_periods",
             "frequencies",
             "power",
             "peaks",
@@ -409,6 +418,96 @@ class TestIntermittencyAnalyzer:
 
         with pytest.raises(ValueError, match="cv2_threshold"):
             IntermittencyAnalyzer(cv2_threshold=threshold)
+
+
+class TestSeriesProfiler:
+    def test_returns_complete_panel_profile(self):
+        steps = np.arange(64)
+        frame = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "unique_id": unique_id,
+                        "ds": steps[::-1],
+                        "y": 3.0
+                        + np.sin(2 * np.pi * steps[::-1] / period)
+                        + 0.01 * steps[::-1],
+                    }
+                )
+                for unique_id, period in [("a", 8), ("b", 16)]
+            ],
+            ignore_index=True,
+        )
+
+        profiler = SeriesProfiler(top_k=1).fit(frame)
+        result = profiler.summary()
+
+        assert result.columns.tolist() == [
+            "unique_id",
+            "adi",
+            "cv2",
+            "zero_prop",
+            "interval_cv",
+            "class",
+            "foreca",
+            "limit",
+            "hurst",
+            "trend_r2",
+            "trend_pvalue",
+            "spectral_conc",
+            "candidate_periods",
+        ]
+        assert result["unique_id"].tolist() == ["a", "b"]
+        assert result.set_index("unique_id").loc["a", "candidate_periods"] == [8]
+        assert result.set_index("unique_id").loc["b", "candidate_periods"] == [16]
+        assert (
+            result.drop(columns=["unique_id", "class", "candidate_periods"])
+            .apply(np.isfinite)
+            .all()
+            .all()
+        )
+        assert set(profiler.results_["a"]) == {
+            "demand_occurrence",
+            "predictability",
+            "temporal_structure",
+            "spectral_structure",
+        }
+
+    def test_accepts_custom_panel_column_names(self):
+        steps = np.arange(64)
+        frame = pd.DataFrame(
+            {
+                "item": "a",
+                "date": steps,
+                "demand": 2.0 + np.sin(2 * np.pi * steps / 8),
+            }
+        )
+
+        result = (
+            SeriesProfiler(top_k=1)
+            .fit(
+                frame,
+                id_col="item",
+                time_col="date",
+                target_col="demand",
+            )
+            .summary()
+        )
+
+        assert result.loc[0, "item"] == "a"
+        assert result.loc[0, "candidate_periods"] == [8]
+
+    def test_rejects_series_too_short_for_hurst(self):
+        frame = pd.DataFrame(
+            {"unique_id": "a", "ds": np.arange(20), "y": np.arange(20.0)}
+        )
+
+        with pytest.raises(ValueError, match="at least 30"):
+            SeriesProfiler().fit(frame)
+
+    def test_summary_requires_fit(self):
+        with pytest.raises(RuntimeError, match="fitted"):
+            SeriesProfiler().summary()
 
 
 class TestForecastability:
@@ -646,6 +745,19 @@ class TestMetric:
         value = fva_rmae(y_true, y_pred)
         assert np.isfinite(value)
 
+    def test_fva_rmae_moving_average_preserves_initial_window_behavior(self):
+        y_true = np.array([1.0, 3.0, 5.0, 7.0])
+        y_pred = np.array([1.0, 2.0, 4.0, 6.0])
+
+        value = fva_rmae(
+            y_true,
+            y_pred,
+            baseline_type="moving_average",
+            window_size=2,
+        )
+
+        assert value == pytest.approx(3 / 7)
+
     def test_forecast_instability(self):
         df = pd.DataFrame(
             {
@@ -700,3 +812,10 @@ class TestOutlier:
         outliers = bollinger_bands(x, window_size=2)
         assert outliers.dtype == bool
         assert len(outliers) == len(x)
+
+    def test_bollinger_bands_uses_sample_standard_deviation(self):
+        x = np.array([0.0, 2.0, 4.0])
+
+        result = bollinger_bands(x, window_size=2, factor=0.8)
+
+        assert result.tolist() == [False, False, False]

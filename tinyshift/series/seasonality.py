@@ -356,7 +356,7 @@ class SeasonalPeriodDetector:
             periods = self._normalize_fallback()
 
         return {
-            "periods": periods,
+            "candidate_periods": periods,
             "frequencies": frequencies,
             "power": power,
             "peaks": peaks,
@@ -440,7 +440,7 @@ class SeasonalPeriodDetector:
                 "The detector must be fitted before calling `profile()`."
             )
 
-        columns = ["periods"]
+        columns = ["candidate_periods"]
         rows = [
             {
                 self.id_col_: unique_id,

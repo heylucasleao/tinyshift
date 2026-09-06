@@ -217,7 +217,9 @@ class TestDMSTLWrapper:
 
     def test_auto_detection_failure_raises_value_error(self):
         wrapper = DMSTLLocalWrapper(season_length="auto")
-        wrapper.seasonal_detector_ = Mock(results_={"sku_404": {"periods": []}})
+        wrapper.seasonal_detector_ = Mock(
+            results_={"sku_404": {"candidate_periods": []}}
+        )
         series = np.array([10.0] * 12)
 
         with pytest.raises(
@@ -236,7 +238,10 @@ class TestDMSTLWrapper:
         )
         detector = detector_class.return_value
         detector.fit.return_value = detector
-        detector.results_ = {"a": {"periods": [2]}, "b": {"periods": [2]}}
+        detector.results_ = {
+            "a": {"candidate_periods": [2]},
+            "b": {"candidate_periods": [2]},
+        }
         wrapper = DMSTLLocalWrapper(
             season_length={"a": "auto", "b": "auto", "fixed": 2}
         )
@@ -250,6 +255,6 @@ class TestDMSTLWrapper:
         detected_frame = detector.fit.call_args.args[0]
         assert set(detected_frame["series"]) == {"a", "b"}
         assert wrapper.seasonal_detector_.results_ == {
-            "a": {"periods": [2]},
-            "b": {"periods": [2]},
+            "a": {"candidate_periods": [2]},
+            "b": {"candidate_periods": [2]},
         }

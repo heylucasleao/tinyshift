@@ -10,4 +10,5 @@ from .intermittency import *
 from .interpolation import *
 from .metric import *
 from .outlier import *
+from .profiler import *
 from .seasonality import *

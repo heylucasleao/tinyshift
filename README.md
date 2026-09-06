@@ -226,6 +226,7 @@ from tinyshift.series import (
     permutation_entropy,
     theoretical_limit,
     hurst_exponent,
+    SeriesProfiler,
     hampel_filter,
     bollinger_bands
 )
@@ -259,6 +260,9 @@ print(f"Theoretical Limit (Πmax): {theo_limit}")
 # Detect long-term memory
 hurst, p_value = hurst_exponent(time_series)
 print(f"Hurst Exponent: {hurst}, P-value: {p_value}")
+
+# Combined diagnostics for a Nixtla-style panel
+summary = SeriesProfiler().fit(df).summary()
 
 # Outlier detection in time series
 outliers = hampel_filter(time_series, window_size=5)

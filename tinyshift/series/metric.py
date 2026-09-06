@@ -2,10 +2,12 @@
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-import pandas as pd
-from typing import Union, List, Literal
+from typing import List, Literal, Union
+
 import numpy as np
-from tinyshift.stats import rolling_window
+import pandas as pd
+
+from tinyshift.utils.imports import requires_extra
 
 
 def wape(
@@ -281,6 +283,7 @@ def rmae(
     return res
 
 
+@requires_extra("series")
 def fva_rmae(
     y_true: Union[np.ndarray, List[float]],
     y_pred: Union[np.ndarray, List[float]],
@@ -347,8 +350,14 @@ def fva_rmae(
     elif baseline_type == "moving_average":
         if window_size < 2:
             raise ValueError("window_size must be >= 2 for moving_average baseline.")
+        if window_size > len(y_true):
+            raise ValueError("window_size cannot be larger than the length of y_true.")
 
-        ma_series = rolling_window(y_true, window_size=window_size, func=np.mean)
+        from coreforecast.rolling import rolling_mean
+
+        ma_series = rolling_mean(y_true, window_size=window_size)
+        # Preserve the historical TinyShift behavior for incomplete windows.
+        ma_series[: window_size - 1] = ma_series[window_size - 1]
         y_baseline_eval = ma_series[:-nlags]
 
     else:

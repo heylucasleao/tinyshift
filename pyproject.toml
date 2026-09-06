@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 series = [
+    "coreforecast>=0.0.18",
     "statsforecast>=1.4.0",
     "mlforecast>=0.7.0",
     "utilsforecast>=0.1.0",

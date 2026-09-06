@@ -3,8 +3,9 @@
 # Licensed under the MIT License
 
 
+from typing import Callable, List, Union
+
 import numpy as np
-from typing import Union, List, Callable
 import pandas as pd
 
 
@@ -66,113 +67,6 @@ def chebyshev_guaranteed_percentage(
         k_values.append(k_upper)
     k = float(min(k_values))
     return 1 - (1 / (k**2)) if k > 1 else 0
-
-
-def rolling_window(
-    X: Union[np.ndarray, List[float]],
-    window_size: int = 60,
-    func: Callable = None,
-    **kwargs,
-) -> np.ndarray:
-    """
-    Apply a function over a trailing (rolling) window of a 1D time series.
-
-    Parameters
-    ----------
-    X : array-like, shape (n_samples,)
-        1D time series data (e.g., log-prices).
-    window_size : int, optional (default=60)
-        Size of the rolling window (must be >= 2).
-    func : Callable
-        Function to apply to each window. Must accept a 1D array as first argument.
-    **kwargs
-        Additional keyword arguments to pass to `func`.
-
-    Returns
-    -------
-    result : ndarray, shape (n_samples,)
-        Array of function values. Positions before the first complete window
-        repeat the result of that first window.
-    """
-    if (
-        isinstance(window_size, (bool, np.bool_))
-        or not isinstance(window_size, (int, np.integer))
-        or window_size < 2
-    ):
-        raise ValueError("window_size must be an integer >= 2")
-    X = np.asarray(X, dtype=np.float64)
-
-    if X.ndim != 1:
-        raise ValueError("Input data must be 1-dimensional")
-    if window_size > len(X):
-        raise ValueError("window_size cannot be larger than the length of X")
-    if not callable(func):
-        raise TypeError("func must be callable")
-
-    window_indices = [
-        np.arange(i, i + window_size) for i in range(X.shape[0] - window_size + 1)
-    ]
-
-    windows = X[window_indices]
-
-    result = np.array([func(window, **kwargs) for window in windows])
-
-    return np.concatenate(([result[0]] * (window_size - 1), result))
-
-
-def expanding_window(
-    X: Union[np.ndarray, List[float]],
-    func: Callable = None,
-    window_size: int = 1,
-    **kwargs,
-) -> np.ndarray:
-    """
-    Apply a function over an expanding window of a 1D time series.
-
-    Parameters
-    ----------
-    X : array-like, shape (n_samples,)
-        1D time series data (e.g., log-prices).
-    func : Callable
-        Function to apply to each window. Must accept a 1D array as first argument.
-    window_size : int, optional (default=1)
-        Minimum window size to start the expansion. The first window will contain
-        `window_size` elements, and subsequent windows will expand by one element each.
-    **kwargs
-        Additional keyword arguments to pass to `func`.
-
-    Returns
-    -------
-    result : ndarray, shape (n_samples,)
-        Array of function values. Positions before the first complete window
-        repeat the result of that first window.
-    """
-    X = np.asarray(X, dtype=np.float64)
-
-    if X.ndim != 1:
-        raise ValueError("Input data must be 1-dimensional")
-
-    if (
-        isinstance(window_size, (bool, np.bool_))
-        or not isinstance(window_size, (int, np.integer))
-        or window_size < 1
-    ):
-        raise ValueError("window_size must be a positive integer")
-
-    if window_size > len(X):
-        raise ValueError("window_size cannot be larger than the length of X")
-
-    if not callable(func):
-        raise TypeError("func must be callable")
-
-    result = np.array(
-        [
-            func(X[: window_size + i], **kwargs)
-            for i in range(X.shape[0] - window_size + 1)
-        ]
-    )
-
-    return np.concatenate(([result[0]] * (window_size - 1), result))
 
 
 def jackknife(
