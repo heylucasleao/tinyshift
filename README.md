@@ -278,11 +278,9 @@ pami(time_series, nlags=20, m=3, delay=1, normalize=False)
 TinyShift also includes forecast evaluation utilities in the forecasting metrics
 module, implemented in
 [tinyshift/forecasting/metrics.py](tinyshift/forecasting/metrics.py). This module
-provides functions such as `wape`, `pbias`, `score`, and `rmae` to compare
-forecasting models using aggregate error, bias, and baseline-relative performance:
+provides accuracy, bias, stability, economic-loss, and tail-risk measures:
 
 ```python
-import pandas as pd
 from tinyshift.forecasting import wape, pbias, score, rmae
 
 # Example evaluation dataframe
@@ -296,20 +294,25 @@ rmae_df = rmae(df, models=["model_a", "model_b"], baseline_col="naive", id_col="
 ```
 
 These utilities cover:
+
 - `wape`: weighted absolute percentage error for overall accuracy
 - `pbias`: percent bias to detect over- or under-forecasting
 - `score`: composite score combining WAPE and absolute bias
 - `economic_loss`: financial loss from understock and overstock costs
 - `rmae`: relative mean absolute error versus a baseline model
+- `forecast_instability`: revision magnitude across consecutive forecasts
+- `tail_risk`: expected cost, dispersion, VaR, CVaR, and worst-case loss
 
-### 7. Forecast Interpolation
+### 7. Forecast Stabilization
 
 TinyShift includes forecast interpolation methods and a panel instability metric:
 
 ```python
 from tinyshift.forecasting import (
-    forecast_instability,          # Period-over-period forecast instability
-    vi, hpi, hfi          # Interpolation methods
+    forecast_instability,
+    hfi,
+    hpi,
+    vi,
 )
 
 # Calculate period-over-period forecast variability (instability)
@@ -555,14 +558,12 @@ tinyshift/
 │   └── continuous.py            # ConDrift for numerical features
 ├── examples/                    # Jupyter notebook examples
 │   ├── dmstl.ipynb              # Multi-seasonal forecasting example
-│   ├── dtl.ipynb                # Trend/residual forecasting example
 │   ├── drift.ipynb              # Drift detection examples
+│   ├── dtl.ipynb                # Trend/residual forecasting example
 │   ├── outlier.ipynb            # Outlier detection demos
 │   ├── power_analysis.ipynb     # Statistical power analysis
-│   ├── series.ipynb             # Time series analysis
-│   ├── solver.ipynb             # Probabilistic decision example
+│   ├── series_profiler.ipynb    # Time series profiling
 │   ├── transaction_analyzer.ipynb  # Transaction analysis examples
-│   ├── ts_diagnostics.ipynb     # Time series diagnostics
 │   └── tsf.ipynb                # Probabilistic forecasting example
 ├── features/                    # Feature-engineering helpers
 │   ├── README.md                # Package documentation
@@ -573,7 +574,9 @@ tinyshift/
 │   ├── __init__.py              # Public forecasting API
 │   ├── dmstl/                   # Multi-seasonal decomposed forecasting
 │   ├── dtl/                     # LOWESS trend/residual forecasting
-│   └── probabilistic/           # Distributions, calibration and decisions
+│   ├── metrics.py               # Forecast evaluation and business metrics
+│   ├── probabilistic/           # Distributions, calibration and decisions
+│   └── stabilization.py         # Forecast interpolation and stabilization
 ├── preprocessing/               # Sklearn-compatible data transforms
 │   ├── README.md                # Package documentation
 │   ├── __init__.py              # Package exports
