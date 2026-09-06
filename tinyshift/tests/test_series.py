@@ -309,14 +309,19 @@ class TestVarianceRatioAnalyzer:
             "unique_id",
             "horizon",
             "variance_ratio",
-            "z_statistic",
-            "p_value",
+            "significant_variance",
         ]
         assert result.groupby("unique_id")["horizon"].apply(list).to_dict() == {
             "a": [2, 4, 8],
             "b": [2, 4, 8],
         }
         assert np.isfinite(result["variance_ratio"]).all()
+        assert set(analyzer.results_["a"][2]) == {
+            "variance_ratio",
+            "z_statistic",
+            "p_value",
+            "significant_variance",
+        }
 
     def test_uses_explicit_horizons_and_sorts_panel(self):
         values = np.cumsum(np.random.RandomState(1).normal(size=40))
@@ -336,7 +341,8 @@ class TestVarianceRatioAnalyzer:
         result = VarianceRatioAnalyzer().fit(frame).summary()
 
         assert result["horizon"].tolist() == [2]
-        assert result[["variance_ratio", "z_statistic", "p_value"]].isna().all().all()
+        assert result["variance_ratio"].isna().all()
+        assert not result["significant_variance"].any()
 
     def test_profile_requires_fit(self):
         with pytest.raises(RuntimeError, match="fitted"):
