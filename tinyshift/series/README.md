@@ -1,21 +1,18 @@
 # Time Series Analysis (`tinyshift.series`)
 
-Tools for analyzing observed time series: decomposition, temporal dependence,
-entropy, intermittency, outliers, seasonality, spectral structure, and combined
-profiling. Forecast evaluation and stabilization belong to
+Tools for analyzing observed time series: temporal dependence, entropy,
+intermittency, seasonality, spectral structure, and combined profiling. Forecast
+decomposition, evaluation, and stabilization belong to
 `tinyshift.forecasting`.
 
 ## Modules
 
-- `decomposition`: LOWESS detrending and MSTL component extraction.
 - `dependence`: permutation auto-mutual information (PAMI).
 - `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
   theoretical predictability limit.
 - `analyzers`: panel-oriented intermittency, PAMI, seasonality, and
   variance-ratio analyzers with a shared `fit()`/`summary()` convention.
-- `outlier`: univariate temporal Hampel and Bollinger detectors.
-- `profiler`: one combined diagnostic summary per panel series.
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
 
 ## Spectral, Entropy, and Dependence Metrics
@@ -80,10 +77,12 @@ mean reversion at logarithmically spaced horizons for each series.
 
 - `variance_ratio`: persistence or mean reversion at one aggregation horizon.
 - `trend_significance`: linear trend R² and slope p-value.
-- `seasonal_strength`: strength calculated from decomposition components.
 - `harmonic_significance`: harmonic-regression F-test for a candidate period.
-- `detrend`: LOWESS trend and residual extraction for panel data.
-- `extract_mstl_components`: conversion of an MSTL result into a tidy frame.
+
+`seasonal_strength`, `detrend`, and `extract_mstl_components` are internal
+forecasting helpers. They live in `tinyshift.forecasting.dmstl.utils` and
+`tinyshift.forecasting.dtl.utils`, respectively, rather than in the public
+`tinyshift.series` API.
 
 ## Combining Analyzer Summaries
 
@@ -107,13 +106,6 @@ The result contains `adi`, `cv2`, `zero_proportion`, `interval_cv`, `classificat
 `limit`, `spectral_concentration`, the linear-trend diagnostics, and candidate
 and significant seasonal periods. Variance-ratio analysis remains available independently
 through `VarianceRatioAnalyzer`.
-
-## Outlier Detection
-
-- `hampel_filter`: robust rolling median/MAD detector.
-- `bollinger_bands`: rolling volatility-envelope detector.
-
-Both return a boolean `pandas.Series` and preserve a supplied Series index.
 
 For forecast metrics, stabilization, or decomposed forecasting wrappers, see
 [`tinyshift.forecasting`](../forecasting/README.md).

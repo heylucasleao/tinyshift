@@ -435,7 +435,12 @@ model = DMSTLWrapper(
     residual_model_callable=residual_model_callable,
     freq="D",
     season_length="auto",
-    seasonal_detection_params={"top_k": 2, "noise_threshold_factor": 1.5},
+    seasonal_detection_params={
+        "top_k": 2,
+        "noise_threshold_factor": 1.5,
+        "significance_level": 0.05,
+        "fallback": 7,
+    },
     nlags="auto",
     pami_params={"max_tau": 48, "m": 3, "delay": 1},
     log_transform=True,

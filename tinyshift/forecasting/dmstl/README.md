@@ -38,8 +38,9 @@ forecast = model.predict(h=14, X_df=future_exog, level=[80, 95])
 ```
 
 `season_length="auto"` may be used to detect periods independently for each
-series. Explicit integers, lists, or mappings by `unique_id` are supported when
-seasonality is known beforehand.
+series. The detector first finds spectral candidates and then keeps only periods
+whose harmonic significance test passes. Explicit integers, lists, or mappings
+by `unique_id` are supported when seasonality is known beforehand.
 
 | Mode | Residual model | Configuration |
 |---|---|---|
@@ -57,6 +58,7 @@ shares only the residual learner.
 | `base.py` | Period resolution, MSTL decomposition, component fitting and recombination |
 | `local_.py` | Per-series residual MLForecast fitting and prediction |
 | `global_.py` | Shared panel residual MLForecast fitting and prediction |
+| `utils.py` | MSTL component extraction and post-decomposition seasonal strength |
 | `__init__.py` | Public export of `DMSTLWrapper` |
 
 `BaseDMSTL` owns the statistical workflow. Concrete strategies implement only
@@ -100,7 +102,10 @@ fit calls without pooling component values or fitted parameters across series.
 `season_length` accepts an integer, a list of integers, a mapping by
 `unique_id`, or `"auto"`. Every period must be an integer greater than one.
 Automatic detection uses `SeasonalityAnalyzer` configured with
-`seasonal_detection_params`.
+`seasonal_detection_params`. The DMSTL workflow consumes the analyzer's
+`significant_periods`, not every spectral `candidate_periods`. If no candidate
+passes the harmonic test, the configured `fallback` is used when available;
+otherwise fitting raises an error.
 
 A series must contain enough history for MSTL. One seasonal period requires at
 least twice that period; multiple periods require at least twice their sum.
@@ -140,6 +145,8 @@ series; global mode sends the complete panel to its shared residual model.
   models, period match.
 - Apply inverse transformations and stabilization only after recombination.
 - Preserve identifier and timestamp columns when joining component forecasts.
+- Keep MSTL-specific helpers in `utils.py`; `seasonal_strength` is a diagnostic
+  of an already-fitted decomposition and is not used to select periods.
 
 Tests live in `tinyshift/tests/test_dmstl.py`:
 
