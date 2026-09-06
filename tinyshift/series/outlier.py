@@ -52,8 +52,9 @@ def hampel_filter(
 
     Returns
     -------
-    outliers : ndarray of shape (n_samples,)
-        Boolean array indicating outliers (True) and inliers (False).
+    pandas.Series
+        Boolean series indicating outliers (``True``) and inliers (``False``),
+        preserving the input index when ``X`` is a pandas Series.
 
     Raises
     ------
@@ -129,8 +130,9 @@ def bollinger_bands(
 
     Returns
     -------
-    outliers : ndarray, shape (n_samples,)
-        Boolean array indicating outliers (True) and inliers (False).
+    pandas.Series
+        Boolean series indicating outliers (``True``) and inliers (``False``),
+        preserving the input index when ``X`` is a pandas Series.
 
     Notes
     -----
