@@ -36,7 +36,7 @@ from tinyshift.series.entropy import (
 from tinyshift.series.intermittency import IntermittencyAnalyzer as CanonicalAnalyzer
 from tinyshift.series.outlier import bollinger_bands, hampel_filter
 from tinyshift.series.profiler import SeriesProfiler
-from tinyshift.series.spectral import foreca
+from tinyshift.series.spectral import _prepare_spectrum, foreca
 
 
 def test_economic_loss_aggregates_understock_and_overstock_by_id():
@@ -82,6 +82,14 @@ def test_economic_loss_accepts_scalar_costs():
 
     assert result.loc[0, "model_a"] == pytest.approx(8.0)
     assert result.loc[0, "model_b"] == pytest.approx(5.0)
+
+
+def test_constant_signal_has_exactly_zero_detrended_spectral_power():
+    _, power, _ = _prepare_spectrum(
+        np.ones(32), detrend="linear", method="fft"
+    )
+
+    assert np.count_nonzero(power) == 0
 
 
 class TestDiagnostic:

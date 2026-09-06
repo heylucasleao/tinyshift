@@ -38,6 +38,15 @@ def _prepare_signal(
             f"Input series must have at least 4 observations, got {len(signal)}."
         )
 
+    if detrend not in ("linear", "constant", "none", None):
+        raise ValueError("'detrend' must be one of {'linear', 'constant', 'none'}.")
+
+    if detrend in ("linear", "constant"):
+        scale = max(1.0, float(np.max(np.abs(signal))))
+        tolerance = np.finfo(np.float64).eps * scale * len(signal)
+        if np.ptp(signal) <= tolerance:
+            return np.zeros_like(signal)
+
     if detrend == "linear":
         x = np.arange(len(signal), dtype=np.float64)
         coefficients = np.polyfit(x, signal, 1)
@@ -48,9 +57,6 @@ def _prepare_signal(
 
     elif detrend in ("none", None):
         pass
-
-    else:
-        raise ValueError("'detrend' must be one of {'linear', 'constant', 'none'}.")
 
     return signal
 
