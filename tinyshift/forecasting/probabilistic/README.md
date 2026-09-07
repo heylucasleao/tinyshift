@@ -36,7 +36,7 @@ point_forecaster = MLForecast(
 
 model = TwoStageForecasterWrapper(point_forecaster).fit(
     train_df,
-    h=14,
+            horizon=14,
     n_windows=5,
     step_size=14,
 )
