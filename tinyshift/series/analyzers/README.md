@@ -48,16 +48,16 @@ from tinyshift.series import IntermittencyAnalyzer
 summary = IntermittencyAnalyzer().fit(df).summary()
 ```
 
-### `PredictabilityAnalyzer`
+### `RegularityAnalyzer`
 
 Reports complementary structure measures: ForeCA forecastability, the ordinal
-predictability limit, and normalized spectral concentration. These describe
+predictability upper bound, and normalized spectral concentration. These describe
 structure in the observed data; they are not out-of-sample forecast scores.
 
 ```python
-from tinyshift.series import PredictabilityAnalyzer
+from tinyshift.series import RegularityAnalyzer
 
-summary = PredictabilityAnalyzer(detrend="linear").fit(df).summary()
+summary = RegularityAnalyzer(detrend="linear").fit(df).summary()
 ```
 
 ### `PAMIAnalyzer`
@@ -118,14 +118,14 @@ may return multiple rows per `unique_id`.
 ```python
 from tinyshift.series import (
     IntermittencyAnalyzer,
-    PredictabilityAnalyzer,
+    RegularityAnalyzer,
     SeasonalityAnalyzer,
     TrendAnalyzer,
 )
 
 analyzers = [
     IntermittencyAnalyzer(),
-    PredictabilityAnalyzer(),
+    RegularityAnalyzer(),
     SeasonalityAnalyzer(top_k=2),
     TrendAnalyzer(),
 ]

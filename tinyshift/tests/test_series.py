@@ -19,7 +19,7 @@ from tinyshift.forecasting.metrics import (
 from tinyshift.forecasting.stabilization import hfi, hpi, vi
 from tinyshift.series import (
     IntermittencyAnalyzer,
-    PredictabilityAnalyzer,
+    RegularityAnalyzer,
     SeasonalityAnalyzer,
     TrendAnalyzer,
     VarianceRatioAnalyzer,
@@ -510,8 +510,8 @@ class TestIntermittencyAnalyzer:
             IntermittencyAnalyzer(cv2_threshold=threshold)
 
 
-class TestPredictabilityAndTrendAnalyzers:
-    def test_predictability_summary(self):
+class TestRegularityAndTrendAnalyzers:
+    def test_regularity_summary(self):
         steps = np.arange(32)
         frame = pd.DataFrame(
             {
@@ -521,7 +521,7 @@ class TestPredictabilityAndTrendAnalyzers:
             }
         )
 
-        result = PredictabilityAnalyzer().fit(frame).summary()
+        result = RegularityAnalyzer().fit(frame).summary()
 
         assert result.columns.tolist() == [
             "unique_id",
@@ -563,7 +563,7 @@ class TestAnalyzerComposition:
 
         analyzers = [
             IntermittencyAnalyzer(),
-            PredictabilityAnalyzer(),
+            RegularityAnalyzer(),
             TrendAnalyzer(),
             SeasonalityAnalyzer(top_k=1),
         ]
@@ -708,7 +708,7 @@ class TestForecastability:
     def test_analyzers_expose_summary_without_profile(self):
         for analyzer in (
             IntermittencyAnalyzer(),
-            PredictabilityAnalyzer(),
+            RegularityAnalyzer(),
             SeasonalityAnalyzer(),
             TrendAnalyzer(),
             VarianceRatioAnalyzer(),
