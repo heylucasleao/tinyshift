@@ -9,6 +9,7 @@ import pytest
 from sklearn.base import clone
 from sklearn.exceptions import NotFittedError
 from sklearn.utils.validation import check_is_fitted
+
 from tinyshift.preprocessing.multicollinearity import filter_features_by_vif
 from tinyshift.preprocessing.residualizer import FeatureResidualizer
 from tinyshift.preprocessing.scaler import RobustGaussianScaler
@@ -49,6 +50,15 @@ class TestMulticollinearity:
 
         assert not mask[0]
 
+    def test_filter_features_by_vif_rejects_invalid_verbose(self):
+        with pytest.raises(TypeError, match="verbose"):
+            filter_features_by_vif(np.arange(12).reshape(4, 3), verbose=1)
+
+    @pytest.mark.parametrize("shape", [(1, 2), (2, 1)])
+    def test_filter_features_by_vif_requires_two_samples_and_features(self, shape):
+        with pytest.raises(ValueError, match="at least two"):
+            filter_features_by_vif(np.ones(shape), n_jobs=1)
+
 
 class TestResidualizer:
     def test_feature_residualizer_fit_transform(self):
@@ -75,10 +85,40 @@ class TestResidualizer:
         cloned = clone(transformer)
         assert cloned.get_params() == {"corr_type": "pos", "corrcoef": 0.7}
 
+    def test_feature_residualizer_exposes_feature_names(self):
+        transformer = FeatureResidualizer().fit(
+            pd.DataFrame({"a": np.arange(5), "b": np.arange(5)})
+        )
+
+        np.testing.assert_array_equal(transformer.get_feature_names_out(), ["a", "b"])
+
+    def test_feature_residualizer_requires_two_samples(self):
+        with pytest.raises(ValueError, match="minimum of 2"):
+            FeatureResidualizer().fit([[1.0, 2.0]])
+
     @pytest.mark.parametrize("corrcoef", [0.0, -0.1, 1.1, np.nan, True, "bad"])
     def test_feature_residualizer_rejects_invalid_corrcoef(self, corrcoef):
         with pytest.raises(ValueError, match="corrcoef"):
             FeatureResidualizer(corrcoef=corrcoef).fit(np.arange(12).reshape(6, 2))
+
+    def test_feature_residualizer_rejects_invalid_corr_type(self):
+        with pytest.raises(ValueError, match="corr_type"):
+            FeatureResidualizer(corr_type="negative").fit(np.arange(12).reshape(6, 2))
+
+    def test_feature_residualizer_pos_ignores_negative_correlation(self):
+        X = np.column_stack((np.arange(10.0), -np.arange(10.0)))
+
+        positive = FeatureResidualizer(corrcoef=0.8, corr_type="pos").fit(X)
+        absolute = FeatureResidualizer(corrcoef=0.8, corr_type="abs").fit(X)
+
+        assert positive.models_ == {}
+        assert len(absolute.models_) == 1
+
+    def test_feature_residualizer_validates_feature_count(self):
+        transformer = FeatureResidualizer().fit(np.arange(20).reshape(10, 2))
+
+        with pytest.raises(ValueError, match="Expected 2 features"):
+            transformer.transform(np.arange(30).reshape(10, 3))
 
     def test_feature_residualizer_validates_dataframe_column_order(self):
         X = pd.DataFrame({"a": np.arange(10), "b": np.arange(10) + 0.1})
@@ -123,11 +163,56 @@ class TestScaler:
             "winsorize_method": "mad",
         }
 
+    def test_scaler_exposes_feature_names(self):
+        scaler = RobustGaussianScaler().fit(
+            pd.DataFrame({"a": np.arange(1, 6), "b": np.arange(6, 11)})
+        )
+
+        np.testing.assert_array_equal(scaler.get_feature_names_out(), ["a", "b"])
+
     def test_scaler_rejects_non_positive_box_cox_input(self):
         with pytest.raises(ValueError, match="strictly positive"):
             RobustGaussianScaler(power_method="box-cox").fit(
                 np.array([[0.0], [1.0], [2.0]])
             )
+
+    @pytest.mark.parametrize("power_method", ["invalid", "boxcox"])
+    def test_scaler_rejects_invalid_power_method(self, power_method):
+        with pytest.raises(ValueError, match="power_method"):
+            RobustGaussianScaler(power_method=power_method).fit(
+                np.arange(1.0, 7.0).reshape(3, 2)
+            )
+
+    @pytest.mark.parametrize(
+        "winsorize_method",
+        ["stddev", "mad", "auto", ("quantile", 0.1, 0.9), (None, None)],
+    )
+    def test_scaler_supports_interval_configurations(self, winsorize_method):
+        X = np.arange(1.0, 21.0).reshape(10, 2)
+
+        result = RobustGaussianScaler(winsorize_method=winsorize_method).fit_transform(
+            X
+        )
+
+        assert result.shape == X.shape
+        assert np.isfinite(result).all()
+
+    def test_scaler_supports_custom_interval_callable(self):
+        X = np.arange(1.0, 11.0)
+        scaler = RobustGaussianScaler(
+            winsorize_method=lambda values: (np.min(values), np.max(values))
+        )
+
+        result = scaler.fit_transform(X)
+
+        assert result.shape == (10, 1)
+        assert np.isfinite(result).all()
+
+    def test_scaler_validates_feature_count(self):
+        scaler = RobustGaussianScaler().fit(np.arange(20.0).reshape(10, 2))
+
+        with pytest.raises(ValueError, match="Expected 2 features"):
+            scaler.transform(np.arange(30.0).reshape(10, 3))
 
     def test_scaler_validates_dataframe_column_order(self):
         X = pd.DataFrame({"a": np.arange(1, 6), "b": np.arange(6, 11)})
