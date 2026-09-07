@@ -3,7 +3,7 @@
 # Licensed under the MIT License
 
 
-"""Complementary predictability diagnostics for panel time series."""
+"""Complementary regularity diagnostics for panel time series."""
 
 import numpy as np
 import pandas as pd
@@ -13,12 +13,12 @@ from ..spectral import foreca, spectral_concentration
 from .base import BaseSeriesAnalyzer
 
 
-class PredictabilityAnalyzer(BaseSeriesAnalyzer):
-    """Measure complementary spectral and ordinal predictability structure.
+class RegularityAnalyzer(BaseSeriesAnalyzer):
+    """Measure complementary spectral and ordinal regularity structure.
 
     The analyzer evaluates each panel series independently using three bounded
-    diagnostics: ForeCA forecastability, an ordinal-pattern predictability
-    limit, and normalized spectral concentration. These describe structure in
+    diagnostics: ForeCA forecastability, an ordinal predictability upper
+    bound, and normalized spectral concentration. These describe structure in
     the observed signal; they do not estimate out-of-sample forecast accuracy.
 
     Parameters
@@ -44,7 +44,7 @@ class PredictabilityAnalyzer(BaseSeriesAnalyzer):
 
     Examples
     --------
-    >>> analyzer = PredictabilityAnalyzer(detrend="linear")
+    >>> analyzer = RegularityAnalyzer(detrend="linear")
     >>> analyzer.fit(df).summary()
       unique_id  foreca  limit  spectral_concentration
     0         A     ...    ...                     ...
@@ -78,7 +78,7 @@ class PredictabilityAnalyzer(BaseSeriesAnalyzer):
 
     def __repr__(self) -> str:
         return (
-            "PredictabilityAnalyzer("
+            "RegularityAnalyzer("
             f"detrend={self.detrend!r}, "
             f"permutation_m={self.permutation_m}, "
             f"permutation_delay={self.permutation_delay}"
@@ -103,7 +103,7 @@ class PredictabilityAnalyzer(BaseSeriesAnalyzer):
         }
 
     def summary(self) -> pd.DataFrame:
-        """Return predictability diagnostics with one row per series.
+        """Return regularity diagnostics with one row per series.
 
         Returns
         -------

@@ -390,7 +390,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         PanelPredictiveForecast or DiscretePanelPredictiveForecast
             One self-contained distributional forecast per series-step pair.
             Call :meth:`to_frame` for point forecasts, or call :meth:`cdf`,
-            :meth:`ppf`, and :meth:`interval` for probabilistic results. A
+            :meth:`sf`, :meth:`ppf`, and :meth:`interval` for probabilistic results. A
             discrete family such as :class:`NegativeBinomialFamily` returns a
             :class:`DiscretePanelPredictiveForecast`, which also exposes
             :meth:`pmf`. Every method returns a DataFrame on the same row grid.

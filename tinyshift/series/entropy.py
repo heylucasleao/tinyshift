@@ -246,12 +246,12 @@ def theoretical_limit(
     delay: int = 1,
 ) -> float:
     """
-    Calculate the theoretical upper limit of predictability based on ordinal patterns.
+    Calculate the ordinal predictability upper bound.
 
-    This function computes the maximum achievable predictability implied by the
+    This function computes an upper bound on predictability implied by the
     ordinal structure of the series. It is defined as one minus the normalized
     permutation entropy, so larger values indicate a more regular and predictable
-    sequence.
+    ordinal sequence.
 
     Parameters
     ----------
@@ -265,13 +265,14 @@ def theoretical_limit(
     Returns
     -------
     float
-        The theoretical predictability limit (Πmax) for the time series, ranging from 0 to 1:
+        The ordinal predictability upper bound (Πmax), ranging from 0 to 1:
         - 0: Completely random ordinal patterns (maximum complexity)
         - 1: Perfectly regular ordinal patterns (minimum complexity)
 
     Notes
     -----
-    - This is a **theoretical upper bound** based solely on ordinal structure of the series
+    - This is an **ordinal predictability upper bound** based solely on the
+      ordinal structure of the series
     - The measure ignores magnitudes, focusing only on directional patterns
     - Higher values indicate more regular/predictable ordinal behavior
     - Serves as a benchmark for comparing actual forecasting performance

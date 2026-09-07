@@ -221,7 +221,7 @@ TinyShift provides comprehensive time series analysis capabilities:
 from tinyshift.plot import MSTLDiagnostics
 from tinyshift.series import (
     IntermittencyAnalyzer,
-    PredictabilityAnalyzer,
+    RegularityAnalyzer,
     SeasonalityAnalyzer,
     TrendAnalyzer,
     trend_significance, 
@@ -253,9 +253,9 @@ print(f"Sample Entropy: {complexity}")
 perm_entropy = permutation_entropy(time_series, m=3, delay=1, normalize=True)
 print(f"Permutation Entropy: {perm_entropy}")
 
-# Calculate theoretical predictability limit
+# Calculate the ordinal predictability upper bound
 theo_limit = theoretical_limit(time_series, m=3, delay=1)
-print(f"Theoretical Limit (Πmax): {theo_limit}")
+print(f"Ordinal Predictability Upper Bound (Πmax): {theo_limit}")
 
 # Inspect persistence at one horizon
 ratio, z_statistic, p_value = variance_ratio(time_series, horizon=7)
@@ -266,7 +266,7 @@ vr_summary = VarianceRatioAnalyzer().fit(df).summary()
 # Combined diagnostics for a Nixtla-style panel
 analyzers = [
     IntermittencyAnalyzer(),
-    PredictabilityAnalyzer(),
+    RegularityAnalyzer(),
     TrendAnalyzer(),
     SeasonalityAnalyzer(top_k=2),
 ]
@@ -505,7 +505,9 @@ marginal_value = NewsvendorOptimizer.marginal_benefit(
     max_k=10,
 )
 
+# Returns P(Y<=5); PPF columns use names such as Q(0.5)
 probability_below_five = forecast.cdf(5)
+stockout_risk_above_five = forecast.sf(5)  # P(Y>5)
 median = forecast.ppf(0.50)
 
 # Cost columns may be supplied without exogenous forecast features.
@@ -518,7 +520,7 @@ stock_plan = NewsvendorOptimizer.optimize(
     cost_df=costs,
 )
 
-# Continuous alternative; cdf/ppf/interval share the same interface.
+# Continuous alternative; cdf/sf/ppf/interval share the same interface.
 from tinyshift.forecasting import GammaFamily
 
 continuous_model = TwoStageForecasterWrapper(fcst, distribution=GammaFamily())

@@ -759,7 +759,11 @@ def test_first_stage_evaluator_rejects_non_positive_mean():
 
 def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
     df = pd.DataFrame(
-        {"y": [1.0, 2.0, np.nan], "q_5": [0.0, 0.0, 0.0], "q_95": [1.5, 1.5, 1.5]}
+        {
+            "y": [1.0, 2.0, np.nan],
+            "Q(0.05)": [0.0, 0.0, 0.0],
+            "Q(0.95)": [1.5, 1.5, 1.5],
+        }
     )
     result = TwoStageForecasterEvaluator.evaluate(df, quantiles=[0.05, 0.95])
 
@@ -770,7 +774,7 @@ def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
 
 
 def test_tsf_evaluator_rejects_invalid_quantile():
-    df = pd.DataFrame({"y": [1.0], "q_100": [1.0]})
+    df = pd.DataFrame({"y": [1.0], "Q(1)": [1.0]})
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
         TwoStageForecasterEvaluator.evaluate(df, quantiles=[1.0])
 
@@ -870,11 +874,13 @@ def test_predict_distribution_returns_self_contained_panel_forecast(sample_train
     forecast = wrapper.predict_distribution(h=2)
 
     assert len(forecast) == len(forecast.to_frame()) == 4
-    assert {"lambda_t-q-10", "lambda_t-q-50", "lambda_t-q-90"} <= set(
+    assert {"Q(0.1)", "Q(0.5)", "Q(0.9)"} <= set(
         forecast.ppf([0.1, 0.5, 0.9])
     )
-    assert {"lambda_t-lo-90", "lambda_t-hi-90"} <= set(forecast.interval(0.9))
-    assert {"lambda_t-pmf-0", "lambda_t-pmf-1"} <= set(forecast.pmf([0, 1]))
+    assert {"Q(0.05)", "Q(0.95)"} <= set(forecast.interval(0.9))
+    assert {"P(Y>0)", "P(Y>1)"} <= set(forecast.sf([0, 1]))
+    assert {"P(Y=0)", "P(Y=1)"} <= set(forecast.pmf([0, 1]))
+    assert "P(Y>1)" not in forecast.pmf([0, 1])
 
     with pytest.raises(TypeError, match="cannot unpack"):
         _frame, _distribution = forecast
@@ -889,7 +895,26 @@ def test_continuous_panel_forecast_does_not_expose_pmf(sample_continuous_data):
     forecast = wrapper.predict_distribution(h=1)
 
     assert not hasattr(forecast, "pmf")
-    assert "lambda_t-cdf-1" in forecast.cdf(1.0)
+    assert "P(Y<=1)" in forecast.cdf(1.0)
+    assert "P(Y>1)" in forecast.sf(1.0)
+    np.testing.assert_allclose(
+        forecast.sf(1.0)["P(Y>1)"], 1.0 - forecast.cdf(1.0)["P(Y<=1)"]
+    )
+
+
+def test_panel_pmf_and_sf_have_separate_outputs(sample_train_data):
+    wrapper = TwoStageForecasterWrapper(
+        MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+    ).fit(sample_train_data)
+    forecast = wrapper.predict_distribution(h=2)
+
+    result = forecast.pmf([2, 5, 3])
+
+    assert {"P(Y=2)", "P(Y=5)", "P(Y=3)"} <= set(result)
+    assert "P(Y>5)" not in result
+    np.testing.assert_allclose(
+        forecast.sf(5)["P(Y>5)"], forecast.distribution.sf(5)
+    )
 
 
 @pytest.mark.parametrize("quantile", [-0.01, 1.01])
@@ -1038,7 +1063,7 @@ def test_calibration_table_handles_constant_predictions():
 
 def test_two_stage_evaluator_requires_target_and_skips_missing_quantiles():
     with pytest.raises(KeyError, match="Target column"):
-        TwoStageForecasterEvaluator.evaluate(pd.DataFrame({"q_50": [1.0]}))
+        TwoStageForecasterEvaluator.evaluate(pd.DataFrame({"Q(0.5)": [1.0]}))
 
     result = TwoStageForecasterEvaluator.evaluate(
         pd.DataFrame({"y": [1.0]}), quantiles=(0.5, 0.95)
@@ -1225,7 +1250,9 @@ def test_distributions_remain_finite_at_extreme_parameters(means, dispersions):
 
 def test_two_stage_evaluator_handles_all_nan_pairs():
     result = TwoStageForecasterEvaluator.evaluate(
-        pd.DataFrame({"y": [np.nan], "q_5": [np.nan], "q_95": [np.nan]}),
+        pd.DataFrame(
+            {"y": [np.nan], "Q(0.05)": [np.nan], "Q(0.95)": [np.nan]}
+        ),
         quantiles=(0.05, 0.95),
     )
 
