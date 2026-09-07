@@ -4,14 +4,15 @@
 
 
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, OneToOneFeatureMixin, TransformerMixin
 from sklearn.preprocessing import PowerTransformer, StandardScaler
 from sklearn.utils.validation import check_array, check_is_fitted
 
 from tinyshift.stats import StatisticalInterval
+from tinyshift.stats.statistical_interval import IntervalMethod
 
 
-class RobustGaussianScaler(BaseEstimator, TransformerMixin):
+class RobustGaussianScaler(OneToOneFeatureMixin, TransformerMixin, BaseEstimator):
     """A robust feature scaler that combines winsorization, power transformation and standardization.
 
     This transformer applies a three-step normalization process designed to handle outliers and
@@ -25,7 +26,7 @@ class RobustGaussianScaler(BaseEstimator, TransformerMixin):
 
     Parameters
     ----------
-    winsorize_method : str, default="iqr"
+    winsorize_method : str, callable or tuple, default="iqr"
         Interval method passed to ``StatisticalInterval.compute_interval``.
     power_method : {"yeo-johnson", "box-cox"}, default="yeo-johnson"
         Power transformation. Box-Cox requires strictly positive inputs.
@@ -34,8 +35,8 @@ class RobustGaussianScaler(BaseEstimator, TransformerMixin):
     ----------
     power_transformer_ : PowerTransformer
         The fitted PowerTransformer instance.
-    scaler_ : StandardScaler or None
-        The fitted StandardScaler instance if standardize=True, None otherwise.
+    scaler_ : StandardScaler
+        The fitted StandardScaler instance.
     lower_bounds_ : ndarray of shape (n_features,)
         The lower quantile values used for winsorization for each feature.
     upper_bounds_ : ndarray of shape (n_features,)
@@ -51,7 +52,7 @@ class RobustGaussianScaler(BaseEstimator, TransformerMixin):
 
     def __init__(
         self,
-        winsorize_method: str = "iqr",
+        winsorize_method: IntervalMethod = "iqr",
         power_method: str = "yeo-johnson",
     ):
         self.winsorize_method = winsorize_method

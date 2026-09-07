@@ -61,6 +61,12 @@ def filter_features_by_vif(
     >>> X, _ = make_regression(n_samples=100, n_features=10, n_informative=5)
     >>> mask = filter_features_by_vif(X, threshold=5.0)
     >>> filtered_X = X[:, mask]
+
+    Notes
+    -----
+    When the number of active features is greater than or equal to the number
+    of samples, auxiliary regressions may be perfectly fitted. Their VIF is
+    treated as infinite and features are removed until the system is estimable.
     """
 
     if (
@@ -71,7 +77,7 @@ def filter_features_by_vif(
     ):
         raise ValueError("threshold must be a finite numeric value >= 1.")
     if not isinstance(verbose, bool):
-        raise TypeError("Verbose must be a boolean value.")
+        raise TypeError("verbose must be a boolean value.")
     if isinstance(n_jobs, (bool, np.bool_)) or not isinstance(n_jobs, Integral):
         raise TypeError("n_jobs must be an integer other than zero.")
     if n_jobs == 0:
