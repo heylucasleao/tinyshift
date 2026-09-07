@@ -204,7 +204,7 @@ score_distribution(clf, X_test, nbins=20)
 confusion_matrix(clf, X_test, y_test, percentage_by_class=True)
 
 # Conformal prediction analysis
-efficiency_curve(conformal_classifier, X_test)
+efficiency_curve(conformal_classifier, X_test, y_test)
 
 # Production deployment confidence analysis
 beta_confidence_analysis(
@@ -352,8 +352,6 @@ These responsibilities are exposed through focused packages:
 - `DTLWrapper` — decomposed LOWESS trend plus ML residual forecasting for non-seasonal data
 - `DMSTLWrapper` — decomposed MSTL forecasting wrapper for panel/multi-seasonal data
 - `TwoStageForecasterWrapper` — configurable Negative Binomial or Gamma predictive distributions and inventory optimization on top of `MLForecast`
-- `relative_strength_index`, `standardize_returns`, `fourier_seasonality`, `estimate_history_length` — feature engineering helpers for time-series models
-
 Use `tinyshift.preprocessing` for data transforms and `tinyshift.forecasting` for estimators and predictive
 distributions.
 
@@ -559,85 +557,23 @@ must be strictly positive. Install the `series` extra to use this wrapper:
 
 ## 📁 Project Structure
 
-```
-tinyshift/
-├── association_mining/          # Market basket analysis tools
-│   ├── README.md                # Module documentation
-│   ├── __init__.py              # Package exports
-│   ├── analyzer.py              # Transaction pattern analysis
-│   └── encoder.py               # Data encoder
-├── drift/                       # Data drift detection
-│   ├── README.md                # Module documentation
-│   ├── __init__.py              # Package exports
-│   ├── base.py                  # Base drift detection classes
-│   ├── categorical.py           # CatDrift for categorical features
-│   └── continuous.py            # ConDrift for numerical features
-├── examples/                    # Jupyter notebook examples
-│   ├── dmstl.ipynb              # Multi-seasonal forecasting example
-│   ├── drift.ipynb              # Drift detection examples
-│   ├── dtl.ipynb                # Trend/residual forecasting example
-│   ├── outlier.ipynb            # Outlier detection demos
-│   ├── power_analysis.ipynb     # Statistical power analysis
-│   ├── diagnostic.ipynb         # Time series diagnostics and profiling
-│   ├── transaction_analyzer.ipynb  # Transaction analysis examples
-│   └── tsf.ipynb                # Probabilistic forecasting example
-├── features/                    # Feature-engineering helpers
-│   ├── README.md                # Package documentation
-│   ├── __init__.py              # Package exports
-│   └── time_series.py           # Time-series feature functions
-├── forecasting/                 # Forecasting estimators and distributions
-│   ├── README.md                # Package documentation
-│   ├── __init__.py              # Public forecasting API
-│   ├── dmstl/                   # Multi-seasonal decomposed forecasting
-│   ├── dtl/                     # LOWESS trend/residual forecasting
-│   ├── metrics.py               # Forecast evaluation and business metrics
-│   ├── probabilistic/           # Distributions, calibration and decisions
-│   └── stabilization.py         # Forecast interpolation and stabilization
-├── preprocessing/               # Sklearn-compatible data transforms
-│   ├── README.md                # Package documentation
-│   ├── __init__.py              # Package exports
-│   ├── multicollinearity.py     # VIF-based feature filtering
-│   ├── residualizer.py          # Correlated-feature residualization
-│   └── scaler.py                # Robust Gaussian scaling
-├── outlier/                     # Outlier detection algorithms
-│   ├── README.md                # Module documentation
-│   ├── __init__.py              # Package exports
-│   ├── base.py                  # Base outlier detection classes
-│   ├── hbos.py                  # Histogram-Based Outlier Score
-│   ├── pca.py                   # PCA-based outlier detection
-│   └── spad.py                  # Simple Probabilistic Anomaly Detector
-├── plot/                        # Visualization capabilities
-│   ├── README.md                # Module documentation
-│   ├── __init__.py              # Package exports
-│   ├── calibration.py           # Binary classification model evaluation
-│   ├── correlation.py           # Correlation analysis plots
-│   ├── diagnostic.py            # Time series diagnostics plots
-│   └── power.py                 # Power analysis and related plots
-├── series/                      # Time series analysis tools
-│   ├── README.md                # Module documentation
-│   ├── __init__.py              # Package exports
-│   ├── decomposition.py         # Trend and seasonal decomposition helpers
-│   ├── dependence.py            # Temporal dependence and lag selection
-│   ├── diagnostic.py            # Statistical time series diagnostics
-│   ├── entropy.py               # Entropy and ordinal complexity metrics
-│   ├── intermittency.py         # Intermittent-demand analysis
-│   ├── outlier.py               # Time series outlier detection
-│   ├── seasonality.py           # Seasonal-period detection
-│   └── spectral.py              # Spectral analysis and forecastability metrics
-└── stats/                       # Statistical utilities
-    ├── __init__.py              # Package exports
-    ├── bootstrap_bca.py         # Bootstrap confidence intervals
-    ├── statistical_interval.py  # Statistical interval estimation
-    └── utils.py                 # General statistical utilities
-```
+The repository is organized by domain. Each package with dedicated documentation
+links to it below; public objects are exported from the package's `__init__.py`.
 
-### Development Setup
+| Package | Responsibility | Documentation |
+|---|---|---|
+| `association_mining` | Transaction encoding and market-basket analysis | [README](tinyshift/association_mining/README.md) |
+| `drift` | Categorical and continuous data-drift detection | [README](tinyshift/drift/README.md) |
+| `forecasting` | DTL/DMSTL estimators, probabilistic forecasts, metrics, and stabilization | [README](tinyshift/forecasting/README.md) |
+| `outlier` | HBOS, PCA reconstruction error, and SPAD detectors | [README](tinyshift/outlier/README.md) |
+| `plot` | Calibration, correlation, power, and time-series diagnostic plots | [README](tinyshift/plot/README.md) |
+| `preprocessing` | Feature residualization, VIF filtering, and robust scaling | [README](tinyshift/preprocessing/README.md) |
+| `series` | Time-series statistics and panel-oriented analyzers | [README](tinyshift/series/README.md) |
+| `stats` | Bootstrap intervals and general statistical utilities | — |
 
-```bash
-git clone https://github.com/HeyLucasLeao/tinyshift.git
-cd tinyshift
-pip install -e ".[all]"
-```
+Runnable notebooks and fitted demonstration artifacts are kept in
+[`tinyshift/examples`](tinyshift/examples), while the test suite lives in
+[`tinyshift/tests`](tinyshift/tests).
 
 ## 📋 Requirements
 
