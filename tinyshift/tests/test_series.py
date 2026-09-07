@@ -601,11 +601,13 @@ class TestForecastability:
         assert 0.0 <= omega <= 1.0 + 1e-12
 
     def test_foreca_handles_constant_series(self):
-        assert foreca(np.ones(8)) == pytest.approx(1.0)
+        assert np.isnan(foreca(np.ones(8)))
 
-    def test_foreca_rejects_non_finite_values(self):
-        with pytest.raises(ValueError, match="finite"):
-            foreca([1.0, np.nan, 2.0])
+    def test_foreca_ignores_non_finite_values(self):
+        finite = np.sin(2 * np.pi * np.arange(8) / 4)
+        contaminated = np.insert(finite, [2, 6], [np.nan, np.inf])
+
+        assert foreca(contaminated) == pytest.approx(foreca(finite))
 
     def test_sample_entropy(self):
         x = np.array([0.0, 0.5, 1.0, 0.0, 0.5, 1.0], dtype=float)
