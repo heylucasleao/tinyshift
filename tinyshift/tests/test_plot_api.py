@@ -40,7 +40,7 @@ def test_plot_functions_show_when_renderer_is_provided(monkeypatch):
     assert result == (("png",), {})
 
 
-def test_mstl_diagnostics_class_reuses_fitted_components():
+def test_mstl_class_reuses_fitted_components():
     series = np.sin(np.arange(80) / 3)
     diagnostics = MSTLDiagnostics(periods=7, nlags=10).fit(series)
 
