@@ -1,3 +1,8 @@
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
+
 """Shared lifecycle for panel-oriented time-series analyzers."""
 
 from abc import ABC, abstractmethod
@@ -101,9 +106,7 @@ class BaseSeriesAnalyzer(ABC):
         ordered = df.sort_values([id_col, time_col])
         self.results_ = {
             unique_id: self._fit_single(group[target_col])
-            for unique_id, group in ordered.groupby(
-                id_col, sort=False, observed=True
-            )
+            for unique_id, group in ordered.groupby(id_col, sort=False, observed=True)
         }
         return self
 

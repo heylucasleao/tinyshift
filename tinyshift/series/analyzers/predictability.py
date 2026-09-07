@@ -1,3 +1,8 @@
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
+
 """Complementary predictability diagnostics for panel time series."""
 
 import numpy as np
@@ -56,9 +61,19 @@ class PredictabilityAnalyzer(BaseSeriesAnalyzer):
         self.permutation_delay = permutation_delay
         if detrend not in {"linear", "constant", "none"}:
             raise ValueError("'detrend' must be one of {'linear', 'constant', 'none'}.")
-        if isinstance(permutation_m, bool) or not isinstance(permutation_m, int) or permutation_m < 2:
-            raise ValueError("'permutation_m' must be an integer greater than or equal to 2.")
-        if isinstance(permutation_delay, bool) or not isinstance(permutation_delay, int) or permutation_delay < 1:
+        if (
+            isinstance(permutation_m, bool)
+            or not isinstance(permutation_m, int)
+            or permutation_m < 2
+        ):
+            raise ValueError(
+                "'permutation_m' must be an integer greater than or equal to 2."
+            )
+        if (
+            isinstance(permutation_delay, bool)
+            or not isinstance(permutation_delay, int)
+            or permutation_delay < 1
+        ):
             raise ValueError("'permutation_delay' must be a positive integer.")
 
     def __repr__(self) -> str:
@@ -101,7 +116,9 @@ class PredictabilityAnalyzer(BaseSeriesAnalyzer):
             If :meth:`fit` has not been called.
         """
         if not hasattr(self, "results_"):
-            raise RuntimeError("The analyzer must be fitted before calling `summary()`.")
+            raise RuntimeError(
+                "The analyzer must be fitted before calling `summary()`."
+            )
         columns = ["foreca", "limit", "spectral_concentration"]
         rows = [
             {self.id_col_: unique_id, **result}

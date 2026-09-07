@@ -1,3 +1,8 @@
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
+
 """Linear-trend analysis for panel time series."""
 
 from numbers import Real
@@ -85,7 +90,9 @@ class TrendAnalyzer(BaseSeriesAnalyzer):
             If :meth:`fit` has not been called.
         """
         if not hasattr(self, "results_"):
-            raise RuntimeError("The analyzer must be fitted before calling `summary()`.")
+            raise RuntimeError(
+                "The analyzer must be fitted before calling `summary()`."
+            )
         columns = ["trend_slope", "trend_r2", "trend_pvalue", "significant_trend"]
         rows = [
             {self.id_col_: unique_id, **result}
