@@ -1,0 +1,335 @@
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
+from numbers import Integral
+
+import numpy as np
+import pandas as pd
+
+from tinyshift.forecasting.dmstl.utils import extract_mstl_components, seasonal_strength
+from tinyshift.series import harmonic_significance, trend_significance
+from tinyshift.utils.imports import requires_extra
+
+SeriesLike = np.ndarray | list[float] | pd.Series
+
+
+class MSTLDiagnostics:
+    """
+    Fit and inspect an MSTL decomposition for one time series.
+
+    The decomposition is computed once by :meth:`fit` and retained for
+    visualization and secondary diagnostics. The fitted components can be
+    inspected directly or passed to stationarity and residual analyses without
+    fitting MSTL again.
+
+    Parameters
+    ----------
+    periods : int or list of int
+        Seasonal period or periods used by MSTL. For example, ``7`` represents
+        weekly seasonality and ``[7, 365]`` represents weekly and yearly
+        seasonality for daily observations.
+    nlags : int, default=10
+        Maximum number of lags used by the decomposition-level Ljung-Box test.
+        The effective value is limited to one fifth of the fitted series.
+        Must be a positive integer.
+
+    Attributes
+    ----------
+    periods_ : list of int
+        Normalized seasonal periods created by :meth:`fit`.
+    observed_ : pandas.Series
+        Numeric input series used for fitting, preserving the original index
+        when the input is a pandas Series.
+    model_ : statsmodels.tsa.seasonal.MSTL
+        Fitted MSTL model object.
+    result_ : statsmodels.tsa.seasonal.DecomposeResult
+        Result returned by the MSTL fit.
+    components_ : pandas.DataFrame
+        Observed data, trend, one seasonal column per period, and residuals.
+    statistics_ : pandas.DataFrame
+        Trend, seasonal-strength, seasonal-significance, and residual
+        Ljung-Box statistics indexed by metric name.
+
+    Examples
+    --------
+    Fit a decomposition and reuse its components for diagnostics:
+
+    >>> diagnostics = MSTLDiagnostics(periods=[7, 365]).fit(time_series)
+    >>> diagnostics.components_.columns.tolist()
+    ['data', 'trend', 'seasonal_7', 'seasonal_365', 'resid']
+    >>> diagnostics.summary()
+    >>> diagnostics.plot()
+    >>> diagnostics.stationarity(columns=["data", "trend", "resid"])
+    >>> diagnostics.residuals(nlags=20)
+
+    Notes
+    -----
+    The class expects regularly sampled observations. Seasonal periods are
+    expressed as numbers of observations rather than calendar units.
+
+    See Also
+    --------
+    stationarity_analysis :
+        Plot stationarity and autocorrelation diagnostics for fitted components.
+    residual_analysis :
+        Plot distribution and autocorrelation diagnostics for residuals.
+    """
+
+    def __init__(self, periods: int | list[int], nlags: int = 10) -> None:
+        if isinstance(nlags, bool) or not isinstance(nlags, Integral) or nlags < 1:
+            raise ValueError("nlags must be a positive integer.")
+        self.periods = periods
+        self.nlags = int(nlags)
+
+    def fit(self, X: SeriesLike) -> "MSTLDiagnostics":
+        """
+        Fit MSTL to one ordered time series.
+
+        Parameters
+        ----------
+        X : numpy.ndarray, list of float, or pandas.Series
+            One-dimensional, regularly sampled observations in time order.
+            If ``X`` is a pandas Series, its index is preserved in
+            ``observed_`` and ``components_``. The input must represent a
+            single series; this method does not interpret or validate
+            ``unique_id`` columns, panel data, or timestamps, and it does not
+            sort observations. Ordering and series selection are the caller's
+            responsibility.
+
+        Returns
+        -------
+        MSTLDiagnostics
+            The fitted instance. The decomposition and diagnostics are
+            available through ``result_``, ``components_`` and
+            ``statistics_``.
+
+        Raises
+        ------
+        ValueError
+            If ``periods`` is empty or contains values that are not integers.
+        TypeError
+            If the input cannot be converted to a one-dimensional numeric
+            series by pandas or NumPy.
+
+        Notes
+        -----
+        MSTL periods are expressed in numbers of observations, not calendar
+        units. This method fits a single vector and is not a panel analyzer;
+        use a loop or a panel-specific analyzer when multiple ``unique_id``
+        values must be processed independently.
+        """
+        X_series = self._prepare_series(X)
+        self.periods_ = self._normalize_periods()
+        self._validate_periods_for_series(len(X_series))
+        self.observed_ = X_series
+        self.nlags_ = max(1, min(self.nlags, len(X_series) // 5))
+        self.model_, self.result_ = self._fit_mstl(X_series)
+        self.components_ = extract_mstl_components(self.result_, self.periods_)
+        self.statistics_ = self._calculate_statistics()
+        return self
+
+    def _prepare_series(self, X: SeriesLike) -> pd.Series:
+        """Convert the input vector to a numeric Series."""
+        if isinstance(X, pd.Series):
+            return X.astype(np.float64)
+        return pd.Series(np.asarray(X, dtype=np.float64))
+
+    def _normalize_periods(self) -> list[int]:
+        """Normalize the configured seasonal period(s) to a list."""
+        if isinstance(self.periods, Integral) and not isinstance(self.periods, bool):
+            periods = [self.periods]
+        else:
+            try:
+                periods = list(self.periods)
+            except TypeError as error:
+                raise ValueError(
+                    "periods must be an integer or an iterable of integers."
+                ) from error
+        if not periods or any(
+            isinstance(period, bool) or not isinstance(period, Integral) or period < 2
+            for period in periods
+        ):
+            raise ValueError(
+                "periods must contain integers greater than or equal to 2."
+            )
+        normalized = [int(period) for period in periods]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("periods must not contain duplicate values.")
+        return normalized
+
+    def _validate_periods_for_series(self, n_observations: int) -> None:
+        """Ensure statsmodels will retain every requested seasonal period."""
+        invalid_periods = [
+            period for period in self.periods_ if period >= n_observations / 2
+        ]
+        if invalid_periods:
+            raise ValueError(
+                "Each period must be less than half the number of observations "
+                f"({n_observations}); invalid periods: {invalid_periods}."
+            )
+
+    def _fit_mstl(self, X: pd.Series):
+        """Create and fit the statsmodels MSTL model."""
+        from statsmodels.tsa.seasonal import MSTL
+
+        model = MSTL(X, periods=self.periods_)
+        return model, model.fit()
+
+    def _calculate_statistics(self) -> pd.DataFrame:
+        """Calculate trend, seasonal, and residual diagnostics."""
+        from statsmodels.stats.diagnostic import acorr_ljungbox
+
+        _, r_squared, p_value_trend = trend_significance(self.observed_.values)
+        ljung_box = acorr_ljungbox(
+            self.components_["resid"].dropna(), lags=[self.nlags_]
+        ).iloc[0]
+        rows = [
+            {
+                "metric": "trend",
+                "statistic": float(r_squared),
+                "p_value": float(p_value_trend),
+                "strength": np.nan,
+            },
+            {
+                "metric": "residual_ljung_box",
+                "statistic": float(ljung_box["lb_stat"]),
+                "p_value": float(ljung_box["lb_pvalue"]),
+                "strength": np.nan,
+            },
+        ]
+        y_detrended = self.observed_.values - self.components_["trend"].values
+        rows.extend(self._seasonality_statistics(y_detrended))
+        return pd.DataFrame(rows).set_index("metric")
+
+    def _seasonality_statistics(self, y_detrended: np.ndarray) -> list[dict]:
+        """Calculate significance and strength for each seasonal component."""
+        rows = []
+        for period in self.periods_:
+            seasonal_column = f"seasonal_{period}"
+            f_stat, p_value = harmonic_significance(y_detrended, period=period)
+            rows.append(
+                {
+                    "metric": seasonal_column,
+                    "statistic": float(f_stat),
+                    "p_value": float(p_value),
+                    "strength": seasonal_strength(
+                        self.components_[seasonal_column].values,
+                        self.components_["resid"].values,
+                    ),
+                }
+            )
+        return rows
+
+    def _require_fitted(self) -> None:
+        """Ensure that :meth:`fit` has been called before inspection."""
+        if not hasattr(self, "components_"):
+            raise RuntimeError("MSTLDiagnostics must be fitted before use.")
+
+    def summary(self) -> pd.DataFrame:
+        """Return trend, seasonality and residual statistics."""
+        self._require_fitted()
+        return self.statistics_.copy()
+
+    @requires_extra("plot")
+    def plot(
+        self,
+        height: int = 1200,
+        width: int = 1300,
+        fig_type: str | None = None,
+    ):
+        """Plot the fitted MSTL components and their statistical summary."""
+        self._require_fitted()
+        import plotly.express as px
+        import plotly.graph_objs as go
+        import plotly.subplots as sp
+
+        component_columns = list(self.components_.columns)
+        subplot_titles = [
+            column.capitalize().replace("_", " ") for column in component_columns
+        ] + ["Summary"]
+        fig = sp.make_subplots(
+            rows=len(subplot_titles), cols=1, subplot_titles=subplot_titles
+        )
+        self._add_component_traces(fig, go, px.colors.qualitative.T10)
+
+        summary_row = len(subplot_titles)
+        self._add_summary_trace(fig, go, summary_row)
+        self._configure_figure(fig, summary_row, height, width)
+
+        if fig_type is None:
+            return fig
+        return fig.show(fig_type)
+
+    def _summary_lines(self) -> list[str]:
+        """Format fitted statistics for the Plotly summary panel."""
+        lines = []
+        for metric, values in self.statistics_.iterrows():
+            if metric == "trend":
+                label = f"Trend R²={values['statistic']:.4f}, p={values['p_value']:.4f}"
+            elif metric == "residual_ljung_box":
+                label = f"Ljung-Box stat={values['statistic']:.4f}, p={values['p_value']:.4f}"
+            else:
+                label = (
+                    f"{metric}: strength={values['strength']:.4f}, "
+                    f"F-test={values['statistic']:.4f}, p={values['p_value']:.4f}"
+                )
+            lines.append(label)
+        return lines
+
+    def _add_component_traces(self, fig, go, colors: list[str]) -> None:
+        """Add one Plotly line trace for each fitted component."""
+        for row, column in enumerate(self.components_.columns, start=1):
+            fig.add_trace(
+                go.Scatter(
+                    x=self.components_.index,
+                    y=self.components_[column],
+                    mode="lines",
+                    hovertemplate=f"{column.capitalize()}: %{{y}}<extra></extra>",
+                    line={"color": colors[(row - 1) % len(colors)]},
+                    showlegend=False,
+                ),
+                row=row,
+                col=1,
+            )
+
+    def _add_summary_trace(self, fig, go, row: int) -> None:
+        """Add the formatted statistics trace to the figure."""
+        fig.add_trace(
+            go.Scatter(
+                x=[0],
+                y=[0],
+                text=["<br>".join(self._summary_lines())],
+                mode="text",
+                showlegend=False,
+            ),
+            row=row,
+            col=1,
+        )
+
+    def _configure_figure(self, fig, summary_row: int, height: int, width: int) -> None:
+        """Apply axes and layout settings to the decomposition figure."""
+        fig.update_xaxes(visible=False, row=summary_row, col=1)
+        fig.update_yaxes(visible=False, row=summary_row, col=1)
+        fig.update_layout(
+            title="Seasonal Decomposition (MSTL)",
+            height=height,
+            width=width,
+            showlegend=False,
+            hovermode="x",
+        )
+
+    def stationarity(self, columns: list[str] | None = None, **kwargs):
+        """Run stationarity diagnostics on selected fitted components."""
+        self._require_fitted()
+        from tinyshift.plot.diagnostic import stationarity_analysis
+
+        columns = columns or ["data", "trend", "resid"]
+        return stationarity_analysis(self.components_[columns], **kwargs)
+
+    def residuals(self, **kwargs):
+        """Run residual diagnostics on the fitted MSTL residual component."""
+        self._require_fitted()
+        from tinyshift.plot.diagnostic import residual_analysis
+
+        return residual_analysis(self.components_["resid"], **kwargs)
