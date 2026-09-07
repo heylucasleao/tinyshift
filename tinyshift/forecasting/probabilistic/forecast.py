@@ -116,6 +116,43 @@ class PanelPredictiveForecast:
             row_label="P(Y<=value)",
         )
 
+    def sf(self, values: ArrayLike) -> pd.DataFrame:
+        """Evaluate exceedance probabilities on the forecast panel.
+
+        Parameters
+        ----------
+        values : float or array-like of float
+            Thresholds at which to evaluate ``P(Y > value)``. A scalar is
+            applied to every forecast row. A one-dimensional array defines a
+            common threshold grid. A two-dimensional array with ``len(self)``
+            rows is evaluated row-wise.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The point-forecast panel plus exceedance probabilities. Scalar
+            and common-grid columns use mathematical names such as
+            ``P(Y>5)``. Row-wise input uses ``P(Y>value)`` (with a numeric
+            suffix when it contains multiple columns).
+
+        Raises
+        ------
+        ValueError
+            If a value is non-finite or the input shape is unsupported.
+
+        Notes
+        -----
+        The survival function is the complementary CDF, ``1 - F(value)``.
+        Distribution implementations may evaluate it directly for better
+        numerical precision in small upper-tail probabilities.
+        """
+        return self._apply(
+            "sf",
+            values,
+            labeler=lambda value: f"P(Y>{self._label(value)})",
+            row_label="P(Y>value)",
+        )
+
     def ppf(self, quantiles: ArrayLike) -> pd.DataFrame:
         """Evaluate predictive quantiles on the forecast panel.
 
@@ -189,9 +226,7 @@ class PanelPredictiveForecast:
 class DiscretePanelPredictiveForecast(PanelPredictiveForecast):
     """Panel forecast for integer targets, additionally exposing a PMF."""
 
-    def pmf(
-        self, values: ArrayLike, include_excess: bool = True
-    ) -> pd.DataFrame:
+    def pmf(self, values: ArrayLike) -> pd.DataFrame:
         """Evaluate probability masses on the discrete forecast panel.
 
         Parameters
@@ -201,52 +236,28 @@ class DiscretePanelPredictiveForecast(PanelPredictiveForecast):
             A scalar is applied to every forecast row. A one-dimensional array
             defines a common support grid. A two-dimensional array with
             ``len(self)`` rows is evaluated row-wise.
-        include_excess : bool, default=True
-            If True, append the probability of exceeding the largest requested
-            support value. For row-wise input, the maximum is taken within
-            each row.
-
         Returns
         -------
         pandas.DataFrame
             The point-forecast panel plus mathematically named masses, such as
-            ``P(Y=5)``. By
-            default, the final column is ``P(Y><max>)`` for a scalar or common
-            grid, or ``P(Y>max)`` for row-wise values.
+            ``P(Y=5)``. Use :meth:`sf` separately to obtain exceedance
+            probabilities such as ``P(Y>5)``.
 
         Raises
         ------
         ValueError
             If a value is non-finite or non-integer, or the input shape is
             unsupported.
-        TypeError
-            If ``include_excess`` is not boolean.
-
         Notes
         -----
-        This method exists only for discrete-family forecasts. The excess
-        probability is evaluated at the largest requested value; it does not
-        require summing every preceding mass.
+        This method exists only for discrete-family forecasts.
         """
-        if not isinstance(include_excess, (bool, np.bool_)):
-            raise TypeError("include_excess must be a boolean.")
         inputs = np.asarray(values)
         if inputs.size == 0:
             raise ValueError("pmf values must not be empty.")
-        result = self._apply(
+        return self._apply(
             "pmf",
             values,
             labeler=lambda value: f"P(Y={self._label(value)})",
             row_label="P(Y=value)",
         )
-        if not include_excess:
-            return result
-
-        if inputs.ndim <= 1:
-            maximum = np.max(inputs)
-            label = f"P(Y>{self._label(maximum)})"
-        else:
-            maximum = np.max(inputs, axis=1)[:, None]
-            label = "P(Y>max)"
-        result[label] = np.asarray(self._distribution.sf(maximum))
-        return result
