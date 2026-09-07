@@ -11,8 +11,9 @@ decomposition, evaluation, and stabilization belong to
 - `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
   theoretical predictability limit.
-- `analyzers`: panel-oriented intermittency, PAMI, seasonality, and
-  variance-ratio analyzers with a shared `fit()`/`summary()` convention.
+- `analyzers`: panel-oriented intermittency, PAMI, predictability, seasonality,
+  trend, and variance-ratio analyzers with a shared `fit()`/`summary()` convention.
+  See the [analyzer reference](analyzers/README.md).
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
 
 ## Spectral, Entropy, and Dependence Metrics
