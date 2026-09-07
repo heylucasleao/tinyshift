@@ -221,7 +221,7 @@ TinyShift provides comprehensive time series analysis capabilities:
 from tinyshift.plot import MSTLDiagnostics
 from tinyshift.series import (
     IntermittencyAnalyzer,
-    PredictabilityAnalyzer,
+    RegularityAnalyzer,
     SeasonalityAnalyzer,
     TrendAnalyzer,
     trend_significance, 
@@ -253,9 +253,9 @@ print(f"Sample Entropy: {complexity}")
 perm_entropy = permutation_entropy(time_series, m=3, delay=1, normalize=True)
 print(f"Permutation Entropy: {perm_entropy}")
 
-# Calculate theoretical predictability limit
+# Calculate the ordinal predictability upper bound
 theo_limit = theoretical_limit(time_series, m=3, delay=1)
-print(f"Theoretical Limit (Πmax): {theo_limit}")
+print(f"Ordinal Predictability Upper Bound (Πmax): {theo_limit}")
 
 # Inspect persistence at one horizon
 ratio, z_statistic, p_value = variance_ratio(time_series, horizon=7)
@@ -266,7 +266,7 @@ vr_summary = VarianceRatioAnalyzer().fit(df).summary()
 # Combined diagnostics for a Nixtla-style panel
 analyzers = [
     IntermittencyAnalyzer(),
-    PredictabilityAnalyzer(),
+    RegularityAnalyzer(),
     TrendAnalyzer(),
     SeasonalityAnalyzer(top_k=2),
 ]

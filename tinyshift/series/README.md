@@ -10,8 +10,8 @@ decomposition, evaluation, and stabilization belong to
 - `dependence`: permutation auto-mutual information (PAMI).
 - `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
-  theoretical predictability limit.
-- `analyzers`: panel-oriented intermittency, PAMI, predictability, seasonality,
+  ordinal predictability upper bound.
+- `analyzers`: panel-oriented intermittency, PAMI, regularity, seasonality,
   trend, and variance-ratio analyzers with a shared `fit()`/`summary()` convention.
   See the [analyzer reference](analyzers/README.md).
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
@@ -23,7 +23,7 @@ decomposition, evaluation, and stabilization belong to
 - `sample_entropy`: magnitude-based irregularity and complexity.
 - `regularity_index`: regularity score derived from sample entropy.
 - `permutation_entropy`: ordinal-pattern complexity, optionally normalized.
-- `theoretical_limit`: ordinal predictability ceiling derived from normalized
+- `theoretical_limit`: ordinal predictability upper bound derived from normalized
   permutation entropy.
 - `permutation_auto_mutual_information`: non-linear dependence between ordinal
   patterns separated by a lag.
@@ -81,14 +81,14 @@ lags = pami.lags(mode="short", short=2, fallback=1)
 ```python
 from tinyshift.series import (
     IntermittencyAnalyzer,
-    PredictabilityAnalyzer,
+    RegularityAnalyzer,
     SeasonalityAnalyzer,
     TrendAnalyzer,
     VarianceRatioAnalyzer,
 )
 
 intermittency = IntermittencyAnalyzer().fit(df).summary()
-predictability = PredictabilityAnalyzer().fit(df).summary()
+regularity = RegularityAnalyzer().fit(df).summary()
 seasonality = SeasonalityAnalyzer(top_k=2).fit(df).summary()
 trend = TrendAnalyzer().fit(df).summary()
 dependence = VarianceRatioAnalyzer().fit(df).summary()
@@ -117,7 +117,7 @@ Analyzer summaries can be combined explicitly with validated one-to-one merges:
 ```python
 analyzers = [
     IntermittencyAnalyzer(),
-    PredictabilityAnalyzer(),
+    RegularityAnalyzer(),
     TrendAnalyzer(),
     SeasonalityAnalyzer(top_k=2),
 ]
