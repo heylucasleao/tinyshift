@@ -22,6 +22,10 @@ class PredictiveDistribution(ABC):
     def ppf(self, quantiles):
         """Evaluate the generalized inverse CDF."""
 
+    def sf(self, values):
+        """Evaluate the survival function, ``P(Y > value)``."""
+        return 1.0 - np.asarray(self.cdf(values))
+
     def interval(self, coverage: float = 0.95) -> np.ndarray:
         if not np.isfinite(coverage) or not 0.0 < coverage < 1.0:
             raise ValueError("coverage must be finite and strictly between 0 and 1.")
@@ -106,6 +110,21 @@ class NegativeBinomialPredictiveDistribution(
         values, means, sizes, squeeze = self._align(values, "values")
         probabilities = sizes / (sizes + means)
         result = nbinom.cdf(np.floor(values), sizes, probabilities)
+        return self._finalize(result, squeeze)
+
+    def sf(self, values):
+        values, means, sizes, squeeze = self._align(values, "values")
+        probabilities = sizes / (sizes + means)
+        result = nbinom.sf(np.floor(values), sizes, probabilities)
+        return self._finalize(result, squeeze)
+
+    def pmf(self, values) -> np.ndarray:
+        values = np.asarray(values)
+        if not np.all(np.isfinite(values)) or np.any(values != np.floor(values)):
+            raise ValueError("pmf values must be finite integers.")
+        values, means, sizes, squeeze = self._align(values, "values")
+        probabilities = sizes / (sizes + means)
+        result = nbinom.pmf(values, sizes, probabilities)
         return self._finalize(result, squeeze)
 
     def ppf(self, quantiles):

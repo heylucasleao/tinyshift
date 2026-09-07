@@ -177,7 +177,8 @@ class FirstStageForecasterEvaluator:
 class TwoStageForecasterEvaluator:
     r"""Evaluator utility for probabilistic central prediction intervals.
 
-    A pair of symmetric forecast quantiles, such as ``q_05`` and ``q_95``,
+    A pair of symmetric forecast quantiles, such as ``Q(0.05)`` and
+    ``Q(0.95)``,
     defines a central interval with coverage $1 - \alpha$. Evaluation reports
     its empirical coverage, mean width, and mean Winkler interval score
     (MWIS). Lower MWIS values indicate sharper, better-calibrated intervals.
@@ -201,6 +202,14 @@ class TwoStageForecasterEvaluator:
         penalty_upper = (2.0 / alpha) * (y_true - upper) * (y_true > upper)
         return float(np.mean(width + penalty_lower + penalty_upper))
 
+    @staticmethod
+    def _quantile_column(quantile: float) -> str:
+        """Return the column name emitted by ``PanelPredictiveForecast.ppf``."""
+        label = np.format_float_positional(
+            float(quantile), precision=12, trim="-"
+        )
+        return f"Q({label})"
+
     @classmethod
     def evaluate(
         cls,
@@ -213,7 +222,8 @@ class TwoStageForecasterEvaluator:
         Parameters
         ----------
         df_res : pandas.DataFrame
-            DataFrame containing real ground truth targets and forecasted quantile columns (``q_*``).
+            DataFrame containing real ground truth targets and forecasted
+            quantile columns named as ``Q(<probability>)``.
         target_col : str, default='y'
             Name of the column containing real observed values.
         quantiles : list of float, default=[0.05, 0.50, 0.95]
@@ -253,8 +263,8 @@ class TwoStageForecasterEvaluator:
             if upper_quantile is None:
                 continue
 
-            lower_col = f"q_{round(lower_quantile * 100)}"
-            upper_col = f"q_{round(upper_quantile * 100)}"
+            lower_col = cls._quantile_column(lower_quantile)
+            upper_col = cls._quantile_column(upper_quantile)
             if lower_col not in df_res.columns or upper_col not in df_res.columns:
                 continue
 
