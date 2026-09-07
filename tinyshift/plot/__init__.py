@@ -5,5 +5,6 @@
 
 from .correlation import *
 from .diagnostic import *
+from .mstl import *
 from .calibration import *
 from .power import *

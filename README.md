@@ -218,7 +218,7 @@ beta_confidence_analysis(
 TinyShift provides comprehensive time series analysis capabilities:
 
 ```python
-from tinyshift.plot import mstl_diagnostics
+from tinyshift.plot import MSTLDiagnostics
 from tinyshift.series import (
     IntermittencyAnalyzer,
     PredictabilityAnalyzer,
@@ -235,12 +235,8 @@ from tinyshift.series import (
     bollinger_bands
 )
 
-mstl_diagnostics(
-    time_series, 
-    periods=[7, 365],  # Weekly and yearly patterns
-    width=1200, 
-    height=800
-)
+diagnostics = MSTLDiagnostics(periods=[7, 365]).fit(time_series)
+diagnostics.plot(width=1200, height=800)
 
 # Test for significant trends
 slope, r_squared, p_value = trend_significance(time_series)
