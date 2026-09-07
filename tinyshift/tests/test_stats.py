@@ -226,12 +226,36 @@ def test_bootstrap_bca_uses_standard_acceleration_sign():
     assert model._jackknife_acceleration(data, np.mean) == pytest.approx(expected)
 
 
+def test_bootstrap_bca_bias_correction_gives_half_weight_to_ties(monkeypatch):
+    bootstrap_statistics = np.array([0.0, 1.0, 1.0, 2.0])
+
+    monkeypatch.setattr(
+        BootstrapBCA,
+        "_bootstrap_statistics",
+        lambda self, data, statistic, n_resamples: bootstrap_statistics,
+    )
+    monkeypatch.setattr(
+        BootstrapBCA,
+        "_jackknife_acceleration",
+        lambda self, data, statistic: 0.0,
+    )
+
+    lower, upper = BootstrapBCA.compute_interval(
+        [0.0, 2.0],
+        confidence_level=0.5,
+        statistic=np.mean,
+        n_resamples=len(bootstrap_statistics),
+    )
+
+    expected_lower, expected_upper = np.quantile(bootstrap_statistics, [0.25, 0.75])
+    assert lower == pytest.approx(expected_lower)
+    assert upper == pytest.approx(expected_upper)
+
+
 @pytest.mark.parametrize(
     ("confidence_level", "n_resamples"), [(0.0, 100), (1.0, 100), (0.95, 1)]
 )
-def test_bootstrap_bca_rejects_invalid_configuration(
-    confidence_level, n_resamples
-):
+def test_bootstrap_bca_rejects_invalid_configuration(confidence_level, n_resamples):
     with pytest.raises(ValueError):
         BootstrapBCA.compute_interval(
             [1.0, 2.0], confidence_level, np.mean, n_resamples=n_resamples
