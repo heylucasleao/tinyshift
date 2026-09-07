@@ -49,3 +49,6 @@ tie.
 
 Use these tools before fitting models when predictors are collinear, contain
 strong outliers or have markedly non-Gaussian scales.
+
+See the executable [preprocessing notebook](../examples/preprocessing.ipynb)
+for parameter comparisons and an end-to-end scikit-learn pipeline.
