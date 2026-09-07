@@ -878,7 +878,9 @@ def test_predict_distribution_returns_self_contained_panel_forecast(sample_train
         forecast.ppf([0.1, 0.5, 0.9])
     )
     assert {"Q(0.05)", "Q(0.95)"} <= set(forecast.interval(0.9))
-    assert {"P(Y=0)", "P(Y=1)", "P(Y>1)"} <= set(forecast.pmf([0, 1]))
+    assert {"P(Y>0)", "P(Y>1)"} <= set(forecast.sf([0, 1]))
+    assert {"P(Y=0)", "P(Y=1)"} <= set(forecast.pmf([0, 1]))
+    assert "P(Y>1)" not in forecast.pmf([0, 1])
 
     with pytest.raises(TypeError, match="cannot unpack"):
         _frame, _distribution = forecast
@@ -894,9 +896,13 @@ def test_continuous_panel_forecast_does_not_expose_pmf(sample_continuous_data):
 
     assert not hasattr(forecast, "pmf")
     assert "P(Y<=1)" in forecast.cdf(1.0)
+    assert "P(Y>1)" in forecast.sf(1.0)
+    np.testing.assert_allclose(
+        forecast.sf(1.0)["P(Y>1)"], 1.0 - forecast.cdf(1.0)["P(Y<=1)"]
+    )
 
 
-def test_panel_pmf_excess_uses_largest_requested_value(sample_train_data):
+def test_panel_pmf_and_sf_have_separate_outputs(sample_train_data):
     wrapper = TwoStageForecasterWrapper(
         MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     ).fit(sample_train_data)
@@ -904,12 +910,11 @@ def test_panel_pmf_excess_uses_largest_requested_value(sample_train_data):
 
     result = forecast.pmf([2, 5, 3])
 
-    assert {"P(Y=2)", "P(Y=5)", "P(Y=3)", "P(Y>5)"} <= set(result)
-    np.testing.assert_allclose(result["P(Y>5)"], forecast.distribution.sf(5))
-    assert "P(Y>5)" not in forecast.pmf([2, 5, 3], include_excess=False)
-
-    with pytest.raises(TypeError, match="include_excess must be a boolean"):
-        forecast.pmf(2, include_excess=1)
+    assert {"P(Y=2)", "P(Y=5)", "P(Y=3)"} <= set(result)
+    assert "P(Y>5)" not in result
+    np.testing.assert_allclose(
+        forecast.sf(5)["P(Y>5)"], forecast.distribution.sf(5)
+    )
 
 
 @pytest.mark.parametrize("quantile", [-0.01, 1.01])
