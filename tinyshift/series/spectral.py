@@ -66,6 +66,7 @@ def _prepare_spectrum(
     detrend: str = "linear",
     method: str = "periodogram",
 ) -> Tuple[np.ndarray, np.ndarray, int]:
+    """Prepare a cleaned signal and calculate its power spectrum."""
     signal = _prepare_signal(
         series,
         detrend=detrend,
@@ -96,6 +97,32 @@ def _prepare_spectrum(
     return frequencies, power, n
 
 
+def _spectral_power_distribution(
+    X: ArrayLike,
+    detrend: str = "linear",
+) -> Tuple[np.ndarray, int]:
+    """Return the normalized non-DC spectral power from _prepare_spectrum."""
+    _, power, _ = _prepare_spectrum(
+        X,
+        detrend=detrend,
+        method="periodogram",
+    )
+
+    # Remove zero-frequency / DC component.
+    power = power[1:]
+
+    total_power = np.sum(power)
+
+    if total_power <= np.finfo(float).eps:
+        return np.array([], dtype=np.float64), 0
+
+    power_distribution = power / total_power
+
+    n_frequencies = len(power_distribution)
+
+    return power_distribution, n_frequencies
+
+
 def foreca(
     X: ArrayLike,
     detrend: str = "linear",
@@ -120,44 +147,35 @@ def foreca(
     The measure is based on normalized Shannon spectral entropy.
     Higher values indicate a more concentrated, structured spectrum.
     """
-    values = np.asarray(X, dtype=np.float64)
-    if not np.all(np.isfinite(values)):
-        raise ValueError("Input series must contain only finite values.")
-
-    _, power, _ = _prepare_spectrum(
+    power_distribution, n_frequencies = _spectral_power_distribution(
         X,
         detrend=detrend,
-        method="periodogram",
     )
 
-    # DC should not participate after detrending.
-    power = power[1:]
-
-    total_power = np.sum(power)
-
-    if total_power <= np.finfo(float).eps:
-        return 1.0
-
-    probabilities = power / total_power
-
-    probabilities = probabilities[probabilities > 0]
-
-    entropy = -np.sum(probabilities * np.log2(probabilities))
-
-    max_entropy = np.log2(len(power))
-
-    if max_entropy == 0:
+    if n_frequencies <= 1:
         return np.nan
 
-    omega = 1.0 - entropy / max_entropy
+    # Ignore zero-probability bins because log2(0) is undefined.
+    positive_probabilities = power_distribution[power_distribution > 0]
 
-    return float(np.clip(omega, 0.0, 1.0))
+    # Shannon entropy of the spectral power distribution.
+    spectral_entropy = -np.sum(positive_probabilities * np.log2(positive_probabilities))
+
+    max_spectral_entropy = np.log2(n_frequencies)
+
+    normalized_entropy = spectral_entropy / max_spectral_entropy
+
+    # ForeCA reverses entropy:
+    # 0 = diffuse / uncertain spectrum
+    # 1 = concentrated / structured spectrum
+    forecastability = 1.0 - normalized_entropy
+
+    return float(np.clip(forecastability, 0.0, 1.0))
 
 
 def spectral_concentration(
     X: ArrayLike,
     detrend: str = "linear",
-    normalize: bool = True,
 ) -> float:
     """
     Measure concentration of spectral power using the
@@ -169,47 +187,35 @@ def spectral_concentration(
         Input univariate time series.
     detrend : {"linear", "constant", "none"}, default="linear"
         Detrending applied before estimating the spectrum.
-    normalize : bool, default=True
-        If True, normalize concentration to [0, 1],
-        accounting for the number of spectral bins.
 
     Returns
     -------
     float
-        Spectral concentration.
+        Normalized spectral concentration in the range [0, 1].
 
-        When normalized:
-        - 0 means power is approximately uniformly distributed.
-        - 1 means power is concentrated in one spectral component.
+        0 means power is approximately uniformly distributed, while 1 means
+        power is concentrated in one spectral component.
     """
-    _, power, _ = _prepare_spectrum(
+    power_distribution, n_frequencies = _spectral_power_distribution(
         X,
         detrend=detrend,
-        method="periodogram",
     )
 
-    # Remove zero-frequency / DC component.
-    power = power[1:]
-
-    total_power = np.sum(power)
-
-    if total_power <= np.finfo(float).eps:
+    if n_frequencies <= 1:
         return np.nan
 
-    p = power / total_power
+    # Herfindahl-Hirschman / Simpson concentration index.
+    concentration = np.sum(power_distribution**2)
 
-    concentration = np.sum(p**2)
+    # Theoretical bounds:
+    # - minimum: power uniformly distributed across all frequencies.
+    # - maximum: all power concentrated in a single frequency.
+    min_concentration = 1.0 / n_frequencies
+    max_concentration = 1.0
 
-    if not normalize:
-        return float(concentration)
+    # Min-max normalization
+    normalized_concentration = (concentration - min_concentration) / (
+        max_concentration - min_concentration
+    )
 
-    k = len(p)
-
-    if k <= 1:
-        return 1.0
-
-    minimum = 1.0 / k
-
-    concentration = (concentration - minimum) / (1.0 - minimum)
-
-    return float(np.clip(concentration, 0.0, 1.0))
+    return float(np.clip(normalized_concentration, 0.0, 1.0))
