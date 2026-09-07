@@ -245,7 +245,7 @@ corr_heatmap(X, width=800, height=600)
 
 ---
 
-### 4. Time Series Diagnostics (`diagnostic.py`)
+### 4. Time Series Diagnostics (`mstl.py` and `diagnostic.py`)
 
 #### **`MSTLDiagnostics`**
 Performs MSTL (Multiple Seasonal-Trend decomposition using Loess) with trend significance testing and residual analysis.

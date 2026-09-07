@@ -56,3 +56,20 @@ def test_mstl_class_reuses_fitted_components():
         "seasonal_7",
     ]
     assert isinstance(diagnostics.plot(), go.Figure)
+
+
+@pytest.mark.parametrize("periods", [True, 1, 0, -2, [], [7, 7], [7, 2.5]])
+def test_mstl_rejects_invalid_periods(periods):
+    with pytest.raises(ValueError):
+        MSTLDiagnostics(periods=periods).fit(np.arange(80, dtype=float))
+
+
+@pytest.mark.parametrize("nlags", [True, 0, -1, 2.5])
+def test_mstl_rejects_invalid_nlags(nlags):
+    with pytest.raises(ValueError, match="nlags must be a positive integer"):
+        MSTLDiagnostics(periods=7, nlags=nlags)
+
+
+def test_mstl_rejects_periods_too_large_for_the_series():
+    with pytest.raises(ValueError, match="less than half.*invalid periods:.*365"):
+        MSTLDiagnostics(periods=[7, 365]).fit(np.arange(80, dtype=float))

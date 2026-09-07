@@ -2,7 +2,7 @@
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-from typing import List, Optional, Union
+from numbers import Integral
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,7 @@ from tinyshift.forecasting.dmstl.utils import extract_mstl_components, seasonal_
 from tinyshift.series import harmonic_significance, trend_significance
 from tinyshift.utils.imports import requires_extra
 
-SeriesLike = Union[np.ndarray, List[float], pd.Series]
+SeriesLike = np.ndarray | list[float] | pd.Series
 
 
 class MSTLDiagnostics:
@@ -32,6 +32,7 @@ class MSTLDiagnostics:
     nlags : int, default=10
         Maximum number of lags used by the decomposition-level Ljung-Box test.
         The effective value is limited to one fifth of the fitted series.
+        Must be a positive integer.
 
     Attributes
     ----------
@@ -75,9 +76,11 @@ class MSTLDiagnostics:
         Plot distribution and autocorrelation diagnostics for residuals.
     """
 
-    def __init__(self, periods: Union[int, List[int]], nlags: int = 10) -> None:
+    def __init__(self, periods: int | list[int], nlags: int = 10) -> None:
+        if isinstance(nlags, bool) or not isinstance(nlags, Integral) or nlags < 1:
+            raise ValueError("nlags must be a positive integer.")
         self.periods = periods
-        self.nlags = nlags
+        self.nlags = int(nlags)
 
     def fit(self, X: SeriesLike) -> "MSTLDiagnostics":
         """
@@ -118,6 +121,7 @@ class MSTLDiagnostics:
         """
         X_series = self._prepare_series(X)
         self.periods_ = self._normalize_periods()
+        self._validate_periods_for_series(len(X_series))
         self.observed_ = X_series
         self.nlags_ = max(1, min(self.nlags, len(X_series) // 5))
         self.model_, self.result_ = self._fit_mstl(X_series)
@@ -131,14 +135,39 @@ class MSTLDiagnostics:
             return X.astype(np.float64)
         return pd.Series(np.asarray(X, dtype=np.float64))
 
-    def _normalize_periods(self) -> List[int]:
+    def _normalize_periods(self) -> list[int]:
         """Normalize the configured seasonal period(s) to a list."""
-        periods = (
-            [self.periods] if isinstance(self.periods, int) else list(self.periods)
-        )
-        if not periods or any(not isinstance(period, int) for period in periods):
-            raise ValueError("periods must be an integer or a list of integers.")
-        return periods
+        if isinstance(self.periods, Integral) and not isinstance(self.periods, bool):
+            periods = [self.periods]
+        else:
+            try:
+                periods = list(self.periods)
+            except TypeError as error:
+                raise ValueError(
+                    "periods must be an integer or an iterable of integers."
+                ) from error
+        if not periods or any(
+            isinstance(period, bool) or not isinstance(period, Integral) or period < 2
+            for period in periods
+        ):
+            raise ValueError(
+                "periods must contain integers greater than or equal to 2."
+            )
+        normalized = [int(period) for period in periods]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("periods must not contain duplicate values.")
+        return normalized
+
+    def _validate_periods_for_series(self, n_observations: int) -> None:
+        """Ensure statsmodels will retain every requested seasonal period."""
+        invalid_periods = [
+            period for period in self.periods_ if period >= n_observations / 2
+        ]
+        if invalid_periods:
+            raise ValueError(
+                "Each period must be less than half the number of observations "
+                f"({n_observations}); invalid periods: {invalid_periods}."
+            )
 
     def _fit_mstl(self, X: pd.Series):
         """Create and fit the statsmodels MSTL model."""
@@ -173,7 +202,7 @@ class MSTLDiagnostics:
         rows.extend(self._seasonality_statistics(y_detrended))
         return pd.DataFrame(rows).set_index("metric")
 
-    def _seasonality_statistics(self, y_detrended: np.ndarray) -> List[dict]:
+    def _seasonality_statistics(self, y_detrended: np.ndarray) -> list[dict]:
         """Calculate significance and strength for each seasonal component."""
         rows = []
         for period in self.periods_:
@@ -207,7 +236,7 @@ class MSTLDiagnostics:
         self,
         height: int = 1200,
         width: int = 1300,
-        fig_type: Optional[str] = None,
+        fig_type: str | None = None,
     ):
         """Plot the fitted MSTL components and their statistical summary."""
         self._require_fitted()
@@ -232,7 +261,7 @@ class MSTLDiagnostics:
             return fig
         return fig.show(fig_type)
 
-    def _summary_lines(self) -> List[str]:
+    def _summary_lines(self) -> list[str]:
         """Format fitted statistics for the Plotly summary panel."""
         lines = []
         for metric, values in self.statistics_.iterrows():
@@ -248,7 +277,7 @@ class MSTLDiagnostics:
             lines.append(label)
         return lines
 
-    def _add_component_traces(self, fig, go, colors: List[str]) -> None:
+    def _add_component_traces(self, fig, go, colors: list[str]) -> None:
         """Add one Plotly line trace for each fitted component."""
         for row, column in enumerate(self.components_.columns, start=1):
             fig.add_trace(
@@ -257,7 +286,7 @@ class MSTLDiagnostics:
                     y=self.components_[column],
                     mode="lines",
                     hovertemplate=f"{column.capitalize()}: %{{y}}<extra></extra>",
-                    line=dict(color=colors[(row - 1) % len(colors)]),
+                    line={"color": colors[(row - 1) % len(colors)]},
                     showlegend=False,
                 ),
                 row=row,
@@ -290,7 +319,7 @@ class MSTLDiagnostics:
             hovermode="x",
         )
 
-    def stationarity(self, columns: Optional[List[str]] = None, **kwargs):
+    def stationarity(self, columns: list[str] | None = None, **kwargs):
         """Run stationarity diagnostics on selected fitted components."""
         self._require_fitted()
         from tinyshift.plot.diagnostic import stationarity_analysis
