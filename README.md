@@ -493,7 +493,7 @@ stock_plan = NewsvendorOptimizer.optimize(
     forecast_df, distribution, underage_cost=10.0, overage_cost=2.0
 )
 
-# Exact probabilities from P(Y=0) through P(Y=10)
+# Exact probabilities from P(Y=0) through P(Y=10), plus P(Y>10)
 probabilities = forecast.pmf(range(11))
 
 # Expected value of stocking each additional discrete inventory unit
@@ -505,6 +505,7 @@ marginal_value = NewsvendorOptimizer.marginal_benefit(
     max_k=10,
 )
 
+# Returns P(Y<=5); PPF columns use names such as Q(0.5)
 probability_below_five = forecast.cdf(5)
 median = forecast.ppf(0.50)
 
