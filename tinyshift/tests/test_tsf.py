@@ -382,7 +382,7 @@ def test_default_family_returns_negative_binomial_distribution(sample_train_data
 def test_gamma_family_supports_continuous_targets(sample_continuous_data):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1, 7])
     wrapper = TwoStageForecasterWrapper(fcst=fcst, distribution=GammaFamily()).fit(
-        sample_continuous_data, h=7, n_windows=3
+        sample_continuous_data, horizon=7, n_windows=3
     )
 
     frame = _predict(wrapper, h=2, quantiles=[0.1, 0.5, 0.9])
@@ -421,7 +421,7 @@ def test_positive_continuous_families_integrate_with_wrapper(
 ):
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1, 7])
     wrapper = TwoStageForecasterWrapper(fcst=fcst, distribution=family).fit(
-        sample_continuous_data, h=7, n_windows=3
+        sample_continuous_data, horizon=7, n_windows=3
     )
 
     forecast = wrapper.predict_distribution(h=2)
@@ -874,9 +874,7 @@ def test_predict_distribution_returns_self_contained_panel_forecast(sample_train
     forecast = wrapper.predict_distribution(h=2)
 
     assert len(forecast) == len(forecast.to_frame()) == 4
-    assert {"Q(0.1)", "Q(0.5)", "Q(0.9)"} <= set(
-        forecast.ppf([0.1, 0.5, 0.9])
-    )
+    assert {"Q(0.1)", "Q(0.5)", "Q(0.9)"} <= set(forecast.ppf([0.1, 0.5, 0.9]))
     assert {"Q(0.05)", "Q(0.95)"} <= set(forecast.interval(0.9))
     assert {"P(Y>0)", "P(Y>1)"} <= set(forecast.sf([0, 1]))
     assert {"P(Y=0)", "P(Y=1)"} <= set(forecast.pmf([0, 1]))
@@ -912,9 +910,7 @@ def test_panel_pmf_and_sf_have_separate_outputs(sample_train_data):
 
     assert {"P(Y=2)", "P(Y=5)", "P(Y=3)"} <= set(result)
     assert "P(Y>5)" not in result
-    np.testing.assert_allclose(
-        forecast.sf(5)["P(Y>5)"], forecast.distribution.sf(5)
-    )
+    np.testing.assert_allclose(forecast.sf(5)["P(Y>5)"], forecast.distribution.sf(5))
 
 
 @pytest.mark.parametrize("quantile", [-0.01, 1.01])
@@ -1142,7 +1138,7 @@ def test_optimize_separates_costs_from_real_exogenous_features():
     )
     fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
     wrapper = TwoStageForecasterWrapper(fcst).fit(
-        train, static_features=[], h=2, n_windows=3
+        train, static_features=[], horizon=2, n_windows=3
     )
     future = fcst.make_future_dataframe(h=2)
     future["promo"] = [0.0, 1.0]
@@ -1250,9 +1246,7 @@ def test_distributions_remain_finite_at_extreme_parameters(means, dispersions):
 
 def test_two_stage_evaluator_handles_all_nan_pairs():
     result = TwoStageForecasterEvaluator.evaluate(
-        pd.DataFrame(
-            {"y": [np.nan], "Q(0.05)": [np.nan], "Q(0.95)": [np.nan]}
-        ),
+        pd.DataFrame({"y": [np.nan], "Q(0.05)": [np.nan], "Q(0.95)": [np.nan]}),
         quantiles=(0.05, 0.95),
     )
 
@@ -1275,7 +1269,7 @@ def test_wrapper_supports_custom_column_names():
         id_col="series",
         time_col="date",
         target_col="demand",
-        h=2,
+        horizon=2,
         n_windows=3,
     )
 
@@ -1313,8 +1307,8 @@ def test_predict_rejects_quantile_column_collisions(sample_train_data):
 @pytest.mark.parametrize(
     "fit_kwargs",
     [
-        {"h": 0},
-        {"h": 1.5},
+        {"horizon": 0},
+        {"horizon": 1.5},
         {"n_windows": 0},
         {"n_windows": True},
         {"step_size": 0},
