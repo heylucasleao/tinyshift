@@ -493,7 +493,7 @@ stock_plan = NewsvendorOptimizer.optimize(
     forecast_df, distribution, underage_cost=10.0, overage_cost=2.0
 )
 
-# Exact probabilities from P(Y=0) through P(Y=10), plus P(Y>10)
+# Exact probabilities from P(Y=0) through P(Y=10)
 probabilities = forecast.pmf(range(11))
 
 # Expected value of stocking each additional discrete inventory unit
@@ -507,6 +507,7 @@ marginal_value = NewsvendorOptimizer.marginal_benefit(
 
 # Returns P(Y<=5); PPF columns use names such as Q(0.5)
 probability_below_five = forecast.cdf(5)
+stockout_risk_above_five = forecast.sf(5)  # P(Y>5)
 median = forecast.ppf(0.50)
 
 # Cost columns may be supplied without exogenous forecast features.
@@ -519,7 +520,7 @@ stock_plan = NewsvendorOptimizer.optimize(
     cost_df=costs,
 )
 
-# Continuous alternative; cdf/ppf/interval share the same interface.
+# Continuous alternative; cdf/sf/ppf/interval share the same interface.
 from tinyshift.forecasting import GammaFamily
 
 continuous_model = TwoStageForecasterWrapper(fcst, distribution=GammaFamily())
