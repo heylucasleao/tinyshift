@@ -3,8 +3,9 @@
 # Licensed under the MIT License
 
 
+from collections.abc import Callable
+
 import numpy as np
-from typing import Callable, Union, Tuple
 from scipy.stats import norm
 
 
@@ -45,12 +46,12 @@ class BootstrapBCA:
     @classmethod
     def compute_interval(
         cls,
-        data: Union[np.ndarray, list],
+        data: np.ndarray | list,
         confidence_level: float,
         statistic: Callable,
         n_resamples: int,
         random_state: int = 42,
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """
         Calculates the bias-corrected and accelerated (BCa) bootstrap confidence interval for the given data.
 
@@ -92,7 +93,11 @@ class BootstrapBCA:
         observed_stat = statistic(data)
         if not np.isfinite(sample_statistics).all() or not np.isfinite(observed_stat):
             raise ValueError("statistic must return finite scalar values")
-        bias = np.mean(sample_statistics < observed_stat)
+        # Mid-rank ties, as used by the conventional BCa bias correction.
+        bias = (
+            np.count_nonzero(sample_statistics < observed_stat)
+            + 0.5 * np.count_nonzero(sample_statistics == observed_stat)
+        ) / n_resamples
         bias = np.clip(bias, 0.5 / n_resamples, 1 - 0.5 / n_resamples)
         z0 = norm.ppf(bias)
 

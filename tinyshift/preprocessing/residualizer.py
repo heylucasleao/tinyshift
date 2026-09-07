@@ -6,12 +6,12 @@
 from numbers import Real
 
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, OneToOneFeatureMixin, TransformerMixin
 from sklearn.linear_model import LinearRegression
 from sklearn.utils.validation import check_array, check_is_fitted
 
 
-class FeatureResidualizer(BaseEstimator, TransformerMixin):
+class FeatureResidualizer(OneToOneFeatureMixin, TransformerMixin, BaseEstimator):
     """Reduce linear collinearity by replacing selected features with residuals.
 
     Parameters
@@ -96,7 +96,13 @@ class FeatureResidualizer(BaseEstimator, TransformerMixin):
             del self.feature_names_in_
         if hasattr(X, "columns"):
             self.feature_names_in_ = np.asarray(X.columns, dtype=object)
-        X = check_array(X, ensure_2d=True, dtype=np.float64, copy=True)
+        X = check_array(
+            X,
+            ensure_2d=True,
+            ensure_min_samples=2,
+            dtype=np.float64,
+            copy=True,
+        )
         self.n_features_in_ = X.shape[1]
         corr = np.corrcoef(X, rowvar=False)
         corr = np.nan_to_num(corr, nan=0.0)

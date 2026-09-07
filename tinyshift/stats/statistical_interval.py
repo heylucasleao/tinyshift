@@ -3,30 +3,40 @@
 # Licensed under the MIT License
 
 
+from collections.abc import Callable
+from typing import Literal, TypeAlias
+
 import numpy as np
 from scipy.stats import kurtosis, skew
-from typing import Callable, Tuple, Union
+
+Interval: TypeAlias = tuple[float | None, float | None]
+QuantileInterval: TypeAlias = tuple[Literal["quantile"], float | None, float | None]
+IntervalMethod: TypeAlias = (
+    str | Callable[[np.ndarray], Interval] | Interval | QuantileInterval
+)
 
 
 class StatisticalInterval:
     """Utility class to compute different types of statistical interval."""
 
     @staticmethod
-    def custom_interval(data: np.ndarray, custom_func: Callable) -> Tuple[float, float]:
+    def custom_interval(
+        data: np.ndarray, custom_func: Callable[[np.ndarray], Interval]
+    ) -> Interval:
         """Calculate interval using a custom function."""
         return custom_func(data)
 
     @staticmethod
     def calculate_interval(
         X: np.ndarray,
-        center: Callable,
-        spread: Callable,
+        center: Callable[[np.ndarray], float],
+        spread: Callable[[np.ndarray], float],
         factor: float = 3,
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """Calculate interval using a central tendency and spread function."""
 
         if not callable(center) or not callable(spread):
-            raise ValueError("center and spread must be callable functions")
+            raise TypeError("center and spread must be callable functions")
         if not np.isfinite(factor) or factor <= 0:
             raise ValueError("factor must be a positive finite number")
 
@@ -37,32 +47,28 @@ class StatisticalInterval:
         return lower_bound, upper_bound
 
     @staticmethod
-    def iqr_interval(X: np.ndarray) -> Tuple[float, float]:
-        """Calculates interval using IQR and median with a default factor of 1.5."""
+    def iqr_interval(X: np.ndarray) -> tuple[float, float]:
+        """Calculate Tukey fences using Q1, Q3, and an IQR factor of 1.5."""
 
-        def iqr(x):
-            q75, q25 = np.percentile(x, [75, 25])
-            return q75 - q25
-
-        q75, q25 = np.percentile(X, [75, 25])
-        spread = iqr(X)
+        q25, q75 = np.percentile(X, [25, 75])
+        spread = q75 - q25
         return q25 - 1.5 * spread, q75 + 1.5 * spread
 
     @staticmethod
-    def stddev_interval(X: np.ndarray) -> Tuple[float, float]:
+    def stddev_interval(X: np.ndarray) -> tuple[float, float]:
         """Calculates interval using mean and standard deviation."""
         return StatisticalInterval.calculate_interval(X, np.mean, np.std)
 
     @staticmethod
-    def mad_interval(X: np.ndarray) -> Tuple[float, float]:
+    def mad_interval(X: np.ndarray) -> tuple[float, float]:
         """Calculates interval using Median Absolute Deviation (MAD)."""
         mad = lambda x: np.median(np.abs(x - np.median(x)))
         return StatisticalInterval.calculate_interval(X, np.median, mad)
 
     @staticmethod
     def quantile_interval(
-        X: np.ndarray, lower: float, upper: float
-    ) -> Tuple[float, float]:
+        X: np.ndarray, lower: float | None, upper: float | None
+    ) -> tuple[float, float]:
         """Calculates interval using quantiles."""
         for name, value in (("lower", lower), ("upper", upper)):
             if value is not None and not 0 <= value <= 1:
@@ -76,10 +82,10 @@ class StatisticalInterval:
         upper_bound = (
             np.quantile(X, upper, method="higher") if upper is not None else np.nan
         )
-        return (lower_bound, upper_bound)
+        return lower_bound, upper_bound
 
     @staticmethod
-    def auto_select_method(X: np.ndarray) -> Union[str, Tuple[str, float, float]]:
+    def auto_select_method(X: np.ndarray) -> str:
         """Automatically selects the statistical interval method for outlier detection
         based on data distribution and dispersion (using Coefficient of Variation, CV).
         """
@@ -105,18 +111,19 @@ class StatisticalInterval:
     @staticmethod
     def compute_interval(
         X: np.ndarray,
-        method: Union[str, Callable, Tuple[float]],
-    ) -> Tuple[float, float]:
+        method: IntervalMethod,
+    ) -> tuple[float, float]:
         """
         Determines the lower and upper bounds on the specified method.
 
         Args:
-            data: Input data for threshold calculation.
+            X: Input data for threshold calculation.
             method: Method to compute interval. Can be:
                 - "auto" (automatically selects a method)
                 - "stddev" (mean ± 3σ)
                 - "mad" (median ± 3*MAD)
-                - "iqr" (median ± 1.5*IQR)
+                - "iqr" (Tukey fences: Q1 - 1.5*IQR, Q3 + 1.5*IQR)
+                - ("quantile", lower, upper), where either bound may be None
                 - A custom function (returns lower, upper bounds)
                 - A pre-defined tuple (lower, upper)
 
