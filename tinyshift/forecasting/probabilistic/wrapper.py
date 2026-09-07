@@ -67,17 +67,17 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
     @staticmethod
     def _validate_fit_parameters(
-        h: int,
+        horizon: int,
         n_windows: int,
         step_size: int | None,
     ) -> None:
         """Validate temporal calibration parameters."""
         if (
-            isinstance(h, (bool, np.bool_))
-            or not isinstance(h, (int, np.integer))
-            or h < 1
+            isinstance(horizon, (bool, np.bool_))
+            or not isinstance(horizon, (int, np.integer))
+            or horizon < 1
         ):
-            raise ValueError("h must be a positive integer.")
+            raise ValueError("horizon must be a positive integer.")
         if (
             isinstance(n_windows, (bool, np.bool_))
             or not isinstance(n_windows, (int, np.integer))
@@ -147,13 +147,15 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     def _calibrate_dispersion_cv(
         self,
         df: pd.DataFrame,
-        h: int,
+        horizon: int,
         n_windows: int,
         step_size: int | None,
         refit: bool | int,
     ) -> Calibration:
         """Generate OOF predictions and fit hierarchical dispersion."""
-        cv_df = self._dispersion_cv_predictions(df, h, n_windows, step_size, refit)
+        cv_df = self._dispersion_cv_predictions(
+            df, horizon, n_windows, step_size, refit
+        )
         calibrator = Calibrator(
             family=self.distribution_family_,
             id_col=self.id_col,
@@ -165,7 +167,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
     def _dispersion_cv_predictions(
         self,
         df: pd.DataFrame,
-        h: int,
+        horizon: int,
         n_windows: int,
         step_size: int | None,
         refit: bool | int,
@@ -173,7 +175,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         """Generate OOF means and identify their forecast horizons."""
         cv_df = self.fcst.cross_validation(
             df=df,
-            h=h,
+            h=horizon,
             n_windows=n_windows,
             step_size=step_size,
             refit=refit,
@@ -244,7 +246,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         time_col: str = "ds",
         target_col: str = "y",
         static_features: list | None = None,
-        h: int = 14,
+        horizon: int = 14,
         n_windows: int = 10,
         step_size: int | None = None,
         refit: bool | int = True,
@@ -264,7 +266,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         static_features : list of str, optional
             Static feature columns passed to MLForecast. An omitted or empty
             list means that all features are treated as dynamic.
-        h : int, default=14
+        horizon : int, default=14
             Forecast horizon of each temporal cross-validation window used for
             distribution calibration.
         n_windows : int, default=10
@@ -311,7 +313,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         """
 
         self._set_fit_state(id_col, time_col, target_col, static_features)
-        self._validate_fit_parameters(h, n_windows, step_size)
+        self._validate_fit_parameters(horizon, n_windows, step_size)
         self.distribution_family_ = self._resolve_distribution_family()
         numeric_label = "numeric counts" if self.distribution is None else "numeric"
         self._validate_training_target(
@@ -321,7 +323,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             numeric_label,
         )
         self.calibration_ = self._calibrate_dispersion_cv(
-            df_train, h, n_windows, step_size, refit
+            df_train, horizon, n_windows, step_size, refit
         )
         self.exog_cols_ = self._fit_base_forecaster(df_train)
 
