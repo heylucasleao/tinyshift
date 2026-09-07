@@ -15,7 +15,7 @@ evaluation helpers, and Newsvendor decisions exported from
 | `GammaFamily` | Model strictly positive continuous targets |
 | `LogNormalFamily` | Model positive continuous targets with a heavy right tail |
 | `WeibullFamily` | Model positive continuous targets with flexible shape |
-| `PanelPredictiveForecast` | Expose CDFs, quantiles and central intervals on the forecast panel |
+| `PanelPredictiveForecast` | Expose CDFs, survival probabilities, quantiles and central intervals on the forecast panel |
 | `DiscretePanelPredictiveForecast` | Additionally expose probability masses and integer quantiles |
 | `NewsvendorOptimizer` | Convert predictive distributions into inventory decisions |
 | `FirstStageForecasterEvaluator` | Evaluate the conditional-mean forecasting stage |
@@ -26,7 +26,7 @@ Users should normally import these objects from `tinyshift.forecasting`:
 ```python
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
-from tinyshift.forecasting import TwoStageForecasterWrapper
+from tinyshift.forecasting import TwoStageForecasterEvaluator, TwoStageForecasterWrapper
 
 point_forecaster = MLForecast(
     models=[LinearRegression()],
@@ -45,7 +45,13 @@ forecast = model.predict_distribution(h=14, X_df=future_exog)
 median = forecast.ppf(0.5)
 interval = forecast.interval(coverage=0.9)
 probabilities = forecast.cdf(values)
-masses = forecast.pmf([0, 1, 2])
+exceedance_risk = forecast.sf(values)
+masses = forecast.pmf([0, 1, 2])  # P(Y=0), P(Y=1), and P(Y=2)
+
+# Consumes the Q(0.05) and Q(0.95) columns produced by ppf.
+evaluation_frame = forecast.ppf([0.05, 0.5, 0.95])
+evaluation_frame["y"] = observed_values
+probabilistic_metrics = TwoStageForecasterEvaluator.evaluate(evaluation_frame)
 ```
 
 The default family is Negative Binomial, so the returned forecast is discrete.
@@ -151,12 +157,18 @@ Lognormal distributions calibrate `sigma` and use
 `scale = lambda_t * exp(-sigma² / 2)`. Weibull distributions calibrate shape
 and use `scale = lambda_t / Gamma(1 + 1 / shape)`. Both parameterizations
 preserve `E[Y] = lambda_t`.
-Both expose `cdf`, `ppf`, and `interval` internally. Discrete
-distributions additionally define `pmf(k) = cdf(k) - cdf(k - 1)`.
+Both expose `cdf`, `sf`, `ppf`, and `interval` internally. Discrete distributions
+additionally expose exact probability masses and survival probabilities.
 
-The forecast facade returns DataFrames and names quantile columns as percentages,
-for example `lambda_t-q-50` and `lambda_t-q-90`. Distribution implementation
-classes remain internal and are intentionally excluded from `forecasting.probabilistic.__all__`.
+The forecast facade uses mathematical column names: `cdf(5)` adds `P(Y<=5)`,
+`sf(5)` adds `P(Y>5)`, `ppf([0.5, 0.9])` adds `Q(0.5)` and `Q(0.9)`, and `interval(0.9)` adds
+`Q(0.05)` and `Q(0.95)`. For discrete forecasts, `pmf([0, 1, 2])` adds
+only `P(Y=0)`, `P(Y=1)`, and `P(Y=2)`. Request exceedance probabilities
+separately with `sf`, which evaluates them directly rather than by summing
+preceding masses.
+
+Distribution implementation classes remain internal and are intentionally
+excluded from `forecasting.probabilistic.__all__`.
 The fitted row-aligned distribution remains available as
 `forecast.distribution` for decision utilities that operate on the underlying
 mathematical object.

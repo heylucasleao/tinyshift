@@ -22,6 +22,10 @@ class PredictiveDistribution(ABC):
     def ppf(self, quantiles):
         """Evaluate the generalized inverse CDF."""
 
+    def sf(self, values):
+        """Evaluate the survival function, ``P(Y > value)``."""
+        return 1.0 - np.asarray(self.cdf(values))
+
     def interval(self, coverage: float = 0.95) -> np.ndarray:
         if not np.isfinite(coverage) or not 0.0 < coverage < 1.0:
             raise ValueError("coverage must be finite and strictly between 0 and 1.")
@@ -108,6 +112,21 @@ class NegativeBinomialPredictiveDistribution(
         result = nbinom.cdf(np.floor(values), sizes, probabilities)
         return self._finalize(result, squeeze)
 
+    def sf(self, values):
+        values, means, sizes, squeeze = self._align(values, "values")
+        probabilities = sizes / (sizes + means)
+        result = nbinom.sf(np.floor(values), sizes, probabilities)
+        return self._finalize(result, squeeze)
+
+    def pmf(self, values) -> np.ndarray:
+        values = np.asarray(values)
+        if not np.all(np.isfinite(values)) or np.any(values != np.floor(values)):
+            raise ValueError("pmf values must be finite integers.")
+        values, means, sizes, squeeze = self._align(values, "values")
+        probabilities = sizes / (sizes + means)
+        result = nbinom.pmf(values, sizes, probabilities)
+        return self._finalize(result, squeeze)
+
     def ppf(self, quantiles):
         quantiles, means, sizes, squeeze = self._align(quantiles, "quantiles")
         self._validate_quantiles(quantiles)
@@ -125,6 +144,11 @@ class GammaPredictiveDistribution(_ParametricDistribution):
     def cdf(self, values):
         values, means, shapes, squeeze = self._align(values, "values")
         result = gamma.cdf(values, a=shapes, scale=means / shapes)
+        return self._finalize(result, squeeze)
+
+    def sf(self, values):
+        values, means, shapes, squeeze = self._align(values, "values")
+        result = gamma.sf(values, a=shapes, scale=means / shapes)
         return self._finalize(result, squeeze)
 
     def ppf(self, quantiles):
@@ -146,6 +170,11 @@ class LogNormalPredictiveDistribution(_ParametricDistribution):
         result = lognorm.cdf(values, s=sigmas, scale=self._scales(means, sigmas))
         return self._finalize(result, squeeze)
 
+    def sf(self, values):
+        values, means, sigmas, squeeze = self._align(values, "values")
+        result = lognorm.sf(values, s=sigmas, scale=self._scales(means, sigmas))
+        return self._finalize(result, squeeze)
+
     def ppf(self, quantiles):
         quantiles, means, sigmas, squeeze = self._align(quantiles, "quantiles")
         self._validate_quantiles(quantiles)
@@ -163,6 +192,11 @@ class WeibullPredictiveDistribution(_ParametricDistribution):
     def cdf(self, values):
         values, means, shapes, squeeze = self._align(values, "values")
         result = weibull_min.cdf(values, c=shapes, scale=self._scales(means, shapes))
+        return self._finalize(result, squeeze)
+
+    def sf(self, values):
+        values, means, shapes, squeeze = self._align(values, "values")
+        result = weibull_min.sf(values, c=shapes, scale=self._scales(means, shapes))
         return self._finalize(result, squeeze)
 
     def ppf(self, quantiles):
