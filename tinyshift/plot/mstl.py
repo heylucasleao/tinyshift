@@ -80,7 +80,42 @@ class MSTLDiagnostics:
         self.nlags = nlags
 
     def fit(self, X: SeriesLike) -> "MSTLDiagnostics":
-        """Fit MSTL and calculate decomposition-level statistics."""
+        """
+        Fit MSTL to one ordered time series.
+
+        Parameters
+        ----------
+        X : numpy.ndarray, list of float, or pandas.Series
+            One-dimensional, regularly sampled observations in time order.
+            If ``X`` is a pandas Series, its index is preserved in
+            ``observed_`` and ``components_``. The input must represent a
+            single series; this method does not interpret or validate
+            ``unique_id`` columns, panel data, or timestamps, and it does not
+            sort observations. Ordering and series selection are the caller's
+            responsibility.
+
+        Returns
+        -------
+        MSTLDiagnostics
+            The fitted instance. The decomposition and diagnostics are
+            available through ``result_``, ``components_`` and
+            ``statistics_``.
+
+        Raises
+        ------
+        ValueError
+            If ``periods`` is empty or contains values that are not integers.
+        TypeError
+            If the input cannot be converted to a one-dimensional numeric
+            series by pandas or NumPy.
+
+        Notes
+        -----
+        MSTL periods are expressed in numbers of observations, not calendar
+        units. This method fits a single vector and is not a panel analyzer;
+        use a loop or a panel-specific analyzer when multiple ``unique_id``
+        values must be processed independently.
+        """
         X_series = self._prepare_series(X)
         self.periods_ = self._normalize_periods()
         self.observed_ = X_series
@@ -91,11 +126,13 @@ class MSTLDiagnostics:
         return self
 
     def _prepare_series(self, X: SeriesLike) -> pd.Series:
+        """Convert the input vector to a numeric Series."""
         if isinstance(X, pd.Series):
             return X.astype(np.float64)
         return pd.Series(np.asarray(X, dtype=np.float64))
 
     def _normalize_periods(self) -> List[int]:
+        """Normalize the configured seasonal period(s) to a list."""
         periods = (
             [self.periods] if isinstance(self.periods, int) else list(self.periods)
         )
@@ -104,12 +141,14 @@ class MSTLDiagnostics:
         return periods
 
     def _fit_mstl(self, X: pd.Series):
+        """Create and fit the statsmodels MSTL model."""
         from statsmodels.tsa.seasonal import MSTL
 
         model = MSTL(X, periods=self.periods_)
         return model, model.fit()
 
     def _calculate_statistics(self) -> pd.DataFrame:
+        """Calculate trend, seasonal, and residual diagnostics."""
         from statsmodels.stats.diagnostic import acorr_ljungbox
 
         _, r_squared, p_value_trend = trend_significance(self.observed_.values)
@@ -135,6 +174,7 @@ class MSTLDiagnostics:
         return pd.DataFrame(rows).set_index("metric")
 
     def _seasonality_statistics(self, y_detrended: np.ndarray) -> List[dict]:
+        """Calculate significance and strength for each seasonal component."""
         rows = []
         for period in self.periods_:
             seasonal_column = f"seasonal_{period}"
@@ -153,6 +193,7 @@ class MSTLDiagnostics:
         return rows
 
     def _require_fitted(self) -> None:
+        """Ensure that :meth:`fit` has been called before inspection."""
         if not hasattr(self, "components_"):
             raise RuntimeError("MSTLDiagnostics must be fitted before use.")
 
@@ -192,6 +233,7 @@ class MSTLDiagnostics:
         return fig.show(fig_type)
 
     def _summary_lines(self) -> List[str]:
+        """Format fitted statistics for the Plotly summary panel."""
         lines = []
         for metric, values in self.statistics_.iterrows():
             if metric == "trend":
@@ -207,6 +249,7 @@ class MSTLDiagnostics:
         return lines
 
     def _add_component_traces(self, fig, go, colors: List[str]) -> None:
+        """Add one Plotly line trace for each fitted component."""
         for row, column in enumerate(self.components_.columns, start=1):
             fig.add_trace(
                 go.Scatter(
@@ -222,6 +265,7 @@ class MSTLDiagnostics:
             )
 
     def _add_summary_trace(self, fig, go, row: int) -> None:
+        """Add the formatted statistics trace to the figure."""
         fig.add_trace(
             go.Scatter(
                 x=[0],
@@ -235,6 +279,7 @@ class MSTLDiagnostics:
         )
 
     def _configure_figure(self, fig, summary_row: int, height: int, width: int) -> None:
+        """Apply axes and layout settings to the decomposition figure."""
         fig.update_xaxes(visible=False, row=summary_row, col=1)
         fig.update_yaxes(visible=False, row=summary_row, col=1)
         fig.update_layout(
