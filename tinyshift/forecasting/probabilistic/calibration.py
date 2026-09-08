@@ -66,12 +66,18 @@ class Calibrator:
         target_col: str,
         prediction_col: str,
         horizon_col: str = "_horizon",
+        weight_col: str | None = None,
     ) -> None:
         self.family = family
         self.id_col = id_col
         self.target_col = target_col
         self.prediction_col = prediction_col
         self.horizon_col = horizon_col
+        self.weight_col = weight_col
+
+    def _sample_weight(self, frame: pd.DataFrame) -> np.ndarray | None:
+        """Extract optional row weights for the likelihood fit."""
+        return None if self.weight_col is None else frame[self.weight_col].to_numpy()
 
     def fit(self, cv_df: pd.DataFrame) -> Calibration:
         """Estimate the dispersion hierarchy from out-of-fold forecasts.
@@ -181,6 +187,7 @@ class Calibrator:
         fitted, log_dispersion, _ = self.family.fit_log_dispersion(
             cv_df[self.target_col].to_numpy(),
             cv_df[self.prediction_col].to_numpy(),
+            sample_weight=self._sample_weight(cv_df),
         )
         return fitted, log_dispersion
 
@@ -222,9 +229,7 @@ class Calibrator:
         }
         return values, between_group_log_dispersion_variance
 
-    def _fit_table(
-        self, cv_df: pd.DataFrame, group_columns: list[str]
-    ) -> pd.DataFrame:
+    def _fit_table(self, cv_df: pd.DataFrame, group_columns: list[str]) -> pd.DataFrame:
         """Fit raw log-dispersion and its variance for calibration groups."""
         rows = []
         for keys, group in cv_df.groupby(group_columns, sort=False):
@@ -233,11 +238,10 @@ class Calibrator:
                 self.family.fit_log_dispersion(
                     group[self.target_col].to_numpy(),
                     group[self.prediction_col].to_numpy(),
+                    sample_weight=self._sample_weight(group),
                 )
             )
-            rows.append(
-                (*keys, log_dispersion, log_dispersion_estimation_variance)
-            )
+            rows.append((*keys, log_dispersion, log_dispersion_estimation_variance))
         return pd.DataFrame(
             rows,
             columns=[

@@ -70,6 +70,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         horizon: int,
         n_windows: int,
         step_size: int | None,
+        decay: float,
+        weighted_refit: bool,
     ) -> None:
         """Validate temporal calibration parameters."""
         if (
@@ -90,6 +92,22 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             or step_size < 1
         ):
             raise ValueError("step_size must be None or a positive integer.")
+        if decay is not None and (
+            isinstance(decay, (bool, np.bool_))
+            or not isinstance(decay, (int, float, np.integer, np.floating))
+            or not 0.0 < float(decay) < 1.0
+        ):
+            raise ValueError("decay must be None or a number strictly between 0 and 1.")
+        if not isinstance(weighted_refit, (bool, np.bool_)):
+            raise TypeError("weighted_refit must be a boolean.")
+
+    @staticmethod
+    def _temporal_weights(values: pd.Series, decay: float) -> np.ndarray:
+        """Return mean-one exponential weights ordered by unique timestamp."""
+        times = pd.Index(pd.unique(values)).sort_values()
+        weights = float(decay) ** np.arange(len(times) - 1, -1, -1, dtype=float)
+        weights *= len(weights) / weights.sum()
+        return values.map(dict(zip(times, weights))).to_numpy(dtype=float)
 
     @staticmethod
     def _validate_training_target(
@@ -161,6 +179,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             id_col=self.id_col,
             target_col=self.target_col,
             prediction_col=self.model_name,
+            weight_col="_tinyshift_weight" if self.decay is not None else None,
         )
         return calibrator.fit(cv_df)
 
@@ -173,8 +192,16 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         refit: bool | int,
     ) -> pd.DataFrame:
         """Generate OOF means and identify their forecast horizons."""
+        cv_input = df
+        weight_col = None
+        if self.decay is not None and self.weighted_refit:
+            weight_col = "_tinyshift_weight"
+            if weight_col in df.columns:
+                raise ValueError(f"Training data already contains {weight_col!r}.")
+            cv_input = df.copy()
+            cv_input[weight_col] = self._temporal_weights(df[self.time_col], self.decay)
         cv_df = self.fcst.cross_validation(
-            df=df,
+            df=cv_input,
             h=horizon,
             n_windows=n_windows,
             step_size=step_size,
@@ -183,6 +210,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             time_col=self.time_col,
             target_col=self.target_col,
             static_features=self.static_features,
+            weight_col=weight_col,
         )
 
         if cv_df.empty:
@@ -190,6 +218,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         cv_df["_horizon"] = (
             cv_df.groupby([self.id_col, "cutoff"], sort=False).cumcount() + 1
         )
+        if self.decay is not None:
+            cv_df["_tinyshift_weight"] = self._temporal_weights(
+                cv_df["cutoff"], self.decay
+            )
         return cv_df
 
     def _fit_base_forecaster(
@@ -203,12 +235,21 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         List[str]
             Ordered list of exogenous features/lags used by MLForecast.
         """
+        fit_df = df
+        weight_col = None
+        if self.decay is not None and self.weighted_refit:
+            weight_col = "_tinyshift_weight"
+            if weight_col in df.columns:
+                raise ValueError(f"Training data already contains {weight_col!r}.")
+            fit_df = df.copy()
+            fit_df[weight_col] = self._temporal_weights(df[self.time_col], self.decay)
         self.fcst.fit(
-            df=df,
+            df=fit_df,
             id_col=self.id_col,
             time_col=self.time_col,
             target_col=self.target_col,
             static_features=self.static_features,
+            weight_col=weight_col,
         )
 
         return self.fcst.ts.features_order_
@@ -249,6 +290,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         n_windows: int = 10,
         step_size: int | None = None,
         refit: bool | int = True,
+        decay: float | None = 0.99,
+        weighted_refit: bool = True,
     ) -> "TwoStageForecasterWrapper":
         """Fit the point model and hierarchical shrinkage dispersions.
 
@@ -277,6 +320,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             MLForecast cross-validation refit policy. ``True`` refits at every
             window, ``False`` reuses the first fitted model, and an integer
             refits at that window interval.
+        decay : float or None, default=0.99
+            Exponential recency decay applied to dispersion-calibration windows.
+            ``None`` preserves equal weighting.
+        weighted_refit : bool, default=True
+            Also apply recency weights to the final conditional-mean model when
+            ``decay`` is enabled.
 
         Returns
         -------
@@ -312,7 +361,11 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         """
 
         self._set_fit_state(id_col, time_col, target_col, static_features)
-        self._validate_fit_parameters(horizon, n_windows, step_size)
+        self.decay = decay
+        self.weighted_refit = weighted_refit
+        self._validate_fit_parameters(
+            horizon, n_windows, step_size, decay, weighted_refit
+        )
         self.distribution_family_ = self._resolve_distribution_family()
         numeric_label = "numeric counts" if self.distribution is None else "numeric"
         self._validate_training_target(

@@ -1184,8 +1184,10 @@ class CustomGammaFamily(DistributionFamily):
     def validate_target(self, y):
         GammaFamily().validate_target(y)
 
-    def negative_log_likelihood(self, dispersion, y, means):
-        return GammaFamily().negative_log_likelihood(dispersion, y, means)
+    def negative_log_likelihood(self, dispersion, y, means, sample_weight=None):
+        return GammaFamily().negative_log_likelihood(
+            dispersion, y, means, sample_weight=sample_weight
+        )
 
     def distribution(self, means, dispersions):
         return GammaPredictiveDistribution(means, dispersions)
@@ -1320,6 +1322,51 @@ def test_fit_rejects_invalid_temporal_parameters(sample_train_data, fit_kwargs):
 
     with pytest.raises(ValueError, match="positive integer"):
         TwoStageForecasterWrapper(fcst).fit(sample_train_data, **fit_kwargs)
+
+
+@pytest.mark.parametrize("decay", [0.0, 1.0, -0.1, 1.1, True, "0.99"])
+def test_fit_rejects_invalid_decay(sample_train_data, decay):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(ValueError, match="decay"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data, decay=decay)
+
+
+def test_temporal_weights_favor_recent_dates_and_preserve_mass():
+    dates = pd.Series(pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02"]))
+
+    weights = TwoStageForecasterWrapper._temporal_weights(dates, decay=0.5)
+
+    assert weights.sum() == pytest.approx(3.0)
+    assert weights[0] > weights[2] > weights[1]
+
+
+def test_family_decay_weights_shift_dispersion_toward_recent_regime():
+    means = np.full(8, 10.0)
+    target = np.array([9.8, 10.2, 9.9, 10.1, 4.0, 16.0, 3.0, 17.0])
+    family = LogNormalFamily()
+    weights = 0.5 ** np.arange(len(target) - 1, -1, -1, dtype=float)
+    weights *= len(weights) / weights.sum()
+
+    unweighted = family.fit_dispersion(target, means)
+    weighted = family.fit_dispersion(target, means, sample_weight=weights)
+
+    assert weighted > unweighted
+
+
+def test_decay_does_not_change_shrinkage_formula():
+    fitted = pd.DataFrame(
+        {
+            "log_dispersion_raw": [0.0, 2.0],
+            "log_dispersion_estimation_variance": [0.5, 0.5],
+            "parent": [1.0, 1.0],
+        }
+    )
+
+    actual = Calibrator._shrink(fitted, between_group_log_dispersion_variance=0.5)
+
+    np.testing.assert_allclose(actual["weight"], [0.5, 0.5])
+    np.testing.assert_allclose(actual["log_dispersion"], [0.5, 1.5])
 
 
 def test_fit_propagates_cross_validation_failure(sample_train_data, monkeypatch):
