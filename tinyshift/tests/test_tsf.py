@@ -1340,6 +1340,72 @@ def test_fit_rejects_invalid_nexcp(sample_train_data, nexcp):
         TwoStageForecasterWrapper(fcst).fit(sample_train_data, nexcp=nexcp)
 
 
+@pytest.mark.parametrize("weighted_refit", [0, 1, "true", None])
+def test_fit_rejects_invalid_weighted_refit(sample_train_data, weighted_refit):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(TypeError, match="weighted_refit"):
+        TwoStageForecasterWrapper(fcst).fit(
+            sample_train_data, weighted_refit=weighted_refit
+        )
+
+
+def test_fit_no_longer_accepts_refit(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(TypeError, match="refit"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data, refit=False)
+
+
+@pytest.mark.parametrize(
+    ("nexcp", "weighted_refit", "point_weighted", "dispersion_weighted"),
+    [
+        (False, False, False, False),
+        (False, True, False, False),
+        (True, False, False, True),
+        (True, True, True, True),
+    ],
+)
+def test_nexcp_weighting_matrix(
+    nexcp, weighted_refit, point_weighted, dispersion_weighted
+):
+    class CapturingForecast:
+        def cross_validation(self, **kwargs):
+            self.kwargs = kwargs
+            return pd.DataFrame(
+                {
+                    "unique_id": ["A", "A"],
+                    "ds": pd.to_datetime(["2024-01-03", "2024-01-04"]),
+                    "cutoff": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                    "y": [1.0, 1.0],
+                    "Model": [1.0, 1.0],
+                }
+            )
+
+    fcst = CapturingForecast()
+    wrapper = TwoStageForecasterWrapper(fcst)
+    wrapper.id_col = "unique_id"
+    wrapper.time_col = "ds"
+    wrapper.target_col = "y"
+    wrapper.static_features = []
+    wrapper.nexcp = nexcp
+    wrapper.decay = 0.99
+    wrapper.weighted_refit = weighted_refit
+    train = pd.DataFrame(
+        {
+            "unique_id": ["A", "A"],
+            "ds": pd.to_datetime(["2023-12-30", "2023-12-31"]),
+            "y": [1.0, 1.0],
+        }
+    )
+
+    result = wrapper._dispersion_cv_predictions(train, 1, 2, None)
+
+    assert (fcst.kwargs["weight_col"] is not None) is point_weighted
+    assert ("_tinyshift_weight" in result) is dispersion_weighted
+    assert "refit" not in fcst.kwargs
+
+
 def test_temporal_weights_favor_recent_dates_and_preserve_mass():
     dates = pd.Series(pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02"]))
 
