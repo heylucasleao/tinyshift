@@ -1332,6 +1332,14 @@ def test_fit_rejects_invalid_decay(sample_train_data, decay):
         TwoStageForecasterWrapper(fcst).fit(sample_train_data, decay=decay)
 
 
+@pytest.mark.parametrize("nexcp", [0, 1, "true", None])
+def test_fit_rejects_invalid_nexcp(sample_train_data, nexcp):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(TypeError, match="nexcp"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data, nexcp=nexcp)
+
+
 def test_temporal_weights_favor_recent_dates_and_preserve_mass():
     dates = pd.Series(pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02"]))
 
