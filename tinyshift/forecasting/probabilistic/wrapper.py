@@ -187,7 +187,6 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         if cv_df.empty:
             raise RuntimeError("Dispersion calibration produced no series.")
-        cv_df = cv_df.copy()
         cv_df["_horizon"] = (
             cv_df.groupby([self.id_col, "cutoff"], sort=False).cumcount() + 1
         )
