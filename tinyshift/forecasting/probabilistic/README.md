@@ -36,9 +36,12 @@ point_forecaster = MLForecast(
 
 model = TwoStageForecasterWrapper(point_forecaster).fit(
     train_df,
-            horizon=14,
+    horizon=14,
     n_windows=5,
     step_size=14,
+    nexcp=True,
+    decay=0.99,
+    weighted_refit=True,
 )
 
 forecast = model.predict_distribution(h=14, X_df=future_exog)
@@ -86,15 +89,23 @@ shrunk in `log(dispersion)` toward their parent using weights inferred from the
 likelihood curvature and empirical between-group variance. No regularization
 constant is required from the user. The global fit is retained as the fallback
 for series not seen during calibration. MLForecast is then fitted on all rows.
+By default, `nexcp=False` gives all observations equal weight. Set `nexcp=True`
+to apply exponential recency weights to dispersion calibration. With
+`nexcp=True, weighted_refit=False`, only dispersion calibration is weighted;
+with `weighted_refit=True`, the OOF and final point-forecaster fits are weighted
+too. `decay` controls the rate while NexCP is enabled. Temporal cross-validation
+uses MLForecast's default refit behavior.
 
 For each calibration group, the family minimizes the negative log-likelihood
 
 ```text
-d_hat = argmin_d -sum_t log p(y_t | lambda_t, d)
+d_hat = argmin_d -sum_t w_t log p(y_t | lambda_t, d)
 ```
 
 in which `lambda_t` is an out-of-fold conditional mean and `d` is the
-family-specific dispersion. The local variance is approximated from the inverse
+family-specific dispersion. With `nexcp=True`, `w_t` decays exponentially from
+the newest calibration window toward the oldest; with `nexcp=False`, every
+`w_t` equals one. The local variance is approximated from the inverse
 curvature of that objective in `log_dispersion = log(d)`. A raw group estimate is then
 shrunk toward its hierarchical parent:
 
