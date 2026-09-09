@@ -34,9 +34,20 @@ class DistributionFamily(BaseEstimator, ABC):
 
     @abstractmethod
     def negative_log_likelihood(
-        self, dispersion: float, y: np.ndarray, conditional_means: np.ndarray
+        self,
+        dispersion: float,
+        y: np.ndarray,
+        conditional_means: np.ndarray,
+        sample_weight: np.ndarray | None = None,
     ) -> float:
         """Return the negative log likelihood for one dispersion value."""
+
+    @staticmethod
+    def _weighted_nll(log_likelihood, sample_weight=None) -> float:
+        """Reduce pointwise log-likelihoods, optionally using row weights."""
+        if sample_weight is None:
+            return float(-np.sum(log_likelihood))
+        return float(-np.sum(sample_weight * log_likelihood))
 
     @abstractmethod
     def distribution(self, conditional_means, dispersions) -> PredictiveDistribution:
@@ -68,27 +79,66 @@ class DistributionFamily(BaseEstimator, ABC):
             raise RuntimeError(f"Dispersion optimization failed: {result.message}")
         return float(result.x)
 
-    def fit_dispersion(self, y: np.ndarray, conditional_means: np.ndarray) -> float:
+    def _validate_sample_weight(self, sample_weight, shape) -> np.ndarray | None:
+        if sample_weight is None:
+            return None
+        sample_weight = np.asarray(sample_weight, dtype=float)
+        if sample_weight.shape != shape:
+            raise ValueError("sample_weight must match the calibration data shape.")
+        if (
+            not np.all(np.isfinite(sample_weight))
+            or np.any(sample_weight < 0.0)
+            or sample_weight.sum() <= 0.0
+        ):
+            raise ValueError(
+                "sample_weight must be finite, non-negative, and have positive mass."
+            )
+        return sample_weight
+
+    def fit_dispersion(
+        self, y: np.ndarray, conditional_means: np.ndarray, sample_weight=None
+    ) -> float:
         """Estimate dispersion by bounded maximum likelihood."""
         y, conditional_means = self._validate_calibration_data(y, conditional_means)
+        sample_weight = self._validate_sample_weight(sample_weight, y.shape)
+
+        def objective(value):
+            if sample_weight is None:
+                return self.negative_log_likelihood(value, y, conditional_means)
+            return self.negative_log_likelihood(
+                value, y, conditional_means, sample_weight=sample_weight
+            )
+
         result = minimize_scalar(
-            lambda value: self.negative_log_likelihood(value, y, conditional_means),
+            objective,
             bounds=self.dispersion_bounds,
             method="bounded",
         )
         return self._fitted_dispersion(result)
 
     def fit_log_dispersion(
-        self, y: np.ndarray, conditional_means: np.ndarray, epsilon: float = 0.05
+        self,
+        y: np.ndarray,
+        conditional_means: np.ndarray,
+        epsilon: float = 0.05,
+        sample_weight=None,
     ) -> tuple[float, float, float]:
         """Estimate dispersion and the local variance of its logarithm."""
         y, conditional_means = self._validate_calibration_data(y, conditional_means)
-        dispersion = self.fit_dispersion(y, conditional_means)
+        sample_weight = self._validate_sample_weight(sample_weight, y.shape)
+        dispersion = self.fit_dispersion(y, conditional_means, sample_weight)
         log_dispersion = float(np.log(dispersion))
 
         def objective(log_dispersion_value: float) -> float:
+            if sample_weight is None:
+                return self.negative_log_likelihood(
+                    np.exp(log_dispersion_value), y, conditional_means
+                )
             return self.negative_log_likelihood(
-                np.exp(log_dispersion_value), y, conditional_means
+                np.exp(log_dispersion_value),
+                y,
+                conditional_means,
+                sample_weight=sample_weight,
             )
 
         curvature = (
@@ -126,14 +176,16 @@ class NegativeBinomialFamily(DistributionFamily):
                 "Target values must be integer counts for the Negative Binomial model."
             )
 
-    def negative_log_likelihood(self, dispersion, y, conditional_means) -> float:
+    def negative_log_likelihood(
+        self, dispersion, y, conditional_means, sample_weight=None
+    ) -> float:
         if not np.isfinite(dispersion) or dispersion <= 0:
             return 1e10
         conditional_means = np.maximum(conditional_means, 1e-6)
         probability = dispersion / (dispersion + conditional_means)
         log_probability = nbinom.logpmf(y, dispersion, probability)
         log_probability = np.where(np.isneginf(log_probability), -1e2, log_probability)
-        return float(-np.sum(log_probability))
+        return self._weighted_nll(log_probability, sample_weight)
 
     def distribution(self, conditional_means, dispersions):
         return NegativeBinomialPredictiveDistribution(conditional_means, dispersions)
@@ -160,7 +212,9 @@ class GammaFamily(DistributionFamily):
                 "Target values must be strictly positive for the Gamma model."
             )
 
-    def negative_log_likelihood(self, dispersion, y, conditional_means) -> float:
+    def negative_log_likelihood(
+        self, dispersion, y, conditional_means, sample_weight=None
+    ) -> float:
         if not np.isfinite(dispersion) or dispersion <= 0:
             return 1e10
         conditional_means = np.maximum(conditional_means, 1e-6)
@@ -169,7 +223,7 @@ class GammaFamily(DistributionFamily):
         )
         if not np.all(np.isfinite(log_density)):
             return 1e10
-        return float(-np.sum(log_density))
+        return self._weighted_nll(log_density, sample_weight)
 
     def distribution(self, conditional_means, dispersions):
         return GammaPredictiveDistribution(conditional_means, dispersions)
@@ -196,7 +250,9 @@ class LogNormalFamily(DistributionFamily):
                 "Target values must be strictly positive for the Lognormal model."
             )
 
-    def negative_log_likelihood(self, dispersion, y, conditional_means) -> float:
+    def negative_log_likelihood(
+        self, dispersion, y, conditional_means, sample_weight=None
+    ) -> float:
         if not np.isfinite(dispersion) or dispersion <= 0:
             return 1e10
         conditional_means = np.maximum(conditional_means, 1e-6)
@@ -204,7 +260,7 @@ class LogNormalFamily(DistributionFamily):
         log_density = lognorm.logpdf(y, s=dispersion, scale=scale)
         if not np.all(np.isfinite(log_density)):
             return 1e10
-        return float(-np.sum(log_density))
+        return self._weighted_nll(log_density, sample_weight)
 
     def distribution(self, conditional_means, dispersions):
         return LogNormalPredictiveDistribution(conditional_means, dispersions)
@@ -231,7 +287,9 @@ class WeibullFamily(DistributionFamily):
                 "Target values must be strictly positive for the Weibull model."
             )
 
-    def negative_log_likelihood(self, dispersion, y, conditional_means) -> float:
+    def negative_log_likelihood(
+        self, dispersion, y, conditional_means, sample_weight=None
+    ) -> float:
         if not np.isfinite(dispersion) or dispersion <= 0:
             return 1e10
         conditional_means = np.maximum(conditional_means, 1e-6)
@@ -239,7 +297,7 @@ class WeibullFamily(DistributionFamily):
         log_density = weibull_min.logpdf(y, c=dispersion, scale=scale)
         if not np.all(np.isfinite(log_density)):
             return 1e10
-        return float(-np.sum(log_density))
+        return self._weighted_nll(log_density, sample_weight)
 
     def distribution(self, conditional_means, dispersions):
         return WeibullPredictiveDistribution(conditional_means, dispersions)

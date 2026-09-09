@@ -70,6 +70,9 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         horizon: int,
         n_windows: int,
         step_size: int | None,
+        nexcp: bool,
+        decay: float,
+        weighted_refit: bool,
     ) -> None:
         """Validate temporal calibration parameters."""
         if (
@@ -90,6 +93,24 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             or step_size < 1
         ):
             raise ValueError("step_size must be None or a positive integer.")
+        if not isinstance(nexcp, (bool, np.bool_)):
+            raise TypeError("nexcp must be a boolean.")
+        if not isinstance(weighted_refit, (bool, np.bool_)):
+            raise TypeError("weighted_refit must be a boolean.")
+        if (
+            isinstance(decay, (bool, np.bool_))
+            or not isinstance(decay, (int, float, np.integer, np.floating))
+            or not 0.0 < float(decay) < 1.0
+        ):
+            raise ValueError("decay must be a number strictly between 0 and 1.")
+
+    @staticmethod
+    def _temporal_weights(values: pd.Series, decay: float) -> np.ndarray:
+        """Return mean-one exponential weights ordered by unique timestamp."""
+        times = pd.Index(pd.unique(values)).sort_values()
+        weights = float(decay) ** np.arange(len(times) - 1, -1, -1, dtype=float)
+        weights *= len(weights) / weights.sum()
+        return values.map(dict(zip(times, weights))).to_numpy(dtype=float)
 
     @staticmethod
     def _validate_training_target(
@@ -150,17 +171,15 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         horizon: int,
         n_windows: int,
         step_size: int | None,
-        refit: bool | int,
     ) -> Calibration:
         """Generate OOF predictions and fit hierarchical dispersion."""
-        cv_df = self._dispersion_cv_predictions(
-            df, horizon, n_windows, step_size, refit
-        )
+        cv_df = self._dispersion_cv_predictions(df, horizon, n_windows, step_size)
         calibrator = Calibrator(
             family=self.distribution_family_,
             id_col=self.id_col,
             target_col=self.target_col,
             prediction_col=self.model_name,
+            weight_col="_tinyshift_weight" if self.nexcp else None,
         )
         return calibrator.fit(cv_df)
 
@@ -170,19 +189,26 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         horizon: int,
         n_windows: int,
         step_size: int | None,
-        refit: bool | int,
     ) -> pd.DataFrame:
         """Generate OOF means and identify their forecast horizons."""
+        cv_input = df
+        weight_col = None
+        if self.nexcp and self.weighted_refit:
+            weight_col = "_tinyshift_weight"
+            if weight_col in df.columns:
+                raise ValueError(f"Training data already contains {weight_col!r}.")
+            cv_input = df.copy()
+            cv_input[weight_col] = self._temporal_weights(df[self.time_col], self.decay)
         cv_df = self.fcst.cross_validation(
-            df=df,
+            df=cv_input,
             h=horizon,
             n_windows=n_windows,
             step_size=step_size,
-            refit=refit,
             id_col=self.id_col,
             time_col=self.time_col,
             target_col=self.target_col,
             static_features=self.static_features,
+            weight_col=weight_col,
         )
 
         if cv_df.empty:
@@ -190,6 +216,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         cv_df["_horizon"] = (
             cv_df.groupby([self.id_col, "cutoff"], sort=False).cumcount() + 1
         )
+        if self.nexcp:
+            cv_df["_tinyshift_weight"] = self._temporal_weights(
+                cv_df["cutoff"], self.decay
+            )
         return cv_df
 
     def _fit_base_forecaster(
@@ -203,12 +233,21 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         List[str]
             Ordered list of exogenous features/lags used by MLForecast.
         """
+        fit_df = df
+        weight_col = None
+        if self.nexcp and self.weighted_refit:
+            weight_col = "_tinyshift_weight"
+            if weight_col in df.columns:
+                raise ValueError(f"Training data already contains {weight_col!r}.")
+            fit_df = df.copy()
+            fit_df[weight_col] = self._temporal_weights(df[self.time_col], self.decay)
         self.fcst.fit(
-            df=df,
+            df=fit_df,
             id_col=self.id_col,
             time_col=self.time_col,
             target_col=self.target_col,
             static_features=self.static_features,
+            weight_col=weight_col,
         )
 
         return self.fcst.ts.features_order_
@@ -248,7 +287,9 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         horizon: int = 14,
         n_windows: int = 10,
         step_size: int | None = None,
-        refit: bool | int = True,
+        nexcp: bool = False,
+        decay: float = 0.99,
+        weighted_refit: bool = True,
     ) -> "TwoStageForecasterWrapper":
         """Fit the point model and hierarchical shrinkage dispersions.
 
@@ -273,10 +314,14 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         step_size : int or None, default=None
             Number of observations between consecutive cross-validation
             cutoffs. ``None`` delegates the default behavior to MLForecast.
-        refit : bool or int, default=True
-            MLForecast cross-validation refit policy. ``True`` refits at every
-            window, ``False`` reuses the first fitted model, and an integer
-            refits at that window interval.
+        nexcp : bool, default=False
+            Apply exponential recency weights to dispersion calibration.
+        decay : float, default=0.99
+            Multiplicative recency-decay factor in ``(0, 1)`` when ``nexcp=True``.
+        weighted_refit : bool, default=True
+            Also apply recency weights to OOF mean-model fits and the final
+            conditional-mean model when ``nexcp=True``. Temporal cross-validation
+            always refits the point model at every window.
 
         Returns
         -------
@@ -312,7 +357,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         """
 
         self._set_fit_state(id_col, time_col, target_col, static_features)
-        self._validate_fit_parameters(horizon, n_windows, step_size)
+        self.nexcp = nexcp
+        self.decay = decay
+        self.weighted_refit = weighted_refit
+        self._validate_fit_parameters(
+            horizon, n_windows, step_size, nexcp, decay, weighted_refit
+        )
         self.distribution_family_ = self._resolve_distribution_family()
         numeric_label = "numeric counts" if self.distribution is None else "numeric"
         self._validate_training_target(
@@ -322,7 +372,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
             numeric_label,
         )
         self.calibration_ = self._calibrate_dispersion_cv(
-            df_train, horizon, n_windows, step_size, refit
+            df_train, horizon, n_windows, step_size
         )
         self.exog_cols_ = self._fit_base_forecaster(df_train)
 

@@ -1184,8 +1184,10 @@ class CustomGammaFamily(DistributionFamily):
     def validate_target(self, y):
         GammaFamily().validate_target(y)
 
-    def negative_log_likelihood(self, dispersion, y, means):
-        return GammaFamily().negative_log_likelihood(dispersion, y, means)
+    def negative_log_likelihood(self, dispersion, y, means, sample_weight=None):
+        return GammaFamily().negative_log_likelihood(
+            dispersion, y, means, sample_weight=sample_weight
+        )
 
     def distribution(self, means, dispersions):
         return GammaPredictiveDistribution(means, dispersions)
@@ -1320,6 +1322,125 @@ def test_fit_rejects_invalid_temporal_parameters(sample_train_data, fit_kwargs):
 
     with pytest.raises(ValueError, match="positive integer"):
         TwoStageForecasterWrapper(fcst).fit(sample_train_data, **fit_kwargs)
+
+
+@pytest.mark.parametrize("decay", [0.0, 1.0, -0.1, 1.1, True, "0.99"])
+def test_fit_rejects_invalid_decay(sample_train_data, decay):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(ValueError, match="decay"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data, decay=decay)
+
+
+@pytest.mark.parametrize("nexcp", [0, 1, "true", None])
+def test_fit_rejects_invalid_nexcp(sample_train_data, nexcp):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(TypeError, match="nexcp"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data, nexcp=nexcp)
+
+
+@pytest.mark.parametrize("weighted_refit", [0, 1, "true", None])
+def test_fit_rejects_invalid_weighted_refit(sample_train_data, weighted_refit):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(TypeError, match="weighted_refit"):
+        TwoStageForecasterWrapper(fcst).fit(
+            sample_train_data, weighted_refit=weighted_refit
+        )
+
+
+def test_fit_no_longer_accepts_refit(sample_train_data):
+    fcst = MLForecast(models=[LinearRegression()], freq="D", lags=[1])
+
+    with pytest.raises(TypeError, match="refit"):
+        TwoStageForecasterWrapper(fcst).fit(sample_train_data, refit=False)
+
+
+@pytest.mark.parametrize(
+    ("nexcp", "weighted_refit", "point_weighted", "dispersion_weighted"),
+    [
+        (False, False, False, False),
+        (False, True, False, False),
+        (True, False, False, True),
+        (True, True, True, True),
+    ],
+)
+def test_nexcp_weighting_matrix(
+    nexcp, weighted_refit, point_weighted, dispersion_weighted
+):
+    class CapturingForecast:
+        def cross_validation(self, **kwargs):
+            self.kwargs = kwargs
+            return pd.DataFrame(
+                {
+                    "unique_id": ["A", "A"],
+                    "ds": pd.to_datetime(["2024-01-03", "2024-01-04"]),
+                    "cutoff": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                    "y": [1.0, 1.0],
+                    "Model": [1.0, 1.0],
+                }
+            )
+
+    fcst = CapturingForecast()
+    wrapper = TwoStageForecasterWrapper(fcst)
+    wrapper.id_col = "unique_id"
+    wrapper.time_col = "ds"
+    wrapper.target_col = "y"
+    wrapper.static_features = []
+    wrapper.nexcp = nexcp
+    wrapper.decay = 0.99
+    wrapper.weighted_refit = weighted_refit
+    train = pd.DataFrame(
+        {
+            "unique_id": ["A", "A"],
+            "ds": pd.to_datetime(["2023-12-30", "2023-12-31"]),
+            "y": [1.0, 1.0],
+        }
+    )
+
+    result = wrapper._dispersion_cv_predictions(train, 1, 2, None)
+
+    assert (fcst.kwargs["weight_col"] is not None) is point_weighted
+    assert ("_tinyshift_weight" in result) is dispersion_weighted
+    assert "refit" not in fcst.kwargs
+
+
+def test_temporal_weights_favor_recent_dates_and_preserve_mass():
+    dates = pd.Series(pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02"]))
+
+    weights = TwoStageForecasterWrapper._temporal_weights(dates, decay=0.5)
+
+    assert weights.sum() == pytest.approx(3.0)
+    assert weights[0] > weights[2] > weights[1]
+
+
+def test_family_decay_weights_shift_dispersion_toward_recent_regime():
+    means = np.full(8, 10.0)
+    target = np.array([9.8, 10.2, 9.9, 10.1, 4.0, 16.0, 3.0, 17.0])
+    family = LogNormalFamily()
+    weights = 0.5 ** np.arange(len(target) - 1, -1, -1, dtype=float)
+    weights *= len(weights) / weights.sum()
+
+    unweighted = family.fit_dispersion(target, means)
+    weighted = family.fit_dispersion(target, means, sample_weight=weights)
+
+    assert weighted > unweighted
+
+
+def test_decay_does_not_change_shrinkage_formula():
+    fitted = pd.DataFrame(
+        {
+            "log_dispersion_raw": [0.0, 2.0],
+            "log_dispersion_estimation_variance": [0.5, 0.5],
+            "parent": [1.0, 1.0],
+        }
+    )
+
+    actual = Calibrator._shrink(fitted, between_group_log_dispersion_variance=0.5)
+
+    np.testing.assert_allclose(actual["weight"], [0.5, 0.5])
+    np.testing.assert_allclose(actual["log_dispersion"], [0.5, 1.5])
 
 
 def test_fit_propagates_cross_validation_failure(sample_train_data, monkeypatch):
