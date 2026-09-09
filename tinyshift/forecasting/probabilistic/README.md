@@ -89,13 +89,12 @@ shrunk in `log(dispersion)` toward their parent using weights inferred from the
 likelihood curvature and empirical between-group variance. No regularization
 constant is required from the user. The global fit is retained as the fallback
 for series not seen during calibration. MLForecast is then fitted on all rows.
-By default, NexCP-style exponential recency weights are applied both to the
-point-forecaster fits and to dispersion calibration. Set `nexcp=False` to give
-all observations equal weight. With `nexcp=True, weighted_refit=False`, only
-dispersion calibration is weighted; with `weighted_refit=True`, the OOF and
-final point-forecaster fits are weighted too. `decay` controls the rate while
-NexCP is enabled. Temporal cross-validation uses MLForecast's default refit
-behavior.
+By default, `nexcp=False` gives all observations equal weight. Set `nexcp=True`
+to apply exponential recency weights to dispersion calibration. With
+`nexcp=True, weighted_refit=False`, only dispersion calibration is weighted;
+with `weighted_refit=True`, the OOF and final point-forecaster fits are weighted
+too. `decay` controls the rate while NexCP is enabled. Temporal cross-validation
+uses MLForecast's default refit behavior.
 
 For each calibration group, the family minimizes the negative log-likelihood
 

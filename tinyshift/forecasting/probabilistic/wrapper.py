@@ -287,7 +287,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         horizon: int = 14,
         n_windows: int = 10,
         step_size: int | None = None,
-        nexcp: bool = True,
+        nexcp: bool = False,
         decay: float = 0.99,
         weighted_refit: bool = True,
     ) -> "TwoStageForecasterWrapper":
@@ -314,7 +314,7 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         step_size : int or None, default=None
             Number of observations between consecutive cross-validation
             cutoffs. ``None`` delegates the default behavior to MLForecast.
-        nexcp : bool, default=True
+        nexcp : bool, default=False
             Apply exponential recency weights to dispersion calibration.
         decay : float, default=0.99
             Multiplicative recency-decay factor in ``(0, 1)`` when ``nexcp=True``.
