@@ -175,34 +175,40 @@ def harmonic_significance(
     period: int,
 ) -> Tuple[float, float]:
     """
-    Test whether a sinusoidal component at a candidate period is significant.
+    Test the significance of a harmonic component at a candidate period.
 
-    The function regresses the detrended series on sine and cosine terms for the
-    supplied period and returns the resulting F statistic and p-value.
+    A harmonic regression is fitted using sine and cosine terms at the
+    candidate period:
+
+        y(t) = intercept
+             + beta_sin * sin(2*pi*t / period)
+             + beta_cos * cos(2*pi*t / period)
+             + error
+
+    The null hypothesis is that the harmonic component does not explain
+    significant variation in the series:
+
+        H0: beta_sin = beta_cos = 0
+
+    The hypothesis is evaluated with an F-test comparing the variation
+    explained by the harmonic regression with the residual variation.
 
     Parameters
     ----------
-    y_detrended : Union[np.ndarray, List[float], pd.Series]
+    y_detrended : array-like
         One-dimensional detrended series.
     period : int
         Candidate seasonal period in observations. Must be greater than 1.
 
     Returns
     -------
-    Tuple[float, float]
-        (f_statistic, p_value)
-        f_statistic : float
-            F statistic for the harmonic regression.
-        p_value : float
-            p-value associated with the null hypothesis that the seasonal term is
-            not significant.
-
-    Notes
-    -----
-    This diagnostic is used to assess whether an apparent cycle at a given period
-    is statistically meaningful beyond a generic harmonic fluctuation.
+    f_statistic : float
+        F statistic for the joint significance of the sine and cosine terms.
+    p_value : float
+        P-value associated with the F statistic.
     """
     y_detrended = np.asarray(y_detrended, dtype=np.float64)
+
     if y_detrended.ndim != 1:
         raise ValueError("Input data must be 1-dimensional")
     if not np.isfinite(y_detrended).all():
@@ -210,26 +216,57 @@ def harmonic_significance(
     if isinstance(period, bool) or not isinstance(period, int) or period <= 1:
         raise ValueError("'period' must be an integer greater than 1")
 
-    n = len(y_detrended)
-    t = np.arange(n)
-    sin_t = np.sin(2 * np.pi * t / period)
-    cos_t = np.cos(2 * np.pi * t / period)
-    X_design = np.column_stack([np.ones(n), sin_t, cos_t])
+    # Build the harmonic regression.
+    n_observations = len(y_detrended)
+    time_index = np.arange(n_observations)
 
-    beta, _, _, _ = np.linalg.lstsq(X_design, y_detrended, rcond=None)
-    y_pred = X_design @ beta
-    ss_tot = np.sum((y_detrended - np.mean(y_detrended)) ** 2)
-    ss_res = np.sum((y_detrended - y_pred) ** 2)
-    ss_reg = ss_tot - ss_res
+    sine_component = np.sin(2 * np.pi * time_index / period)
+    cosine_component = np.cos(2 * np.pi * time_index / period)
 
-    model_rank = np.linalg.matrix_rank(X_design)
-    df_reg = model_rank - 1
-    df_res = n - model_rank
+    design_matrix = np.column_stack(
+        [
+            np.ones(n_observations),
+            sine_component,
+            cosine_component,
+        ]
+    )
 
-    if df_reg > 0 and df_res > 0 and ss_res > 0:
-        f_stat = (ss_reg / df_reg) / (ss_res / df_res)
-        p_val = scipy.stats.f.sf(f_stat, df_reg, df_res)
-    else:
-        f_stat, p_val = 0.0, 1.0
+    coefficients, _, _, _ = np.linalg.lstsq(
+        design_matrix,
+        y_detrended,
+        rcond=None,
+    )
 
-    return float(f_stat), float(p_val)
+    predicted_values = design_matrix @ coefficients
+
+    # Decompose the total variation into explained and residual variation.
+    total_sum_squares = np.sum((y_detrended - np.mean(y_detrended)) ** 2)
+    residual_sum_squares = np.sum((y_detrended - predicted_values) ** 2)
+    explained_sum_squares = max(
+        0.0,
+        total_sum_squares - residual_sum_squares,
+    )
+
+    model_rank = np.linalg.matrix_rank(design_matrix)
+    harmonic_degrees_freedom = model_rank - 1
+    residual_degrees_freedom = n_observations - model_rank
+
+    if (
+        harmonic_degrees_freedom <= 0
+        or residual_degrees_freedom <= 0
+        or residual_sum_squares <= 0
+    ):
+        return 0.0, 1.0
+
+    explained_mean_square = explained_sum_squares / harmonic_degrees_freedom
+    residual_mean_square = residual_sum_squares / residual_degrees_freedom
+
+    f_statistic = explained_mean_square / residual_mean_square
+
+    p_value = scipy.stats.f.sf(
+        f_statistic,
+        harmonic_degrees_freedom,
+        residual_degrees_freedom,
+    )
+
+    return float(f_statistic), float(p_value)

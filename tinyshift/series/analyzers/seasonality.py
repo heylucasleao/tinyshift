@@ -239,6 +239,37 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
     ) -> np.ndarray:
         """
         Find significant peaks in non-DC spectral power.
+
+        A spectral peak is considered significant when it satisfies both:
+
+        1. Height criterion::
+
+               peak_power >= background * noise_threshold_factor
+
+           This ensures that the peak has sufficiently high power relative
+           to the typical spectral background.
+
+        2. Prominence criterion::
+
+               peak_prominence >= background
+
+           This ensures that the peak stands out sufficiently from its local
+           spectral surroundings, rather than merely belonging to a region
+           of generally high power.
+
+        The spectral background is estimated by ``_spectral_background``
+        from the central tendency of the non-DC spectral power.
+
+        Parameters
+        ----------
+        power : np.ndarray
+            Non-DC spectral power values.
+
+        Returns
+        -------
+        np.ndarray
+            Indices of spectral peaks satisfying both the height and
+            prominence criteria.
         """
         if power.size == 0:
             return np.array([], dtype=int)
@@ -288,7 +319,7 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
 
         return period
 
-    def _extract_periods(
+    def _extract_candidate_periods(
         self,
         frequencies: np.ndarray,
         power: np.ndarray,
@@ -296,7 +327,36 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
         n_observations: int,
     ) -> List[int]:
         """
-        Convert ranked spectral peaks into unique candidate periods.
+        Extract candidate seasonal periods from spectral peaks.
+
+        Peaks are ranked by decreasing spectral power and their corresponding
+        frequencies are converted to periods as::
+
+            period = round(1 / frequency)
+
+        Candidate periods greater than half the number of observations are
+        discarded, ensuring that approximately two complete cycles can be
+        observed in the series. Duplicate periods are removed and at most
+        ``top_k`` candidates are retained.
+
+        This step identifies candidate periods from the spectral structure
+        only. Statistical significance is evaluated separately.
+
+        Parameters
+        ----------
+        frequencies : np.ndarray
+            Frequencies associated with the spectral power values.
+        power : np.ndarray
+            Spectral power values.
+        peaks : np.ndarray
+            Indices of the detected spectral peaks.
+        n_observations : int
+            Number of observations in the input series.
+
+        Returns
+        -------
+        list[int]
+            Candidate seasonal periods ordered by decreasing spectral power.
         """
         ranked_peaks = sorted(
             peaks,
@@ -359,7 +419,7 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
             # original FFT indices.
             peaks = peaks + 1
 
-        periods = self._extract_periods(
+        periods = self._extract_candidate_periods(
             frequencies=frequencies,
             power=power,
             peaks=peaks,
