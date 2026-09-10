@@ -43,8 +43,15 @@ class DistributionFamily(BaseEstimator, ABC):
         """Return the negative log likelihood for one dispersion value."""
 
     @staticmethod
-    def _weighted_nll(log_likelihood, sample_weight=None) -> float:
-        """Reduce pointwise log-likelihoods, optionally using row weights."""
+    def _reduce_negative_log_likelihood(
+        log_likelihood, sample_weight=None
+    ) -> float:
+        """Reduce pointwise log-likelihoods, using weights when supplied.
+
+        ``sample_weight=None`` is the ordinary negative log-likelihood.  This
+        keeps the choice of reduction implicit in the presence of weights,
+        rather than exposing weighted and unweighted objectives separately.
+        """
         if sample_weight is None:
             return float(-np.sum(log_likelihood))
         return float(-np.sum(sample_weight * log_likelihood))
@@ -103,8 +110,6 @@ class DistributionFamily(BaseEstimator, ABC):
         sample_weight = self._validate_sample_weight(sample_weight, y.shape)
 
         def objective(value):
-            if sample_weight is None:
-                return self.negative_log_likelihood(value, y, conditional_means)
             return self.negative_log_likelihood(
                 value, y, conditional_means, sample_weight=sample_weight
             )
@@ -130,10 +135,6 @@ class DistributionFamily(BaseEstimator, ABC):
         log_dispersion = float(np.log(dispersion))
 
         def objective(log_dispersion_value: float) -> float:
-            if sample_weight is None:
-                return self.negative_log_likelihood(
-                    np.exp(log_dispersion_value), y, conditional_means
-                )
             return self.negative_log_likelihood(
                 np.exp(log_dispersion_value),
                 y,
@@ -185,7 +186,7 @@ class NegativeBinomialFamily(DistributionFamily):
         probability = dispersion / (dispersion + conditional_means)
         log_probability = nbinom.logpmf(y, dispersion, probability)
         log_probability = np.where(np.isneginf(log_probability), -1e2, log_probability)
-        return self._weighted_nll(log_probability, sample_weight)
+        return self._reduce_negative_log_likelihood(log_probability, sample_weight)
 
     def distribution(self, conditional_means, dispersions):
         return NegativeBinomialPredictiveDistribution(conditional_means, dispersions)
@@ -223,7 +224,7 @@ class GammaFamily(DistributionFamily):
         )
         if not np.all(np.isfinite(log_density)):
             return 1e10
-        return self._weighted_nll(log_density, sample_weight)
+        return self._reduce_negative_log_likelihood(log_density, sample_weight)
 
     def distribution(self, conditional_means, dispersions):
         return GammaPredictiveDistribution(conditional_means, dispersions)
@@ -260,7 +261,7 @@ class LogNormalFamily(DistributionFamily):
         log_density = lognorm.logpdf(y, s=dispersion, scale=scale)
         if not np.all(np.isfinite(log_density)):
             return 1e10
-        return self._weighted_nll(log_density, sample_weight)
+        return self._reduce_negative_log_likelihood(log_density, sample_weight)
 
     def distribution(self, conditional_means, dispersions):
         return LogNormalPredictiveDistribution(conditional_means, dispersions)
@@ -297,7 +298,7 @@ class WeibullFamily(DistributionFamily):
         log_density = weibull_min.logpdf(y, c=dispersion, scale=scale)
         if not np.all(np.isfinite(log_density)):
             return 1e10
-        return self._weighted_nll(log_density, sample_weight)
+        return self._reduce_negative_log_likelihood(log_density, sample_weight)
 
     def distribution(self, conditional_means, dispersions):
         return WeibullPredictiveDistribution(conditional_means, dispersions)
