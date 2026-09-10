@@ -6,6 +6,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+import scipy
 from statsmodels.tsa.seasonal import DecomposeResult
 
 from tinyshift.forecasting.metrics import (
@@ -362,6 +363,22 @@ class TestVarianceRatioAnalyzer:
         assert 0.0 <= strength <= 1.0
         assert np.isfinite(f_stat)
         assert np.isfinite(p_value)
+
+    def test_harmonic_significance_handles_constant_series(self):
+        f_stat, p_value = harmonic_significance(np.ones(32), period=4)
+
+        assert f_stat == 0.0
+        assert p_value == 1.0
+
+    def test_harmonic_significance_uses_effective_rank_at_period_two(self):
+        y = np.array([1.0, -0.8, 0.7, -1.1, 1.2, -0.9, 0.8, -1.0])
+
+        f_stat, p_value = harmonic_significance(y, period=2)
+        regression = scipy.stats.linregress((-1.0) ** np.arange(len(y)), y)
+
+        t_statistic = regression.slope / regression.stderr
+        assert f_stat == pytest.approx(t_statistic**2)
+        assert p_value == pytest.approx(regression.pvalue)
 
     def test_extract_mstl_components(self):
         result = DecomposeResult(
