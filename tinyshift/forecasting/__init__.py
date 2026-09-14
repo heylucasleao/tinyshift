@@ -5,6 +5,7 @@ from .dtl import DTLWrapper
 from .metrics import (
     economic_loss,
     forecast_instability,
+    fva,
     pbias,
     rmae,
     score,
@@ -40,6 +41,7 @@ __all__ = [
     "WeibullFamily",
     "economic_loss",
     "forecast_instability",
+    "fva",
     "hfi",
     "hpi",
     "pbias",

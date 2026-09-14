@@ -202,8 +202,9 @@ def rmae(
     RMAE measures model efficiency by comparing the Mean Absolute Error (MAE)
     of candidate forecasting models against the MAE of a benchmark baseline
     forecast: ``MAE(model) / MAE(baseline)``. This ratio directly measures
-    Forecast Value Added: values below one indicate improvement over the
-    baseline, while values above one indicate degradation.
+    relative accuracy: values below one indicate improvement over the
+    baseline, while values above one indicate degradation. Unlike ``fva``,
+    RMAE compares absolute errors rather than the composite forecast score.
 
     Parameters
     ----------
@@ -230,13 +231,15 @@ def rmae(
 
     Notes
     -----
-    Interpretation & Forecast Value Added (FVA):
+    Interpretation:
     - Evaluates whether a complex model adds value over a simple baseline.
-    - **RMAE < 1.0**: Model outperforms baseline (Positive FVA). Lower is better.
+    - **RMAE < 1.0**: Model outperforms baseline. Lower is better.
       Example: RMAE = 0.80 means the model reduced absolute errors by 20% compared to baseline.
-    - **RMAE = 1.0**: Model performs identically to baseline (No added value).
-    - **RMAE > 1.0**: Model performs worse than baseline (Negative FVA / destroys value).
+    - **RMAE = 1.0**: Model has the same MAE as the baseline.
+    - **RMAE > 1.0**: Model has a higher MAE than the baseline.
       Example: RMAE = 1.25 means the model generated 25% more error than a simple baseline.
+    - When the baseline MAE is zero, relative RMAE is undefined and ``NaN``
+      is returned.
 
     References
     ----------
@@ -276,12 +279,80 @@ def rmae(
     )
 
     res = mae_models.div(mae_baseline, axis=0).reset_index()
-
-    res[models] = np.where(
-        mae_baseline[:, None] == 0, np.where(mae_models == 0, 1.0, np.nan), res[models]
-    )
-
+    res.loc[mae_baseline == 0, models] = np.nan
     res.insert(1, "metric", "rmae")
+    return res
+
+
+def fva(
+    df: pd.DataFrame,
+    models: List[str],
+    baseline_col: str,
+    id_col: str = "unique_id",
+    target_col: str = "y",
+) -> pd.DataFrame:
+    """Calculate Forecast Value Added (FVA) against a baseline forecast.
+
+    FVA compares the composite forecast score (WAPE + |PBias|) of each
+    candidate with the score of a common baseline::
+
+        FVA(model) = 1 - Score(model) / Score(baseline)
+
+    All forecast columns must therefore contain predictions for the same
+    observations, origins and horizons.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Evaluation data containing actuals, candidate forecasts and baseline.
+    models : List[str]
+        Candidate forecast columns to compare with the baseline.
+    baseline_col : str
+        Column containing the common baseline forecast.
+    id_col : str, default="unique_id"
+        Column identifying each series or evaluation group.
+    target_col : str, default="y"
+        Column containing actual target values.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per group, with ``metric`` equal to ``"fva"`` and one column
+        per candidate model.
+
+    Notes
+    -----
+    Positive values mean that the candidate reduced the score; zero means no
+    change; negative values mean that it degraded the score. For example,
+    ``0.10`` is a 10% score reduction relative to the baseline. When the
+    baseline score is zero, relative FVA is undefined and ``NaN`` is returned.
+    """
+    if not models:
+        raise ValueError("The 'models' list cannot be empty.")
+    if baseline_col in models:
+        raise ValueError(
+            f"Baseline column '{baseline_col}' cannot be included in the list of models."
+        )
+
+    required = [id_col, target_col, baseline_col, *models]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(
+            f"The following required columns are missing from the DataFrame: {missing}"
+        )
+
+    scores = score(
+        df=df,
+        models=[baseline_col, *models],
+        id_col=id_col,
+        target_col=target_col,
+    )
+    baseline_score = scores[baseline_col]
+
+    res = scores[[id_col]].copy()
+    res[models] = 1.0 - scores[models].div(baseline_score, axis=0)
+    res.loc[baseline_score.eq(0), models] = np.nan
+    res.insert(1, "metric", "fva")
     return res
 
 
