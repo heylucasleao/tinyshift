@@ -29,13 +29,14 @@ examples. The wrappers require the `series` optional dependency set.
 
 ## Forecast Metrics
 
-The public API includes `wape`, `pbias`, `score`, `rmae`,
+The public API includes `wape`, `pbias`, `score`, `rmae`, `fva`,
 `forecast_instability`, `economic_loss`, and `tail_risk`:
 
 ```python
-from tinyshift.forecasting import economic_loss, tail_risk, wape
+from tinyshift.forecasting import economic_loss, fva, tail_risk, wape
 
 accuracy = wape(df, models=["forecast"])
+value_added = fva(df, models=["forecast"], baseline_col="seasonal_naive")
 loss = economic_loss(
     df,
     models=["forecast"],
