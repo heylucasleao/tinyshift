@@ -12,6 +12,7 @@ from statsmodels.tsa.seasonal import DecomposeResult
 from tinyshift.forecasting.metrics import (
     economic_loss,
     forecast_instability,
+    fva,
     pbias,
     rmae,
     score,
@@ -809,6 +810,56 @@ class TestMetric:
         )
         result = rmae(df, models=["model_a"], baseline_col="baseline")
         assert result.loc[0, "model_a"] == pytest.approx(1.0)
+
+    def test_rmae_is_undefined_for_perfect_baseline(self):
+        df = pd.DataFrame(
+            {
+                "unique_id": ["A", "A"],
+                "y": [10.0, 20.0],
+                "model_a": [10.0, 20.0],
+                "baseline": [10.0, 20.0],
+            }
+        )
+
+        result = rmae(df, models=["model_a"], baseline_col="baseline")
+
+        assert np.isnan(result.loc[0, "model_a"])
+
+    def test_fva_uses_composite_score_against_baseline(self):
+        df = pd.DataFrame(
+            {
+                "unique_id": ["A", "A"],
+                "y": [10.0, 20.0],
+                "model_a": [9.0, 21.0],
+                "baseline": [8.0, 24.0],
+            }
+        )
+
+        result = fva(df, models=["model_a"], baseline_col="baseline")
+
+        # Score(model) = 2/30, Score(baseline) = 8/30.
+        assert result.loc[0, "model_a"] == pytest.approx(0.75)
+        assert result.loc[0, "metric"] == "fva"
+
+    def test_fva_is_undefined_for_perfect_baseline(self):
+        df = pd.DataFrame(
+            {
+                "unique_id": ["A", "A"],
+                "y": [10.0, 20.0],
+                "model_a": [9.0, 21.0],
+                "baseline": [10.0, 20.0],
+            }
+        )
+
+        result = fva(df, models=["model_a"], baseline_col="baseline")
+
+        assert np.isnan(result.loc[0, "model_a"])
+
+    def test_fva_validates_baseline_and_candidate_columns(self):
+        df = pd.DataFrame({"unique_id": ["A"], "y": [1.0]})
+
+        with pytest.raises(ValueError, match="baseline"):
+            fva(df, models=["model_a"], baseline_col="baseline")
 
     def test_forecast_instability(self):
         df = pd.DataFrame(
