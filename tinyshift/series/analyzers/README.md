@@ -57,8 +57,7 @@ analyzer = TemporalStabilityAnalyzer(
     confirmation_windows=2,
 ).fit(df)
 
-summary = analyzer.summary()   # one row per series
-windows = analyzer.windows()   # every sequential comparison
+summary = analyzer.summary()   # every sequential comparison
 changes = analyzer.changes()   # confirmed changes
 regimes = analyzer.regimes()   # descriptive regime segments
 ```

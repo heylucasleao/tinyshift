@@ -333,40 +333,6 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             raise RuntimeError("The analyzer must be fitted before requesting results.")
 
     def summary(self) -> pd.DataFrame:
-        """Return one compact temporal-stability row per series."""
-        self._require_fitted()
-        rows = []
-        for unique_id, result in self.results_.items():
-            lengths = np.asarray(
-                [regime.n_observations for regime in result.regimes]
-            )
-            latest = result.changes[-1] if result.changes else None
-            current = result.regimes[-1]
-            rows.append(
-                {
-                    self.id_col_: unique_id,
-                    "n_windows": len(result.windows),
-                    "n_changes": len(result.changes),
-                    "n_regimes": len(result.regimes),
-                    "change_times": [
-                        change.estimated_change_time for change in result.changes
-                    ],
-                    "median_regime_length": float(np.median(lengths)),
-                    "current_regime_start": current.start_time,
-                    "current_regime_length": current.n_observations,
-                    "latest_change_time": (
-                        latest.estimated_change_time if latest else pd.NaT
-                    ),
-                    "latest_distance_ratio": (
-                        latest.distance_ratio if latest else np.nan
-                    ),
-                    "latest_diff_mean": latest.diff_mean if latest else np.nan,
-                    "latest_scale_ratio": latest.scale_ratio if latest else np.nan,
-                }
-            )
-        return pd.DataFrame(rows)
-
-    def windows(self) -> pd.DataFrame:
         """Return every sequential reference-versus-fold comparison."""
         self._require_fitted()
         return pd.DataFrame(

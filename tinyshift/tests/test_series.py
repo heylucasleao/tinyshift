@@ -631,13 +631,6 @@ class TestTemporalStabilityAnalyzer:
             threshold=1.0,
         ).fit(frame)
 
-        summary = analyzer.summary()
-        assert summary.loc[0, "n_changes"] == 2
-        assert summary.loc[0, "n_regimes"] == 3
-        assert summary.loc[0, "change_times"] == [
-            frame.loc[20, "ds"],
-            frame.loc[40, "ds"],
-        ]
         regimes = analyzer.regimes()
         assert regimes["n_observations"].tolist() == [20, 20, 20]
         assert "std" in regimes
@@ -671,7 +664,7 @@ class TestTemporalStabilityAnalyzer:
         assert len(result.regimes) == 1
         assert result.regimes[0].n_observations == len(values)
 
-    def test_windows_expose_sequential_evidence(self):
+    def test_summary_exposes_sequential_evidence(self):
         frame = pd.DataFrame(
             {
                 "unique_id": "a",
@@ -687,9 +680,9 @@ class TestTemporalStabilityAnalyzer:
             threshold=1e12,
         ).fit(frame)
 
-        windows = analyzer.windows()
-        assert len(windows) == 2
-        assert windows.columns.tolist() == [
+        summary = analyzer.summary()
+        assert len(summary) == 2
+        assert summary.columns.tolist() == [
             "unique_id",
             "start_time",
             "end_time",
@@ -697,7 +690,7 @@ class TestTemporalStabilityAnalyzer:
             "distance_ratio",
             "status",
         ]
-        assert windows["status"].tolist() == ["stable", "stable"]
+        assert summary["status"].tolist() == ["stable", "stable"]
 
     def test_automatic_threshold_produces_finite_distance_ratios(self):
         values = np.tile([0.0, 1.0, 2.0, 1.0], 10)
