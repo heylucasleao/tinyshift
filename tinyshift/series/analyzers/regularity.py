@@ -38,6 +38,10 @@ class RegularityAnalyzer(BaseSeriesAnalyzer):
 
     Notes
     -----
+    Input rows must already be ordered by ``time_col`` within each series. The
+    analyzer preserves the supplied order and does not sort the input
+    internally.
+
     ``foreca`` uses normalized Shannon spectral entropy, whereas
     ``spectral_concentration`` uses a normalized Herfindahl/Simpson index.
     ``limit`` operates on ordinal patterns and ignores value magnitudes.

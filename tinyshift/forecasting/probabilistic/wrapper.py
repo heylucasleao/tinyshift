@@ -344,6 +344,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         Notes
         -----
+        Input rows must already be ordered chronologically within each series.
+        This method preserves the supplied row order and does not sort the
+        input internally.
+
         Fitting proceeds in two stages. First, MLForecast temporal
         cross-validation generates out-of-fold conditional-mean predictions.
         Each validation row is assigned a forecast horizon, and the selected

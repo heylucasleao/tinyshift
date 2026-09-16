@@ -27,8 +27,7 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
     regularity of spacing between positive-demand observations.
 
     Input follows the panel convention: one identifier column, one time column,
-    and one numeric target column. Each series is sorted by time and analyzed
-    independently.
+    and one numeric target column. Each series is analyzed independently.
 
     Parameters
     ----------
@@ -56,6 +55,10 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
 
     Notes
     -----
+    Input rows must already be ordered by ``time_col`` within each series. The
+    analyzer preserves the supplied order and does not sort the input
+    internally.
+
     The Average Demand Interval is defined as
 
     .. math::

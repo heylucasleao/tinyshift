@@ -45,6 +45,9 @@ def permutation_auto_mutual_information(
 
     Notes
     -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
+
     - PAMI is calculated as: I_P(X(t); X(t+τ)) = Σ P(πᵢ, πⱼ) * log₂(P(πᵢ, πⱼ) / (P(πᵢ) * P(πⱼ)))
     - Higher PAMI values indicate stronger temporal dependencies between ordinal patterns
     - Values near zero suggest independence between current and lagged patterns

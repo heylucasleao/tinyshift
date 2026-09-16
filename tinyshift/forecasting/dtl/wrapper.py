@@ -213,6 +213,12 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
             invalid.
         ImportError
             If the optional ``series`` dependencies are not installed.
+
+        Notes
+        -----
+        Input rows must already be ordered chronologically within each series.
+        This method preserves the supplied row order and does not sort the
+        input internally.
         """
         self.delegate_ = self._make_delegate()
         self.delegate_.fit(

@@ -144,6 +144,9 @@ def foreca(
 
     Notes
     -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
+
     The measure is based on normalized Shannon spectral entropy.
     Higher values indicate a more concentrated, structured spectrum.
     """
@@ -195,6 +198,11 @@ def spectral_concentration(
 
         0 means power is approximately uniformly distributed, while 1 means
         power is concentrated in one spectral component.
+
+    Notes
+    -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
     """
     power_distribution, n_frequencies = _spectral_power_distribution(
         X,

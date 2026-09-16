@@ -36,9 +36,13 @@ class TrendAnalyzer(BaseSeriesAnalyzer):
 
     Notes
     -----
+    Input rows must already be ordered by ``time_col`` within each series. The
+    analyzer preserves the supplied order and does not sort the input
+    internally.
+
     The slope is expressed in target units per observation. The time column is
-    used for ordering, not as a numeric regression covariate; irregularly
-    sampled panels should therefore be regularized before analysis.
+    retained as a label, not used as a numeric regression covariate;
+    irregularly sampled panels should therefore be regularized before analysis.
 
     Examples
     --------

@@ -54,6 +54,9 @@ def variance_ratio(
 
     Notes
     -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
+
     Values greater than 1 indicate positive serial dependence (persistence),
     while values below 1 indicate negative serial dependence (mean reversion or
     anti-persistence). The implementation uses overlapping ``k``-period changes
@@ -146,6 +149,9 @@ def trend_significance(
 
     Notes
     -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
+
     A 'significant' linear trend for detrending purposes is typically considered
     when:
     1. R² is high enough (e.g., > 0.1), suggesting a non-trivial variance
@@ -206,6 +212,11 @@ def harmonic_significance(
         F statistic for the joint significance of the sine and cosine terms.
     p_value : float
         P-value associated with the F statistic.
+
+    Notes
+    -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
     """
     y_detrended = np.asarray(y_detrended, dtype=np.float64)
 

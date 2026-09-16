@@ -88,6 +88,10 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
 
     Notes
     -----
+    Input rows must already be ordered by ``time_col`` within each series. The
+    analyzer preserves the supplied order and does not sort the input
+    internally.
+
     The detector identifies candidate seasonal periods; it does not prove that
     a series is seasonal.
 
