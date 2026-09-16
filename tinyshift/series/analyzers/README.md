@@ -143,48 +143,29 @@ A candidate change must persist for the configured number of confirmation
 folds before it starts a new regime.
 
 
-```mermaid
-%%{init: {
-  "theme": "neutral",
-  "flowchart": {
-    "curve": "step",
-    "nodeSpacing": 50,
-    "rankSpacing": 50
-  }
-}}%%
+```plaintext
 
-flowchart TD
-    A[Start active regime] --> B[Build expanding reference]
-    B --> C[Select current fold]
-
-    C --> D[Compute standardized<br/>Wasserstein distance]
-    B --> D
-    B --> E[Compute robust<br/>reference threshold]
-
-    D --> F{Distance > threshold?}
-    E --> F
-
-    F -- No --> G[Stable fold]
-    G --> H[Clear pending candidate]
-    H --> I[Expand reference]
-    I --> C
-
-    F -- Yes --> J{First exceedance?}
-
-    J -- Yes --> K[Set pending start]
-    K --> L[Freeze reference<br/>at pending start]
-    J -- No --> L
-
-    L --> M[Increment confirmation count]
-    M --> N{N consecutive<br/>exceedances?}
-
-    N -- No --> C
-    N -- Yes --> O[Confirm regime change]
-
-    O --> P[Pending start becomes<br/>new regime start]
-    P --> Q[Reset candidate state]
-    Q --> R[Accumulate minimum<br/>reference size]
-    R --> B
+Active regime
+     ↓
+Build reference
+     ↓
+Evaluate current fold
+     ↓
+Distance > threshold?
+   ↙                 ↘
+ No                  Yes
+ ↓                     ↓
+Stable              Candidate
+ ↓                     ↓
+Expand             Persists?
+reference           ↙     ↘
+   │               No     Yes
+   │                ↓       ↓
+   └──────────── Stable   Confirm
+                           ↓
+                      New regime
+                           ↓
+                     Build reference
 ```
 
 `horizon`, `n_windows`, and `step_size` deliberately mirror temporal
