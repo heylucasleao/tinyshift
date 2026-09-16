@@ -36,6 +36,39 @@ or inspection. The exact result structure is analyzer-specific.
 
 ## Available Analyzers
 
+### `TemporalStabilityAnalyzer`
+
+Replays a series through horizon-sized folds and compares each fold with the
+expanding reference of its current regime. Detection uses Wasserstein distance
+standardized by reference scale. Persistent changes close the current regime,
+record their estimated and confirmation times, and reset the reference.
+
+The analyzer provides evidence that equal weighting of the entire history may
+be inappropriate; it does not select or recommend a temporal decay value.
+
+```python
+from tinyshift.series import TemporalStabilityAnalyzer
+
+analyzer = TemporalStabilityAnalyzer(
+    horizon=14,
+    n_windows=None,
+    step_size=14,
+    min_reference_windows=4,
+    confirmation_windows=2,
+).fit(df)
+
+summary = analyzer.summary()   # one row per series
+windows = analyzer.windows()   # every sequential comparison
+changes = analyzer.changes()   # confirmed changes
+regimes = analyzer.regimes()   # descriptive regime segments
+```
+
+`horizon`, `n_windows`, and `step_size` deliberately mirror temporal
+cross-validation concepts used by the forecasting API. Quantiles are not part
+of detection or output: Wasserstein already measures the full empirical
+distribution, while standardized mean change and scale ratio explain the most
+common kinds of change.
+
 ### `IntermittencyAnalyzer`
 
 Classifies demand profiles as smooth, intermittent, erratic, or lumpy. The

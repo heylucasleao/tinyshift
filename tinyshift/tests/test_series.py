@@ -9,6 +9,8 @@ import pytest
 import scipy
 from statsmodels.tsa.seasonal import DecomposeResult
 
+from tinyshift.forecasting.dmstl.utils import extract_mstl_components, seasonal_strength
+from tinyshift.forecasting.dtl.utils import detrend
 from tinyshift.forecasting.metrics import (
     economic_loss,
     forecast_instability,
@@ -23,16 +25,18 @@ from tinyshift.series import (
     IntermittencyAnalyzer,
     RegularityAnalyzer,
     SeasonalityAnalyzer,
+    TemporalStabilityAnalyzer,
     TrendAnalyzer,
     VarianceRatioAnalyzer,
 )
-from tinyshift.forecasting.dmstl.utils import extract_mstl_components, seasonal_strength
-from tinyshift.forecasting.dtl.utils import detrend
+from tinyshift.series.analyzers.base import BaseSeriesAnalyzer
+from tinyshift.series.analyzers.intermittency import (
+    IntermittencyAnalyzer as CanonicalAnalyzer,
+)
+from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
 from tinyshift.series.dependence import (
     permutation_auto_mutual_information,
 )
-from tinyshift.series.analyzers.pami import PAMIAnalyzer, create_pami_lags
-from tinyshift.series.analyzers.base import BaseSeriesAnalyzer
 from tinyshift.series.diagnostic import (
     harmonic_significance,
     trend_significance,
@@ -43,9 +47,6 @@ from tinyshift.series.entropy import (
     regularity_index,
     sample_entropy,
     theoretical_limit,
-)
-from tinyshift.series.analyzers.intermittency import (
-    IntermittencyAnalyzer as CanonicalAnalyzer,
 )
 from tinyshift.series.spectral import _prepare_spectrum, foreca
 
@@ -612,6 +613,89 @@ class TestAnalyzerComposition:
         assert result.set_index("unique_id").loc["b", "candidate_periods"] == [16]
 
 
+class TestTemporalStabilityAnalyzer:
+    def test_detects_and_resets_after_persistent_level_changes(self):
+        values = np.concatenate([np.zeros(20), np.full(20, 10.0), np.full(20, -5.0)])
+        frame = pd.DataFrame(
+            {
+                "unique_id": "a",
+                "ds": pd.date_range("2025-01-01", periods=len(values), freq="D"),
+                "y": values,
+            }
+        )
+
+        analyzer = TemporalStabilityAnalyzer(
+            horizon=5,
+            min_reference_windows=4,
+            confirmation_windows=1,
+            threshold=1.0,
+        ).fit(frame)
+
+        summary = analyzer.summary()
+        assert summary.loc[0, "n_changes"] == 2
+        assert summary.loc[0, "n_regimes"] == 3
+        assert summary.loc[0, "change_times"] == [
+            frame.loc[20, "ds"],
+            frame.loc[40, "ds"],
+        ]
+        assert analyzer.regimes()["length"].tolist() == [20, 20, 20]
+        assert (analyzer.changes()["location_change"].abs() > 1.0).all()
+
+    def test_stable_series_has_one_regime(self):
+        values = np.tile([0.0, 1.0, 2.0, 1.0], 15)
+        result = TemporalStabilityAnalyzer(
+            horizon=4,
+            min_reference_windows=4,
+            confirmation_windows=1,
+            threshold=10.0,
+        ).analyze(values)
+
+        assert result.changes == []
+        assert len(result.regimes) == 1
+        assert result.regimes[0].length == len(values)
+
+    def test_windows_expose_sequential_evidence(self):
+        frame = pd.DataFrame(
+            {
+                "unique_id": "a",
+                "ds": np.arange(30),
+                "y": np.concatenate([np.zeros(15), np.ones(15)]),
+            }
+        )
+        analyzer = TemporalStabilityAnalyzer(
+            horizon=3,
+            n_windows=2,
+            min_reference_windows=3,
+            confirmation_windows=1,
+            threshold=1e12,
+        ).fit(frame)
+
+        windows = analyzer.windows()
+        assert len(windows) == 2
+        assert {
+            "standardized_wasserstein",
+            "threshold",
+            "exceeds_threshold",
+            "change_confirmed",
+        }.issubset(windows.columns)
+
+    def test_automatic_threshold_is_calibrated_from_reference_folds(self):
+        values = np.tile([0.0, 1.0, 2.0, 1.0], 10)
+        result = TemporalStabilityAnalyzer(
+            horizon=4,
+            min_reference_windows=4,
+            confirmation_windows=1,
+        ).analyze(values)
+
+        assert result.windows
+        assert all(np.isfinite(window["threshold"]) for window in result.windows)
+
+    def test_rejects_insufficient_history(self):
+        analyzer = TemporalStabilityAnalyzer(horizon=5)
+        with pytest.raises(ValueError, match="at least 25"):
+            analyzer.analyze(np.arange(24.0))
+
+
 class TestForecastability:
     def test_foreca(self):
         x = np.sin(2 * np.pi * np.arange(64) / 8)
@@ -730,6 +814,7 @@ class TestForecastability:
             IntermittencyAnalyzer(),
             RegularityAnalyzer(),
             SeasonalityAnalyzer(),
+            TemporalStabilityAnalyzer(horizon=1, min_reference_windows=2),
             TrendAnalyzer(),
             VarianceRatioAnalyzer(),
             PAMIAnalyzer(),

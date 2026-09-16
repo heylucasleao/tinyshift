@@ -1,0 +1,435 @@
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
+"""Sequential temporal-stability analysis for panel time series."""
+
+from dataclasses import dataclass
+from itertools import pairwise
+from numbers import Integral, Real
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from scipy.stats import wasserstein_distance
+
+from .base import BaseSeriesAnalyzer
+
+
+@dataclass(frozen=True)
+class TemporalChange:
+    """One confirmed change between consecutive temporal regimes."""
+
+    position: int
+    estimated_change_time: Any
+    detected_at: Any
+    standardized_wasserstein: float
+    threshold: float
+    reference_mean: float
+    current_mean: float
+    location_change: float
+    reference_std: float
+    current_std: float
+    scale_ratio: float
+
+
+@dataclass(frozen=True)
+class TemporalRegime:
+    """Descriptive statistics for one detected temporal regime."""
+
+    index: int
+    start: int
+    end: int
+    start_time: Any
+    end_time: Any
+    length: int
+    mean: float
+    variance: float
+    standard_deviation: float
+
+
+@dataclass(frozen=True)
+class TemporalStabilityResult:
+    """Changes, regimes, and sequential comparison windows for one series."""
+
+    changes: list[TemporalChange]
+    regimes: list[TemporalRegime]
+    windows: list[dict[str, Any]]
+
+
+class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
+    """Detect persistent temporal distribution changes in panel series.
+
+    Each fold contains ``horizon`` observations, matching the temporal geometry
+    used by forecasting backtests. Its empirical distribution is compared with
+    an expanding reference from the current regime using Wasserstein distance
+    divided by the reference standard deviation. Consecutive threshold
+    exceedances confirm a change and reset the reference.
+
+    The analyzer diagnoses whether equal weighting of the full history may be
+    questionable. It intentionally does not select or recommend a decay value.
+
+    Parameters
+    ----------
+    horizon : int
+        Number of observations in every comparison fold.
+    n_windows : int, optional
+        Analyze only the most recent number of eligible folds. By default all
+        folds are analyzed.
+    step_size : int, optional
+        Number of observations between fold starts. Defaults to ``horizon``.
+    min_reference_windows : int, default=4
+        Minimum reference length, expressed in multiples of ``horizon``.
+    confirmation_windows : int, default=2
+        Consecutive threshold exceedances required to confirm a change.
+    threshold : {"auto"} or float, default="auto"
+        A positive explicit standardized-Wasserstein limit, or ``"auto"`` to
+        estimate a robust upper limit from historical pseudofolds.
+    """
+
+    def __init__(
+        self,
+        horizon: int,
+        *,
+        n_windows: int | None = None,
+        step_size: int | None = None,
+        min_reference_windows: int = 4,
+        confirmation_windows: int = 2,
+        threshold: str | float = "auto",
+    ) -> None:
+        self.horizon = horizon
+        self.n_windows = n_windows
+        self.step_size = step_size
+        self.min_reference_windows = min_reference_windows
+        self.confirmation_windows = confirmation_windows
+        self.threshold = threshold
+        self._validate_params()
+
+    def _validate_params(self) -> None:
+        for name, value, minimum in (
+            ("horizon", self.horizon, 1),
+            ("min_reference_windows", self.min_reference_windows, 2),
+            ("confirmation_windows", self.confirmation_windows, 1),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, Integral)
+                or value < minimum
+            ):
+                raise ValueError(
+                    f"'{name}' must be an integer greater than or equal to {minimum}."
+                )
+        for name, value in (
+            ("n_windows", self.n_windows),
+            ("step_size", self.step_size),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, Integral) or value < 1
+            ):
+                raise ValueError(f"'{name}' must be None or a positive integer.")
+        if self.threshold != "auto" and (
+            isinstance(self.threshold, bool)
+            or not isinstance(self.threshold, Real)
+            or not np.isfinite(self.threshold)
+            or self.threshold <= 0
+        ):
+            raise ValueError("'threshold' must be 'auto' or a positive finite number.")
+
+    @property
+    def step_size_(self) -> int:
+        return self.horizon if self.step_size is None else int(self.step_size)
+
+    @property
+    def min_reference_size_(self) -> int:
+        return self.horizon * self.min_reference_windows
+
+    def _validate_target(self, df: pd.DataFrame, target_col: str) -> None:
+        if not pd.api.types.is_numeric_dtype(df[target_col]):
+            raise ValueError(f"Target column {target_col!r} must be numeric.")
+        if not np.isfinite(df[target_col].to_numpy(dtype=float)).all():
+            raise ValueError("Target values must be finite.")
+
+    @staticmethod
+    def _reference_scale(values: np.ndarray) -> tuple[float, float]:
+        standard_deviation = float(np.std(values, ddof=0))
+        floor = np.sqrt(np.finfo(float).eps) * max(1.0, abs(float(np.median(values))))
+        return standard_deviation, max(standard_deviation, floor)
+
+    def _distance(self, reference: np.ndarray, current: np.ndarray) -> float:
+        _, denominator = self._reference_scale(reference)
+        return float(wasserstein_distance(reference, current) / denominator)
+
+    def _automatic_threshold(self, reference: np.ndarray) -> float:
+        distances = []
+        for stop in range(self.horizon * 2, len(reference) + 1, self.horizon):
+            history = reference[: stop - self.horizon]
+            current = reference[stop - self.horizon : stop]
+            distances.append(self._distance(history, current))
+        if not distances:
+            raise ValueError(
+                "The reference does not contain enough folds for calibration."
+            )
+        distances = np.asarray(distances)
+        median = float(np.median(distances))
+        mad = float(np.median(np.abs(distances - median)))
+        numerical_floor = np.sqrt(np.finfo(float).eps) * max(1.0, median)
+        return median + 3.0 * max(mad, numerical_floor)
+
+    def _resolve_threshold(self, reference: np.ndarray) -> float:
+        if self.threshold == "auto":
+            return self._automatic_threshold(reference)
+        return float(self.threshold)
+
+    def _fold_starts(self, n_observations: int) -> list[int]:
+        starts = list(
+            range(
+                self.min_reference_size_,
+                n_observations - self.horizon + 1,
+                self.step_size_,
+            )
+        )
+        if self.n_windows is not None:
+            starts = starts[-int(self.n_windows) :]
+        return starts
+
+    def _change(
+        self,
+        values: np.ndarray,
+        times: np.ndarray,
+        regime_start: int,
+        change_start: int,
+        detected_end: int,
+        distance: float,
+        threshold: float,
+    ) -> TemporalChange:
+        reference = values[regime_start:change_start]
+        current = values[change_start:detected_end]
+        reference_std, denominator = self._reference_scale(reference)
+        current_std = float(np.std(current, ddof=0))
+        reference_mean = float(np.mean(reference))
+        current_mean = float(np.mean(current))
+        floor = max(denominator - reference_std, np.finfo(float).eps)
+        return TemporalChange(
+            position=change_start,
+            estimated_change_time=times[change_start],
+            detected_at=times[detected_end - 1],
+            standardized_wasserstein=distance,
+            threshold=threshold,
+            reference_mean=reference_mean,
+            current_mean=current_mean,
+            location_change=(current_mean - reference_mean) / denominator,
+            reference_std=reference_std,
+            current_std=current_std,
+            scale_ratio=(current_std + floor) / (reference_std + floor),
+        )
+
+    @staticmethod
+    def _regime(
+        values: np.ndarray,
+        times: np.ndarray,
+        index: int,
+        start: int,
+        end: int,
+    ) -> TemporalRegime:
+        segment = values[start:end]
+        return TemporalRegime(
+            index=index,
+            start=start,
+            end=end - 1,
+            start_time=times[start],
+            end_time=times[end - 1],
+            length=len(segment),
+            mean=float(np.mean(segment)),
+            variance=float(np.var(segment, ddof=0)),
+            standard_deviation=float(np.std(segment, ddof=0)),
+        )
+
+    def analyze(
+        self, values: np.ndarray, times: np.ndarray | None = None
+    ) -> TemporalStabilityResult:
+        """Replay one series sequentially and return its temporal regimes."""
+        values = np.asarray(values, dtype=float)
+        if values.ndim != 1:
+            raise ValueError("Input data must be 1-dimensional.")
+        if not np.isfinite(values).all():
+            raise ValueError("Input data must contain only finite values.")
+        if times is None:
+            times = np.arange(len(values))
+        times = np.asarray(times)
+        if times.ndim != 1 or len(times) != len(values):
+            raise ValueError("times must be one-dimensional and aligned with values.")
+        starts = self._fold_starts(len(values))
+        if not starts:
+            minimum = self.min_reference_size_ + self.horizon
+            raise ValueError(
+                f"Input data must contain at least {minimum} observations for one fold."
+            )
+
+        regime_start = 0
+        pending_start: int | None = None
+        confirmation_count = 0
+        changes: list[TemporalChange] = []
+        windows: list[dict[str, Any]] = []
+
+        for start in starts:
+            if start - regime_start < self.min_reference_size_:
+                continue
+            reference_end = pending_start if pending_start is not None else start
+            reference = values[regime_start:reference_end]
+            current = values[start : start + self.horizon]
+            limit = self._resolve_threshold(reference)
+            distance = self._distance(reference, current)
+            exceeds = bool(distance > limit)
+
+            if exceeds:
+                if pending_start is None:
+                    pending_start = start
+                confirmation_count += 1
+            else:
+                pending_start = None
+                confirmation_count = 0
+
+            confirmed = bool(
+                exceeds and confirmation_count >= self.confirmation_windows
+            )
+            windows.append(
+                {
+                    "cutoff": times[start - 1],
+                    "fold_start": times[start],
+                    "fold_end": times[start + self.horizon - 1],
+                    "reference_start": times[regime_start],
+                    "reference_end": times[reference_end - 1],
+                    "reference_size": len(reference),
+                    "standardized_wasserstein": distance,
+                    "threshold": limit,
+                    "exceeds_threshold": exceeds,
+                    "confirmation_count": confirmation_count,
+                    "change_confirmed": confirmed,
+                }
+            )
+
+            if confirmed:
+                detected_end = start + self.horizon
+                changes.append(
+                    self._change(
+                        values,
+                        times,
+                        regime_start,
+                        int(pending_start),
+                        detected_end,
+                        distance,
+                        limit,
+                    )
+                )
+                regime_start = int(pending_start)
+                pending_start = None
+                confirmation_count = 0
+
+        boundaries = [0, *(change.position for change in changes), len(values)]
+        regimes = [
+            self._regime(values, times, index, start, end)
+            for index, (start, end) in enumerate(pairwise(boundaries))
+        ]
+        return TemporalStabilityResult(changes, regimes, windows)
+
+    def fit(
+        self,
+        df: pd.DataFrame,
+        id_col: str = "unique_id",
+        time_col: str = "ds",
+        target_col: str = "y",
+    ) -> "TemporalStabilityAnalyzer":
+        """Fit the sequential analysis independently to every panel series."""
+        self._validate_panel(df, id_col, time_col, target_col)
+        self._validate_target(df, target_col)
+        self.id_col_ = id_col
+        self.time_col_ = time_col
+        self.target_col_ = target_col
+        ordered = df.sort_values([id_col, time_col])
+        self.results_ = {
+            unique_id: self.analyze(
+                group[target_col].to_numpy(dtype=float),
+                group[time_col].to_numpy(),
+            )
+            for unique_id, group in ordered.groupby(id_col, sort=False, observed=True)
+        }
+        return self
+
+    def _fit_single(self, values: pd.Series) -> TemporalStabilityResult:
+        """Analyze a vector when invoked through the base analyzer contract."""
+        return self.analyze(values.to_numpy(dtype=float))
+
+    def _require_fitted(self) -> None:
+        if not hasattr(self, "results_"):
+            raise RuntimeError("The analyzer must be fitted before requesting results.")
+
+    def summary(self) -> pd.DataFrame:
+        """Return one compact temporal-stability row per series."""
+        self._require_fitted()
+        rows = []
+        for unique_id, result in self.results_.items():
+            lengths = np.asarray([regime.length for regime in result.regimes])
+            latest = result.changes[-1] if result.changes else None
+            current = result.regimes[-1]
+            rows.append(
+                {
+                    self.id_col_: unique_id,
+                    "n_windows": len(result.windows),
+                    "n_changes": len(result.changes),
+                    "n_regimes": len(result.regimes),
+                    "change_times": [
+                        change.estimated_change_time for change in result.changes
+                    ],
+                    "median_regime_length": float(np.median(lengths)),
+                    "current_regime_start": current.start_time,
+                    "current_regime_length": current.length,
+                    "latest_change_time": (
+                        latest.estimated_change_time if latest else pd.NaT
+                    ),
+                    "latest_standardized_wasserstein": (
+                        latest.standardized_wasserstein if latest else np.nan
+                    ),
+                    "latest_location_change": (
+                        latest.location_change if latest else np.nan
+                    ),
+                    "latest_scale_ratio": latest.scale_ratio if latest else np.nan,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def windows(self) -> pd.DataFrame:
+        """Return every sequential reference-versus-fold comparison."""
+        self._require_fitted()
+        return pd.DataFrame(
+            [
+                {self.id_col_: unique_id, **window}
+                for unique_id, result in self.results_.items()
+                for window in result.windows
+            ]
+        )
+
+    def changes(self) -> pd.DataFrame:
+        """Return one row per confirmed distribution change."""
+        self._require_fitted()
+        return pd.DataFrame(
+            [
+                {
+                    self.id_col_: unique_id,
+                    "change": index,
+                    **change.__dict__,
+                }
+                for unique_id, result in self.results_.items()
+                for index, change in enumerate(result.changes, start=1)
+            ]
+        )
+
+    def regimes(self) -> pd.DataFrame:
+        """Return one descriptive row per detected temporal regime."""
+        self._require_fitted()
+        return pd.DataFrame(
+            [
+                {self.id_col_: unique_id, "regime": regime.index, **regime.__dict__}
+                for unique_id, result in self.results_.items()
+                for regime in result.regimes
+            ]
+        ).drop(columns="index", errors="ignore")

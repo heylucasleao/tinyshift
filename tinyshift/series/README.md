@@ -11,8 +11,9 @@ decomposition, evaluation, and stabilization belong to
 - `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
   ordinal predictability upper bound.
-- `analyzers`: panel-oriented intermittency, PAMI, regularity, seasonality,
-  trend, and variance-ratio analyzers with a shared `fit()`/`summary()` convention.
+- `analyzers`: panel-oriented intermittency, temporal stability, PAMI,
+  regularity, seasonality, trend, and variance-ratio analyzers with a shared
+  `fit()`/`summary()` convention.
   See the [analyzer reference](analyzers/README.md).
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
 
@@ -29,6 +30,9 @@ decomposition, evaluation, and stabilization belong to
   patterns separated by a lag.
 - `PAMIAnalyzer`: finds every local minimum of each panel series' PAMI curve.
 - `create_pami_lags`: converts minima into DTL/DMSTL lag dictionaries.
+- `TemporalStabilityAnalyzer`: detects persistent distribution changes through
+  sequential standardized-Wasserstein comparisons and describes the resulting
+  regimes.
 
 ## Forecastability Dimensions
 
