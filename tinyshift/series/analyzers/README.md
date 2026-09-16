@@ -147,7 +147,7 @@ folds before it starts a new regime.
 %%{init: {
   "theme": "neutral",
   "flowchart": {
-    "curve": "basis",
+    "curve": "step",
     "nodeSpacing": 50,
     "rankSpacing": 50
   }
