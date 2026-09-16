@@ -142,9 +142,7 @@ regimes = analyzer.regimes()   # descriptive regime segments
 A candidate change must persist for the configured number of confirmation
 folds before it starts a new regime.
 
-
 ```plaintext
-
 Active regime
      ↓
 Build reference
@@ -157,15 +155,19 @@ Distance > threshold?
  ↓                     ↓
 Stable              Candidate
  ↓                     ↓
-Expand             Persists?
-reference           ↙     ↘
-   │               No     Yes
-   │                ↓       ↓
-   └──────────── Stable   Confirm
-                           ↓
-                      New regime
-                           ↓
-                     Build reference
+Expand         Next fold exceeds?
+reference           ↙         ↘
+   │               No          Yes
+   │                ↓            ↓
+   └──────────── Stable    N confirmations?
+                    (reset)       ↙       ↘
+                                No        Yes
+                                 ↓          ↓
+                            Candidate   Confirmed
+                                             ↓
+                                        New regime
+                                             ↓
+                                       Build reference
 ```
 
 `horizon`, `n_windows`, and `step_size` deliberately mirror temporal

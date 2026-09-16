@@ -163,19 +163,19 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             raise ValueError("Target values must be finite.")
 
     @staticmethod
-    def _reference_scale(values: np.ndarray) -> tuple[float, float]:
-        """Return reference standard deviation and its stabilized denominator."""
+    def _reference_scale(values: np.ndarray) -> float:
+        """Return the stabilized reference standard deviation."""
         standard_deviation = float(np.std(values, ddof=0))
         floor = np.sqrt(np.finfo(float).eps) * max(1.0, abs(float(np.median(values))))
-        return standard_deviation, max(standard_deviation, floor)
+        return max(standard_deviation, floor)
 
     def _distance(self, reference: np.ndarray, current: np.ndarray) -> float:
         """Return Wasserstein distance standardized by reference dispersion."""
         # Standardization makes shifts comparable across series: the same
         # absolute change can be material for a stable series and negligible
         # for a naturally volatile one.
-        _, denominator = self._reference_scale(reference)
-        return float(wasserstein_distance(reference, current) / denominator)
+        reference_scale = self._reference_scale(reference)
+        return float(wasserstein_distance(reference, current) / reference_scale)
 
     def _resolve_threshold(self, reference: np.ndarray) -> float:
         """Calibrate a robust limit from sequential historical pseudo-folds."""
