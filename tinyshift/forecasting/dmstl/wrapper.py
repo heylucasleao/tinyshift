@@ -74,6 +74,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
     Notes
     -----
+    Input rows must already be ordered chronologically within each
+    ``unique_id``. The wrapper preserves the supplied order and does not sort
+    the training or future frames.
+
     When ``season_length="auto"``, seasonal periods are detected independently
     for each series. When ``nlags="auto"``, PAMI is also evaluated per series.
     The global strategy then uses the union of the selected lags. Prediction

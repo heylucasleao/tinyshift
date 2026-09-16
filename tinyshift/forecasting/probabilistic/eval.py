@@ -41,6 +41,8 @@ class FirstStageForecasterEvaluator:
         -----
         Input predictions should come from temporal cross-validation or a held-
         out period. Evaluating fitted values would give optimistic results.
+        Rows must already be ordered chronologically within each series; the
+        evaluator does not reorder them.
         """
         required = [target_col, lambda_col, id_col, time_col]
         missing = [col for col in required if col not in df_res.columns]
@@ -87,7 +89,6 @@ class FirstStageForecasterEvaluator:
                             valid,
                             lambda_col=lambda_col,
                             id_col=id_col,
-                            time_col=time_col,
                         ),
                         4,
                     )
@@ -115,11 +116,9 @@ class FirstStageForecasterEvaluator:
         df_res: pd.DataFrame,
         lambda_col: str,
         id_col: str,
-        time_col: str,
     ) -> float:
-        ordered = df_res.sort_values([id_col, time_col])
-        previous = ordered.groupby(id_col, observed=True)[lambda_col].shift(1)
-        current = ordered[lambda_col]
+        previous = df_res.groupby(id_col, observed=True)[lambda_col].shift(1)
+        current = df_res[lambda_col]
         paired = previous.notna()
         if not paired.any():
             return np.nan

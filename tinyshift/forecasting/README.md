@@ -27,6 +27,10 @@ from tinyshift.forecasting import (
 Each subpackage has its own README with its fitting flow, extension rules and
 examples. The wrappers require the `series` optional dependency set.
 
+Input panels must already be ordered chronologically within each series. The
+forecasting estimators and order-dependent metrics preserve the supplied row
+order and do not sort by ID or time internally.
+
 ## Forecast Metrics
 
 The public API includes `wape`, `pbias`, `score`, `rmae`, `fva`,

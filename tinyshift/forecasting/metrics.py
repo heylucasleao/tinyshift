@@ -391,6 +391,9 @@ def forecast_instability(
 
     Notes
     -----
+    Rows must already be ordered chronologically within each series. The
+    metric uses the supplied row order to form consecutive forecast pairs.
+
     Interpretation & Aggregation:
     - Measures forecast revision magnitude and operational instability across consecutive periods.
     - Expressed as a proportion:
@@ -417,19 +420,22 @@ def forecast_instability(
     - Vandeput, N. (2021). Data Science for Supply Chain Forecasting (2nd ed.).
         CRC Press.
     """
+    required = [id_col, ds_col, *models]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(
+            f"The following required columns are missing from the DataFrame: {missing}"
+        )
 
     def _prepare_paired_data(
         df_in: pd.DataFrame,
         models_list: List[str],
         id_column: str,
-        ds_column: str,
     ) -> pd.DataFrame:
-        """Sort data, apply group shift, and return paired consecutive forecasts."""
-        df_sorted = df_in.sort_values([id_column, ds_column])
-
-        df_curr = df_sorted[[id_column] + models_list].copy()
+        """Apply a group shift and pair forecasts in the supplied row order."""
+        df_curr = df_in[[id_column] + models_list].copy()
         df_prev = (
-            df_sorted.groupby(id_column, observed=True)[models_list]
+            df_in.groupby(id_column, observed=True)[models_list]
             .shift(1)
             .add_suffix("_prev")
         )
@@ -501,9 +507,7 @@ def forecast_instability(
         res["metric"] = "forecast_instability"
         return res
 
-    paired = _prepare_paired_data(
-        df_in=df, models_list=models, id_column=id_col, ds_column=ds_col
-    )
+    paired = _prepare_paired_data(df_in=df, models_list=models, id_column=id_col)
 
     if paired.empty:
         return _ensure_all_unique_ids(

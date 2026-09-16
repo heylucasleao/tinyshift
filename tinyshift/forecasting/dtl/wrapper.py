@@ -64,6 +64,10 @@ class DTLWrapper(BaseEstimator, RegressorMixin):
 
     Notes
     -----
+    Input rows must already be ordered chronologically within each
+    ``unique_id``. The wrapper preserves the supplied order and does not sort
+    the training or future frames.
+
     ``DTLWrapper`` is intended for non-seasonal data. The LOWESS trend and its
     StatsForecast model are always fitted independently for each series. In
     local mode, ``X_df`` is filtered by ``unique_id`` and passed to each
