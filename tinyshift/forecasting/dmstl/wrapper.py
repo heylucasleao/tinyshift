@@ -74,6 +74,10 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
 
     Notes
     -----
+    Input rows must already be ordered chronologically within each
+    ``unique_id``. The wrapper preserves the supplied order and does not sort
+    the training or future frames.
+
     When ``season_length="auto"``, seasonal periods are detected independently
     for each series. When ``nlags="auto"``, PAMI is also evaluated per series.
     The global strategy then uses the union of the selected lags. Prediction
@@ -222,6 +226,12 @@ class DMSTLWrapper(BaseEstimator, RegressorMixin):
             missing, or if seasonal periods or residual lags are invalid.
         ImportError
             If the optional ``series`` dependencies are not installed.
+
+        Notes
+        -----
+        Input rows must already be ordered chronologically within each series.
+        This method preserves the supplied row order and does not sort the
+        input internally.
         """
         self.delegate_ = self._make_delegate()
         self.delegate_.fit(

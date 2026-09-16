@@ -27,7 +27,6 @@ class PAMIResult:
 
 def _format_lags(
     local_minima: Sequence[int],
-    *,
     mode: LagMode,
     fallback: int,
     short: int,
@@ -50,7 +49,6 @@ def _format_lags(
 
 def create_pami_lags(
     local_minima: Mapping[Any, Sequence[int]],
-    *,
     mode: LagMode = "range",
     fallback: int = 1,
     short: int = 1,
@@ -96,14 +94,18 @@ class PAMIAnalyzer(BaseSeriesAnalyzer):
 
     Notes
     -----
+    Input rows must already be ordered by ``time_col`` within each series. The
+    analyzer preserves the supplied order and does not sort the input
+    internally.
+
     PAMI measures dependence between a series and its lagged version using
     ordinal-pattern entropy. Local minima often correspond to informative lags
     where the memory structure is strongest or most rhythmically structured.
 
     The class follows the panel-oriented workflow of
     :class:`~tinyshift.series.analyzers.base.BaseSeriesAnalyzer`: every ID is
-    independently fitted, sorted by time, and summarized through a compact
-    per-series result table.
+    independently fitted in the supplied row order and summarized through a
+    compact per-series result table.
 
     Examples
     --------
@@ -174,6 +176,11 @@ class PAMIAnalyzer(BaseSeriesAnalyzer):
         ValueError
             If the input is not one-dimensional, contains non-finite values, or
             is too short for the configured embedding dimension and delay.
+
+        Notes
+        -----
+        Input observations must already be ordered chronologically. This method
+        preserves the supplied order and does not sort the input internally.
         """
         values = np.asarray(values, dtype=np.float64)
         if values.ndim != 1:
@@ -241,7 +248,6 @@ class PAMIAnalyzer(BaseSeriesAnalyzer):
 
     def lags(
         self,
-        *,
         mode: LagMode = "range",
         fallback: int = 1,
         short: int = 1,

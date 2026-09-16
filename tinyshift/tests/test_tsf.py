@@ -1407,12 +1407,12 @@ def test_nexcp_weighting_matrix(
 
 
 def test_temporal_weights_favor_recent_dates_and_preserve_mass():
-    dates = pd.Series(pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02"]))
+    dates = pd.Series(pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"]))
 
     weights = TwoStageForecasterWrapper._temporal_weights(dates, decay=0.5)
 
     assert weights.sum() == pytest.approx(3.0)
-    assert weights[0] > weights[2] > weights[1]
+    assert weights[2] > weights[1] > weights[0]
 
 
 def test_family_decay_weights_shift_dispersion_toward_recent_regime():

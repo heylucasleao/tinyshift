@@ -47,6 +47,9 @@ def sample_entropy(
 
     Notes
     -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
+
     - SampEn is less biased than Approximate Entropy because self-matches are
       excluded.
     - Higher values indicate greater irregularity or complexity.
@@ -164,6 +167,9 @@ def regularity_index(
 
     Notes
     -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
+
     This metric is complementary to ordinal-based measures such as
     ``theoretical_limit``: it captures the regularity of temporal patterns by
     reversing the entropy scale.
@@ -206,6 +212,9 @@ def permutation_entropy(
 
     Notes
     -----
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
+
     - The method evaluates relative ordering rather than exact magnitudes.
     - Higher values indicate more complexity and disorder in the ordinal
       structure.
@@ -246,12 +255,12 @@ def theoretical_limit(
     delay: int = 1,
 ) -> float:
     """
-    Calculate the ordinal predictability upper bound.
+    Calculate an ordinal regularity index.
 
-    This function computes an upper bound on predictability implied by the
-    ordinal structure of the series. It is defined as one minus the normalized
-    permutation entropy, so larger values indicate a more regular and predictable
-    ordinal sequence.
+    The index is defined as one minus normalized permutation entropy, so larger
+    values indicate a more regular ordinal sequence. The function keeps its
+    historical name for API compatibility; the result is not a proven upper
+    bound on forecast accuracy.
 
     Parameters
     ----------
@@ -265,23 +274,25 @@ def theoretical_limit(
     Returns
     -------
     float
-        The ordinal predictability upper bound (Πmax), ranging from 0 to 1:
+        Ordinal regularity index ranging from 0 to 1:
         - 0: Completely random ordinal patterns (maximum complexity)
         - 1: Perfectly regular ordinal patterns (minimum complexity)
 
     Notes
     -----
-    - This is an **ordinal predictability upper bound** based solely on the
-      ordinal structure of the series
+    Input observations must already be ordered chronologically. This function
+    preserves the supplied order and does not sort the input internally.
+
+    - This is a descriptive regularity index based solely on the ordinal
+      structure observed in the series
     - The measure ignores magnitudes, focusing only on directional patterns
     - Higher values indicate more regular/predictable ordinal behavior
-    - Serves as a benchmark for comparing actual forecasting performance
-    - Based on Permutation Entropy theory and information-theoretic limits
+    - It does not estimate expected accuracy or constrain model performance
 
     References
     ----------
     - Bandt, C., & Pompe, B. (2002). Permutation entropy: A natural complexity
-      measure for time series. Physical Review Letters, 88(17), 174102.
+        measure for time series. Physical Review Letters, 88(17), 174102.
     - Song, C., Qu, Z., Blumm, N., & Barabási, A. L. (2010). Limits of
         predictability in human mobility. Science, 327(5968), 1018-1021.
     """

@@ -14,8 +14,9 @@ Analyzers expect a long-format pandas DataFrame with one row per observation:
 | `y` | Numeric target value | `y` |
 
 The base class validates the panel, rejects missing identifiers or timestamps,
-rejects duplicate ID-time pairs, sorts each series by time, and fits each ID
-independently. Custom column names are supported through `fit()`.
+rejects duplicate ID-time pairs, preserves the input row order, and fits each
+ID independently. Data must already be ordered by time within each series.
+Custom column names are supported through `fit()`.
 
 ```python
 from tinyshift.series import SeasonalityAnalyzer
@@ -50,9 +51,10 @@ summary = IntermittencyAnalyzer().fit(df).summary()
 
 ### `RegularityAnalyzer`
 
-Reports complementary structure measures: ForeCA forecastability, the ordinal
-predictability upper bound, and normalized spectral concentration. These describe
-structure in the observed data; they are not out-of-sample forecast scores.
+Reports complementary structure measures: ForeCA forecastability, ordinal
+regularity derived from permutation entropy, and normalized spectral
+concentration. These describe structure in the observed data; they are not
+out-of-sample forecast scores. 
 
 ```python
 from tinyshift.series import RegularityAnalyzer
@@ -109,11 +111,60 @@ from tinyshift.series import VarianceRatioAnalyzer
 summary = VarianceRatioAnalyzer(horizons=[2, 4, 8]).fit(df).summary()
 ```
 
+### `TemporalStabilityAnalyzer`
+
+Replays a series through horizon-sized folds and compares each fold with the
+expanding reference of its current regime. Detection uses Wasserstein distance
+standardized by reference scale. Persistent changes close the current regime,
+record their estimated and confirmation times, and reset the reference.
+
+The detection threshold is calibrated robustly from historical pseudo-folds
+using their median distance plus three times the median absolute deviation.
+
+```python
+from tinyshift.series import TemporalStabilityAnalyzer
+
+analyzer = TemporalStabilityAnalyzer(
+    horizon=14,
+    n_windows=None,
+    step_size=14,
+    min_reference_windows=4,
+    confirmation_windows=2,
+).fit(df)
+
+summary = analyzer.summary()   # every sequential comparison
+changes = analyzer.changes()   # confirmed changes
+regimes = analyzer.regimes()   # descriptive regime segments
+```
+
+`horizon`, `n_windows`, and `step_size` deliberately mirror temporal
+cross-validation concepts used by the forecasting API. Quantiles are not part
+of detection or output: Wasserstein already measures the full empirical
+distribution, while regime mean difference and scale ratio explain the most
+common kinds of change.
+
+Temporal stability is a representativeness diagnostic rather than an intrinsic
+forecastability score. Confirmed changes can justify testing moving training
+windows, recency weighting, regime segmentation, recalibration, or covariates
+that explain the break. The analyzer detects evidence of change, not its cause.
+
+## Choosing an Analyzer
+
+| Question | Analyzer |
+|---|---|
+| Does the series have a trend? | `TrendAnalyzer` |
+| Are there relevant seasonal patterns? | `SeasonalityAnalyzer` |
+| Does the series contain predictable structure? | `RegularityAnalyzer` |
+| Which nonlinear lags are relevant? | `PAMIAnalyzer` |
+| Is there persistence or mean reversion? | `VarianceRatioAnalyzer` |
+| Is the profile intermittent or erratic? | `IntermittencyAnalyzer` |
+| Does the distribution change over time? | `TemporalStabilityAnalyzer` |
+
 ## Combining Profiles
 
 The one-row-per-series analyzers can be combined with validated one-to-one
-merges. Keep `VarianceRatioAnalyzer` separate or aggregate it first because it
-may return multiple rows per `unique_id`.
+merges. Keep `VarianceRatioAnalyzer` and `TemporalStabilityAnalyzer` separate
+because both may return multiple rows per `unique_id`.
 
 ```python
 from tinyshift.series import (

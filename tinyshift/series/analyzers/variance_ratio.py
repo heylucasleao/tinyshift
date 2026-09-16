@@ -42,6 +42,10 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
 
     Notes
     -----
+    Input rows must already be ordered by ``time_col`` within each series. The
+    analyzer preserves the supplied order and does not sort the input
+    internally.
+
     The test is computed on the original series and aggregated increments. The
     variance-ratio statistic compares the variance of the aggregated process with
     the variance implied by independent one-step shocks. The implementation is

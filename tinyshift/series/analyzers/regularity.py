@@ -17,9 +17,9 @@ class RegularityAnalyzer(BaseSeriesAnalyzer):
     """Measure complementary spectral and ordinal regularity structure.
 
     The analyzer evaluates each panel series independently using three bounded
-    diagnostics: ForeCA forecastability, an ordinal predictability upper
-    bound, and normalized spectral concentration. These describe structure in
-    the observed signal; they do not estimate out-of-sample forecast accuracy.
+    diagnostics: ForeCA forecastability, an ordinal regularity index, and
+    normalized spectral concentration. These describe structure in the observed
+    signal; they do not estimate out-of-sample forecast accuracy.
 
     Parameters
     ----------
@@ -38,6 +38,10 @@ class RegularityAnalyzer(BaseSeriesAnalyzer):
 
     Notes
     -----
+    Input rows must already be ordered by ``time_col`` within each series. The
+    analyzer preserves the supplied order and does not sort the input
+    internally.
+
     ``foreca`` uses normalized Shannon spectral entropy, whereas
     ``spectral_concentration`` uses a normalized Herfindahl/Simpson index.
     ``limit`` operates on ordinal patterns and ignores value magnitudes.
