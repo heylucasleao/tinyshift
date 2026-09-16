@@ -137,6 +137,39 @@ changes = analyzer.changes()   # confirmed changes
 regimes = analyzer.regimes()   # descriptive regime segments
 ```
 
+#### Detection flow
+
+A candidate change must persist for the configured number of confirmation
+folds before it starts a new regime.
+
+```plaintext
+Active regime
+     ↓
+Build reference
+     ↓
+Evaluate current fold
+     ↓
+Distance > threshold?
+   ↙                 ↘
+ No                  Yes
+ ↓                     ↓
+Stable              Candidate
+ ↓                     ↓
+Expand         Next fold exceeds?
+reference           ↙         ↘
+   │               No          Yes
+   │                ↓            ↓
+   └──────────── Stable    N confirmations?
+                    (reset)       ↙       ↘
+                                No        Yes
+                                 ↓          ↓
+                            Candidate   Confirmed
+                                             ↓
+                                        New regime
+                                             ↓
+                                       Build reference
+```
+
 `horizon`, `n_windows`, and `step_size` deliberately mirror temporal
 cross-validation concepts used by the forecasting API. Quantiles are not part
 of detection or output: Wasserstein already measures the full empirical
