@@ -691,10 +691,8 @@ class TestTemporalStabilityAnalyzer:
         assert len(windows) == 2
         assert windows.columns.tolist() == [
             "unique_id",
-            "cutoff",
-            "fold_end",
-            "reference_start",
-            "reference_end",
+            "start_time",
+            "end_time",
             "reference_size",
             "distance_ratio",
             "status",

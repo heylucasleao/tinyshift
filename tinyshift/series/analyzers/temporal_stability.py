@@ -253,10 +253,8 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             status = "confirmed" if confirmed else "candidate" if exceeds else "stable"
             windows.append(
                 {
-                    "cutoff": times[start - 1],
-                    "fold_end": times[start + self.horizon - 1],
-                    "reference_start": times[regime_start],
-                    "reference_end": times[reference_end - 1],
+                    "start_time": times[start],
+                    "end_time": times[start + self.horizon - 1],
                     "reference_size": len(reference),
                     "distance_ratio": distance / limit,
                     "status": status,
