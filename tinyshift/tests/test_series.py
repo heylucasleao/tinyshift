@@ -614,6 +614,15 @@ class TestAnalyzerComposition:
 
 
 class TestTemporalStabilityAnalyzer:
+    def test_accepts_positional_constructor_arguments(self):
+        analyzer = TemporalStabilityAnalyzer(14, 10, 7, 5, 3)
+
+        assert analyzer.horizon == 14
+        assert analyzer.n_windows == 10
+        assert analyzer.step_size == 7
+        assert analyzer.min_reference_windows == 5
+        assert analyzer.confirmation_windows == 3
+
     def test_detects_and_resets_after_persistent_level_changes(self):
         values = np.concatenate([np.zeros(20), np.full(20, 10.0), np.full(20, -5.0)])
         frame = pd.DataFrame(

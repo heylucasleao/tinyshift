@@ -109,7 +109,6 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
     def __init__(
         self,
         horizon: int,
-        *,
         n_windows: int | None = None,
         step_size: int | None = None,
         min_reference_windows: int = 4,
