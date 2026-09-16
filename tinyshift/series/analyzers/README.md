@@ -157,7 +157,7 @@ common kinds of change.
 ## Combining Profiles
 
 The one-row-per-series analyzers can be combined with validated one-to-one
-merges. Keep `VarianceRatioAnalyzer` separate or aggregate it first because it
+merges. Keep `VarianceRatioAnalyzer` and `TemporalStabilityAnalyzer` separate because it
 may return multiple rows per `unique_id`.
 
 ```python
