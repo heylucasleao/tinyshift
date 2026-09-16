@@ -6,7 +6,7 @@
 
 from dataclasses import dataclass
 from itertools import pairwise
-from numbers import Integral, Real
+from numbers import Integral
 from typing import Any
 
 import numpy as np
@@ -54,11 +54,11 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
     Each fold contains ``horizon`` observations, matching the temporal geometry
     used by forecasting backtests. Its empirical distribution is compared with
     an expanding reference from the current regime using Wasserstein distance
-    divided by the reference standard deviation. Consecutive threshold
-    exceedances confirm a change and reset the reference.
-
-    The analyzer diagnoses whether equal weighting of the full history may be
-    questionable. It intentionally does not select or recommend a decay value.
+    divided by the reference standard deviation. The threshold is calibrated
+    automatically from historical pseudo-fold distances as their median plus
+    three times the median absolute deviation (MAD). A numerical floor handles
+    zero dispersion. Consecutive exceedances confirm a change and reset the
+    reference.
 
     Parameters
     ----------
@@ -73,9 +73,6 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         Minimum reference length, expressed in multiples of ``horizon``.
     confirmation_windows : int, default=2
         Consecutive threshold exceedances required to confirm a change.
-    threshold : {"auto"} or float, default="auto"
-        A positive explicit standardized-Wasserstein limit, or ``"auto"`` to
-        estimate a robust upper limit from historical pseudofolds.
     """
 
     def __init__(
@@ -86,14 +83,12 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         step_size: int | None = None,
         min_reference_windows: int = 4,
         confirmation_windows: int = 2,
-        threshold: str | float = "auto",
     ) -> None:
         self.horizon = horizon
         self.n_windows = n_windows
         self.step_size = step_size
         self.min_reference_windows = min_reference_windows
         self.confirmation_windows = confirmation_windows
-        self.threshold = threshold
         self._validate_params()
 
     def _validate_params(self) -> None:
@@ -118,13 +113,6 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
                 isinstance(value, bool) or not isinstance(value, Integral) or value < 1
             ):
                 raise ValueError(f"'{name}' must be None or a positive integer.")
-        if self.threshold != "auto" and (
-            isinstance(self.threshold, bool)
-            or not isinstance(self.threshold, Real)
-            or not np.isfinite(self.threshold)
-            or self.threshold <= 0
-        ):
-            raise ValueError("'threshold' must be 'auto' or a positive finite number.")
 
     @property
     def step_size_(self) -> int:
@@ -150,7 +138,8 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         _, denominator = self._reference_scale(reference)
         return float(wasserstein_distance(reference, current) / denominator)
 
-    def _automatic_threshold(self, reference: np.ndarray) -> float:
+    def _resolve_threshold(self, reference: np.ndarray) -> float:
+        """Calibrate a robust limit from sequential historical pseudo-folds."""
         distances = []
         for stop in range(self.horizon * 2, len(reference) + 1, self.horizon):
             history = reference[: stop - self.horizon]
@@ -165,11 +154,6 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         mad = float(np.median(np.abs(distances - median)))
         numerical_floor = np.sqrt(np.finfo(float).eps) * max(1.0, median)
         return median + 3.0 * max(mad, numerical_floor)
-
-    def _resolve_threshold(self, reference: np.ndarray) -> float:
-        if self.threshold == "auto":
-            return self._automatic_threshold(reference)
-        return float(self.threshold)
 
     def _fold_starts(self, n_observations: int) -> list[int]:
         starts = list(

@@ -628,7 +628,6 @@ class TestTemporalStabilityAnalyzer:
             horizon=5,
             min_reference_windows=4,
             confirmation_windows=1,
-            threshold=1.0,
         ).fit(frame)
 
         regimes = analyzer.regimes()
@@ -657,7 +656,6 @@ class TestTemporalStabilityAnalyzer:
             horizon=4,
             min_reference_windows=4,
             confirmation_windows=1,
-            threshold=10.0,
         ).analyze(values)
 
         assert result.changes == []
@@ -669,7 +667,7 @@ class TestTemporalStabilityAnalyzer:
             {
                 "unique_id": "a",
                 "ds": np.arange(30),
-                "y": np.concatenate([np.zeros(15), np.ones(15)]),
+                "y": np.tile([0.0, 1.0, 2.0], 10),
             }
         )
         analyzer = TemporalStabilityAnalyzer(
@@ -677,7 +675,6 @@ class TestTemporalStabilityAnalyzer:
             n_windows=2,
             min_reference_windows=3,
             confirmation_windows=1,
-            threshold=1e12,
         ).fit(frame)
 
         summary = analyzer.summary()
@@ -692,7 +689,7 @@ class TestTemporalStabilityAnalyzer:
         ]
         assert summary["status"].tolist() == ["stable", "stable"]
 
-    def test_automatic_threshold_produces_finite_distance_ratios(self):
+    def test_robust_threshold_produces_finite_distance_ratios(self):
         values = np.tile([0.0, 1.0, 2.0, 1.0], 10)
         result = TemporalStabilityAnalyzer(
             horizon=4,

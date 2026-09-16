@@ -43,8 +43,8 @@ expanding reference of its current regime. Detection uses Wasserstein distance
 standardized by reference scale. Persistent changes close the current regime,
 record their estimated and confirmation times, and reset the reference.
 
-The analyzer provides evidence that equal weighting of the entire history may
-be inappropriate; it does not select or recommend a temporal decay value.
+The detection threshold is calibrated robustly from historical pseudo-folds
+using their median distance plus three times the median absolute deviation.
 
 ```python
 from tinyshift.series import TemporalStabilityAnalyzer
