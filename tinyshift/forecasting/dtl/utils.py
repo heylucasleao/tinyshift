@@ -52,6 +52,9 @@ def detrend(
 
     Notes
     -----
+    Rows must already be ordered chronologically within each series. This
+    function does not reorder the input.
+
     Missing target values are linearly interpolated for trend estimation. The
     returned rows preserve the original order and index of ``df``.
     """
@@ -73,7 +76,6 @@ def detrend(
             "Each unique_id series must contain at least two observations."
         )
 
-    result = result.sort_values([id_col, time_col])
     clean_series = result.groupby(id_col, observed=True)[target_col].transform(
         lambda group: group.interpolate(method="linear", limit_direction="both")
     )

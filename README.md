@@ -223,6 +223,7 @@ from tinyshift.series import (
     IntermittencyAnalyzer,
     RegularityAnalyzer,
     SeasonalityAnalyzer,
+    TemporalStabilityAnalyzer,
     TrendAnalyzer,
     trend_significance, 
     foreca, 
@@ -262,6 +263,14 @@ ratio, z_statistic, p_value = variance_ratio(time_series, horizon=7)
 
 # Compare several horizons across a panel
 vr_summary = VarianceRatioAnalyzer().fit(df).summary()
+
+# Diagnose whether persistent changes justify testing recency weighting
+stability = TemporalStabilityAnalyzer(
+    horizon=14,
+    min_reference_windows=4,
+    confirmation_windows=2,
+).fit(df)
+stability_summary = stability.summary()
 
 # Combined diagnostics for a Nixtla-style panel
 analyzers = [

@@ -188,8 +188,8 @@ class BaseDTL(BaseEstimator, RegressorMixin):
         trend_groups: Dict[int, Dict[str, Any]] = {}
         uid_trend_key: Dict[Union[str, int], int] = {}
         residuals = []
-        for uid, group in df.groupby(id_col):
-            group = group.sort_values(time_col).copy()
+        for uid, group in df.groupby(id_col, sort=False, observed=True):
+            group = group.copy()
             trend_factory = self._resolve_trend_factory(uid, default_trend_factory)
             component = decomposed.loc[group.index]
             trend = component["trend"].to_numpy()

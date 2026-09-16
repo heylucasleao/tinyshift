@@ -406,8 +406,8 @@ class BaseDMSTL(BaseEstimator, RegressorMixin):
         uid_trend_key: Dict[Union[str, int], int] = {}
         uid_seasonal_keys: Dict[Union[str, int], List[tuple]] = {}
 
-        for uid, group in df.groupby(id_col):
-            group = group.sort_values(time_col).copy()
+        for uid, group in df.groupby(id_col, sort=False, observed=True):
+            group = group.copy()
             values = group[target_col].to_numpy()
 
             if self.log_transform:

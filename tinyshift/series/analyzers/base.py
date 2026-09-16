@@ -19,7 +19,7 @@ class BaseSeriesAnalyzer(ABC):
     Subclasses implement the analysis of one ordered target series through
     :meth:`_fit_single` and expose a compact tabular view through
     :meth:`summary`. The shared :meth:`fit` implementation validates the panel,
-    sorts observations by identifier and time, and stores one result per ID.
+    preserves its row order, and stores one result per ID.
 
     Attributes
     ----------
@@ -31,6 +31,9 @@ class BaseSeriesAnalyzer(ABC):
 
     Notes
     -----
+    Input rows must already be ordered by time within each series. The base
+    class intentionally does not reorder observations.
+
     The base class validates panel structure only. Target-domain constraints,
     such as non-negativity or missing-value handling, belong to subclasses via
     :meth:`_validate_target` or :meth:`_fit_single`.
@@ -79,7 +82,7 @@ class BaseSeriesAnalyzer(ABC):
         id_col : str, default="unique_id"
             Column identifying independent series.
         time_col : str, default="ds"
-            Column defining observation order within each series.
+            Column containing the time labels associated with each observation.
         target_col : str, default="y"
             Column containing values analyzed by the subclass.
 
@@ -96,6 +99,11 @@ class BaseSeriesAnalyzer(ABC):
             If required columns are missing, the panel is empty, identifiers
             or times are missing, ID-time pairs are duplicated, or subclass
             target validation fails.
+
+        Notes
+        -----
+        Observations must already be ordered by ``time_col`` within each
+        ``id_col``. Their input order is preserved.
         """
         self._validate_panel(df, id_col, time_col, target_col)
         self._validate_target(df, target_col)
@@ -103,10 +111,9 @@ class BaseSeriesAnalyzer(ABC):
         self.time_col_ = time_col
         self.target_col_ = target_col
 
-        ordered = df.sort_values([id_col, time_col])
         self.results_ = {
             unique_id: self._fit_single(group[target_col])
-            for unique_id, group in ordered.groupby(id_col, sort=False, observed=True)
+            for unique_id, group in df.groupby(id_col, sort=False, observed=True)
         }
         return self
 

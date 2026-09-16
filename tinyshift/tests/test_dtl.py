@@ -100,7 +100,7 @@ class TestDTLWrapper:
         assert calls == [([1, 2, 3], "MS")]
         assert len(wrapper.residual_mlforecast_.frame) == 4
 
-    def test_fit_sorts_each_series_before_modeling(self, monkeypatch):
+    def test_fit_preserves_each_series_order_before_modeling(self, monkeypatch):
         captured_rows = []
 
         def fake_detrend(frame, **kwargs):
@@ -137,7 +137,7 @@ class TestDTLWrapper:
         [(uid, _, dates)] = captured_rows[0]
         assert uid == "series-a"
         assert list(dates) == list(
-            pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"])
+            pd.to_datetime(["2024-03-01", "2024-01-01", "2024-02-01"])
         )
 
     def test_fit_batches_skus_sharing_default_trend_factory(self):

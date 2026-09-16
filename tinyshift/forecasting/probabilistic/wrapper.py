@@ -55,6 +55,12 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
         :class:`NegativeBinomialFamily`; use :class:`GammaFamily`,
         :class:`LogNormalFamily`, or :class:`WeibullFamily` for strictly
         positive continuous targets.
+
+    Notes
+    -----
+    Training and future rows must already be ordered chronologically within
+    each series. The wrapper preserves the supplied order and does not sort
+    frames internally.
     """
 
     def __init__(
@@ -106,8 +112,8 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
     @staticmethod
     def _temporal_weights(values: pd.Series, decay: float) -> np.ndarray:
-        """Return mean-one exponential weights ordered by unique timestamp."""
-        times = pd.Index(pd.unique(values)).sort_values()
+        """Return mean-one exponential weights in observed timestamp order."""
+        times = pd.Index(pd.unique(values))
         weights = float(decay) ** np.arange(len(times) - 1, -1, -1, dtype=float)
         weights *= len(weights) / weights.sum()
         return values.map(dict(zip(times, weights))).to_numpy(dtype=float)
@@ -338,6 +344,10 @@ class TwoStageForecasterWrapper(BaseEstimator, RegressorMixin):
 
         Notes
         -----
+        Input rows must already be ordered chronologically within each series.
+        This method preserves the supplied row order and does not sort the
+        input internally.
+
         Fitting proceeds in two stages. First, MLForecast temporal
         cross-validation generates out-of-fold conditional-mean predictions.
         Each validation row is assigned a forecast horizon, and the selected
