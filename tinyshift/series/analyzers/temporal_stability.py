@@ -48,6 +48,16 @@ class TemporalStabilityResult:
     windows: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class _ChangeEvidence:
+    """Internal evidence retained when a sequential change is confirmed."""
+
+    position: int
+    detected_at: Any
+    distance: float
+    threshold: float
+
+
 class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
     """Detect persistent temporal distribution changes in panel series.
 
@@ -193,10 +203,11 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             std=float(np.std(segment, ddof=0)),
         )
 
-    def _fit_single(
-        self, values: np.ndarray, times: np.ndarray | None = None
-    ) -> TemporalStabilityResult:
-        """Replay one ordered series and return its stability analysis."""
+    @staticmethod
+    def _prepare_series(
+        values: np.ndarray, times: np.ndarray | None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Normalize and validate one ordered series and its time index."""
         values = np.asarray(values, dtype=float)
         if values.ndim != 1:
             raise ValueError("Input data must be 1-dimensional.")
@@ -207,6 +218,12 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         times = np.asarray(times)
         if times.ndim != 1 or len(times) != len(values):
             raise ValueError("times must be one-dimensional and aligned with values.")
+        return values, times
+
+    def _scan_windows(
+        self, values: np.ndarray, times: np.ndarray
+    ) -> tuple[list[_ChangeEvidence], list[dict[str, Any]]]:
+        """Scan folds sequentially and retain confirmed change evidence."""
         starts = self._fold_starts(len(values))
         if not starts:
             minimum = self.min_reference_size_ + self.horizon
@@ -217,8 +234,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         regime_start = 0
         pending_start: int | None = None
         confirmation_count = 0
-        change_positions: list[int] = []
-        change_evidence: list[tuple[Any, float, float]] = []
+        evidence: list[_ChangeEvidence] = []
         windows: list[dict[str, Any]] = []
 
         for start in starts:
@@ -256,42 +272,59 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             if confirmed:
                 detected_end = start + self.horizon
                 change_position = int(pending_start)
-                change_evidence.append(
-                    (times[detected_end - 1], distance, limit)
+                evidence.append(
+                    _ChangeEvidence(
+                        position=change_position,
+                        detected_at=times[detected_end - 1],
+                        distance=distance,
+                        threshold=limit,
+                    )
                 )
-                change_positions.append(change_position)
                 regime_start = change_position
                 pending_start = None
                 confirmation_count = 0
+        return evidence, windows
 
-        boundaries = [0, *change_positions, len(values)]
+    def _build_result(
+        self,
+        values: np.ndarray,
+        times: np.ndarray,
+        evidence: list[_ChangeEvidence],
+        windows: list[dict[str, Any]],
+    ) -> TemporalStabilityResult:
+        """Build regime summaries and changes from confirmed evidence."""
+        boundaries = [0, *(change.position for change in evidence), len(values)]
         regimes = [
             self._regime(values, times, index, start, end)
             for index, (start, end) in enumerate(pairwise(boundaries))
         ]
         changes = []
-        for position, evidence, previous, current in zip(
-            change_positions,
-            change_evidence,
+        for change, previous, current in zip(
+            evidence,
             regimes[:-1],
             regimes[1:],
             strict=True,
         ):
-            detected_at, distance, limit = evidence
-            scale_floor = np.sqrt(np.finfo(float).eps) * max(
-                1.0, abs(previous.mean)
-            )
+            scale_floor = np.sqrt(np.finfo(float).eps) * max(1.0, abs(previous.mean))
             changes.append(
                 TemporalChange(
-                    estimated_change_time=times[position],
-                    detected_at=detected_at,
-                    distance_ratio=distance / limit,
+                    estimated_change_time=times[change.position],
+                    detected_at=change.detected_at,
+                    distance_ratio=change.distance / change.threshold,
                     diff_mean=current.mean - previous.mean,
                     scale_ratio=(current.std + scale_floor)
                     / (previous.std + scale_floor),
                 )
             )
         return TemporalStabilityResult(changes, regimes, windows)
+
+    def _fit_single(
+        self, values: np.ndarray, times: np.ndarray | None = None
+    ) -> TemporalStabilityResult:
+        """Orchestrate the stability analysis of one ordered series."""
+        values, times = self._prepare_series(values, times)
+        evidence, windows = self._scan_windows(values, times)
+        return self._build_result(values, times, evidence, windows)
 
     def fit(
         self,
@@ -315,9 +348,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
                 group[target_col].to_numpy(dtype=float),
                 group[time_col].to_numpy(),
             )
-            for unique_id, group in df.groupby(
-                id_col, sort=False, observed=True
-            )
+            for unique_id, group in df.groupby(id_col, sort=False, observed=True)
         }
         return self
 
