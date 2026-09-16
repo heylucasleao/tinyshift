@@ -656,7 +656,7 @@ class TestTemporalStabilityAnalyzer:
             horizon=4,
             min_reference_windows=4,
             confirmation_windows=1,
-        ).analyze(values)
+        )._fit_single(values)
 
         assert result.changes == []
         assert len(result.regimes) == 1
@@ -695,7 +695,7 @@ class TestTemporalStabilityAnalyzer:
             horizon=4,
             min_reference_windows=4,
             confirmation_windows=1,
-        ).analyze(values)
+        )._fit_single(values)
 
         assert result.windows
         assert all(
@@ -705,7 +705,7 @@ class TestTemporalStabilityAnalyzer:
     def test_rejects_insufficient_history(self):
         analyzer = TemporalStabilityAnalyzer(horizon=5)
         with pytest.raises(ValueError, match="at least 25"):
-            analyzer.analyze(np.arange(24.0))
+            analyzer._fit_single(np.arange(24.0))
 
 
 class TestForecastability:

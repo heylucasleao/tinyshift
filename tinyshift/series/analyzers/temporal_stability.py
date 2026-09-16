@@ -193,10 +193,10 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             std=float(np.std(segment, ddof=0)),
         )
 
-    def analyze(
+    def _fit_single(
         self, values: np.ndarray, times: np.ndarray | None = None
     ) -> TemporalStabilityResult:
-        """Replay one series sequentially and return its temporal regimes."""
+        """Replay one ordered series and return its stability analysis."""
         values = np.asarray(values, dtype=float)
         if values.ndim != 1:
             raise ValueError("Input data must be 1-dimensional.")
@@ -311,7 +311,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         self.time_col_ = time_col
         self.target_col_ = target_col
         self.results_ = {
-            unique_id: self.analyze(
+            unique_id: self._fit_single(
                 group[target_col].to_numpy(dtype=float),
                 group[time_col].to_numpy(),
             )
@@ -320,10 +320,6 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             )
         }
         return self
-
-    def _fit_single(self, values: pd.Series) -> TemporalStabilityResult:
-        """Analyze a vector when invoked through the base analyzer contract."""
-        return self.analyze(values.to_numpy(dtype=float))
 
     def _require_fitted(self) -> None:
         """Reject result access before a panel has been analyzed."""
