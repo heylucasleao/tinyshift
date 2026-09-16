@@ -83,6 +83,27 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         Minimum reference length, expressed in multiples of ``horizon``.
     confirmation_windows : int, default=2
         Consecutive threshold exceedances required to confirm a change.
+
+    Attributes
+    ----------
+    results_ : dict
+        Mapping from each unique ID to a :class:`TemporalStabilityResult` with
+        sequential windows, confirmed changes, and detected regimes.
+    id_col_, time_col_, target_col_ : str
+        Column names used by the most recent call to :meth:`fit`.
+
+    Notes
+    -----
+    Input rows must already be ordered by time within each series. Windows are
+    measured in observations, so the analyzer assumes regularly sampled data.
+
+    Examples
+    --------
+    >>> analyzer = TemporalStabilityAnalyzer(horizon=7)
+    >>> summary = analyzer.fit(df).summary()
+    >>> summary.head()
+      unique_id start_time   end_time  reference_size  distance_ratio  status
+    0         A        ...        ...              28             ...  stable
     """
 
     def __init__(
@@ -223,7 +244,30 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
     def _scan_windows(
         self, values: np.ndarray, times: np.ndarray
     ) -> tuple[list[_ChangeEvidence], list[dict[str, Any]]]:
-        """Scan folds sequentially and retain confirmed change evidence."""
+        """Evaluate folds sequentially and retain confirmed change evidence.
+
+        Each fold is compared with the expanding reference of the active
+        regime. The reference is frozen at the first threshold exceedance so
+        candidate observations cannot contaminate subsequent confirmation
+        checks. Once ``confirmation_windows`` consecutive folds exceed the
+        robust threshold, the candidate start becomes the next regime start.
+
+        Parameters
+        ----------
+        values : numpy.ndarray
+            Finite one-dimensional values in temporal order.
+        times : numpy.ndarray
+            Time labels aligned positionally with ``values``.
+
+        Returns
+        -------
+        evidence : list of _ChangeEvidence
+            Confirmed change positions together with their detection time,
+            standardized Wasserstein distance, and calibrated threshold.
+        windows : list of dict
+            One user-facing record per evaluated fold, containing its temporal
+            bounds, reference size, relative distance, and detection status.
+        """
         starts = self._fold_starts(len(values))
         if not starts:
             minimum = self.min_reference_size_ + self.horizon
@@ -292,7 +336,31 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         evidence: list[_ChangeEvidence],
         windows: list[dict[str, Any]],
     ) -> TemporalStabilityResult:
-        """Build regime summaries and changes from confirmed evidence."""
+        """Materialize regimes and changes after the sequential scan.
+
+        Confirmed change positions partition the complete series into regimes.
+        Regime statistics use every observation in each resulting segment,
+        whereas ``distance_ratio`` retains the fold-level evidence available
+        when the change was confirmed. Mean differences and scale ratios are
+        then calculated between complete adjacent regimes.
+
+        Parameters
+        ----------
+        values : numpy.ndarray
+            Finite values in temporal order.
+        times : numpy.ndarray
+            Time labels aligned with ``values``.
+        evidence : list of _ChangeEvidence
+            Confirmed changes produced by :meth:`_scan_windows`.
+        windows : list of dict
+            Sequential fold records produced by :meth:`_scan_windows`.
+
+        Returns
+        -------
+        TemporalStabilityResult
+            Fold evidence, confirmed changes, and descriptive regimes for one
+            series.
+        """
         boundaries = [0, *(change.position for change in evidence), len(values)]
         regimes = [
             self._regime(values, times, index, start, end)
@@ -321,7 +389,27 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
     def _fit_single(
         self, values: np.ndarray, times: np.ndarray | None = None
     ) -> TemporalStabilityResult:
-        """Orchestrate the stability analysis of one ordered series."""
+        """Run the complete stability analysis for one ordered series.
+
+        Parameters
+        ----------
+        values : array-like
+            Numeric observations in temporal order.
+        times : array-like, optional
+            Labels aligned with ``values``. Positional integer labels are used
+            when omitted.
+
+        Returns
+        -------
+        TemporalStabilityResult
+            Sequential fold evidence, confirmed changes, and regime summaries.
+
+        Raises
+        ------
+        ValueError
+            If inputs are not finite one-dimensional aligned arrays or do not
+            contain enough observations for the initial reference and one fold.
+        """
         values, times = self._prepare_series(values, times)
         evidence, windows = self._scan_windows(values, times)
         return self._build_result(values, times, evidence, windows)
@@ -333,10 +421,44 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         time_col: str = "ds",
         target_col: str = "y",
     ) -> "TemporalStabilityAnalyzer":
-        """Fit each panel series in its existing row order.
+        """Analyze every series in a long-format panel.
 
+        The analysis is independent by ``id_col`` and each result is stored in
+        ``results_`` under its series identifier. Rows are consumed in their
+        existing order; no internal temporal sorting is performed.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Panel containing identifier, time, and numeric target columns.
+        id_col : str, default="unique_id"
+            Column identifying independent series.
+        time_col : str, default="ds"
+            Column providing the time labels retained in result tables.
+        target_col : str, default="y"
+            Numeric column analyzed for distribution changes.
+
+        Returns
+        -------
+        TemporalStabilityAnalyzer
+            The fitted analyzer.
+
+        Raises
+        ------
+        TypeError
+            If ``df`` is not a pandas DataFrame.
+        ValueError
+            If panel columns or values are invalid, ID-time pairs are
+            duplicated, or a series is too short for the configured initial
+            reference and one evaluation fold.
+
+        Notes
+        -----
         Observations must already be ordered by ``time_col`` within each
-        ``id_col``. The analyzer intentionally does not reorder the input.
+        ``id_col``. The analyzer intentionally preserves the input order.
+
+        Each series must contain at least
+        ``horizon * (min_reference_windows + 1)`` observations.
         """
         self._validate_panel(df, id_col, time_col, target_col)
         self._validate_target(df, target_col)
@@ -358,7 +480,25 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             raise RuntimeError("The analyzer must be fitted before requesting results.")
 
     def summary(self) -> pd.DataFrame:
-        """Return every sequential reference-versus-fold comparison."""
+        """Return the complete sequence of evaluated folds.
+
+        Each row identifies the evaluated period through ``start_time`` and
+        ``end_time``. ``distance_ratio`` is the standardized Wasserstein
+        distance divided by its robust threshold: values above one exceed the
+        limit. ``status`` is ``stable``, ``candidate``, or ``confirmed``.
+        ``reference_size`` reports how many observations supported the
+        comparison.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Sequential fold evidence for every fitted series.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        """
         self._require_fitted()
         return pd.DataFrame(
             [
@@ -369,7 +509,24 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         )
 
     def changes(self) -> pd.DataFrame:
-        """Return one row per confirmed distribution change."""
+        """Return one row per confirmed distribution change.
+
+        ``estimated_change_time`` is the beginning of the first divergent
+        fold, while ``detected_at`` includes the confirmation delay.
+        ``distance_ratio`` measures detection evidence relative to the robust
+        threshold. ``diff_mean`` and ``scale_ratio`` compare the complete new
+        regime with its complete predecessor.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Confirmed changes ordered within each fitted series.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        """
         self._require_fitted()
         return pd.DataFrame(
             [
@@ -384,7 +541,23 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         )
 
     def regimes(self) -> pd.DataFrame:
-        """Return one descriptive row per detected temporal regime."""
+        """Return descriptive statistics for every detected regime.
+
+        Regimes are the complete segments delimited by confirmed changes.
+        Their bounds are inclusive time labels; ``n_observations`` is the
+        number of rows in the segment, and ``mean`` and ``std`` are population
+        statistics computed with ``ddof=0``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Ordered regime segments for every fitted series.
+
+        Raises
+        ------
+        RuntimeError
+            If :meth:`fit` has not been called.
+        """
         self._require_fitted()
         return pd.DataFrame(
             [
