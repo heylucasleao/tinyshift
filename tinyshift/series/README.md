@@ -13,7 +13,7 @@ within each series before calling `fit()`.
 - `dependence`: permutation auto-mutual information (PAMI).
 - `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
-  ordinal predictability upper bound.
+  ordinal regularity index.
 - `analyzers`: panel-oriented intermittency, PAMI, regularity, seasonality,
   trend, variance-ratio, and temporal-stability analyzers with a shared
   `fit()`/`summary()` convention.
@@ -27,8 +27,9 @@ within each series before calling `fit()`.
 - `sample_entropy`: magnitude-based irregularity and complexity.
 - `regularity_index`: regularity score derived from sample entropy.
 - `permutation_entropy`: ordinal-pattern complexity, optionally normalized.
-- `theoretical_limit`: ordinal predictability upper bound derived from normalized
-  permutation entropy.
+- `theoretical_limit`: ordinal regularity index derived from normalized
+  permutation entropy. The function keeps its historical name for API
+  compatibility; it is not a proven upper bound on forecast accuracy.
 - `permutation_auto_mutual_information`: non-linear dependence between ordinal
   patterns separated by a lag.
 - `PAMIAnalyzer`: finds every local minimum of each panel series' PAMI curve.
@@ -52,7 +53,8 @@ $$
 \mathrm{spectral\ structure} & \mathrm{ForeCA\ and\ spectral\ concentration} \\
 \mathrm{persistence} & \mathrm{variance\ ratio\ and\ temporal\ dependence} \\
 \mathrm{intermittency} & \mathrm{intermittency\ analyzer} \\
-\mathrm{ordinal\ predictability} & \mathrm{permutation\ entropy\ and\ theoretical\ limit}
+\mathrm{temporal\ stability} & \mathrm{Wasserstein\ distance\ and\ regime\ detection} \\
+\mathrm{ordinal\ regularity} & \mathrm{permutation\ entropy\ and\ ordinal\ regularity\ index}
 \end{cases}
 $$
 
@@ -61,6 +63,18 @@ strong periodicity but weak persistence, or a concentrated spectrum while still
 being highly intermittent. The resulting profile is useful for choosing a
 forecasting strategy and model assumptions, but it is not an additive
 forecastability formula.
+
+Temporal stability has a distinct role in this profile: it does not measure
+intrinsic predictable structure. It evaluates whether the history summarized
+by the other diagnostics remains representative of the current regime. A
+series may have strong spectral or seasonal structure and still require a
+shorter training window if its level, scale, or distribution has changed.
+
+A practical diagnostic sequence is:
+
+```text
+intermittency -> temporal stability -> regularity -> signal structure -> backtesting
+```
 
 ```python
 from tinyshift.series import (
@@ -83,13 +97,14 @@ minima = pami.summary()
 lags = pami.lags(mode="short", short=2, fallback=1)
 ```
 
-## Intermittency, Seasonality, and Variance Ratio
+## Panel Analyzer Diagnostics
 
 ```python
 from tinyshift.series import (
     IntermittencyAnalyzer,
     RegularityAnalyzer,
     SeasonalityAnalyzer,
+    TemporalStabilityAnalyzer,
     TrendAnalyzer,
     VarianceRatioAnalyzer,
 )
@@ -99,12 +114,22 @@ regularity = RegularityAnalyzer().fit(df).summary()
 seasonality = SeasonalityAnalyzer(top_k=2).fit(df).summary()
 trend = TrendAnalyzer().fit(df).summary()
 dependence = VarianceRatioAnalyzer().fit(df).summary()
+
+stability = TemporalStabilityAnalyzer(horizon=14).fit(df)
+stability_windows = stability.summary()
+changes = stability.changes()
+regimes = stability.regimes()
 ```
 
 `IntermittencyAnalyzer` classifies demand as smooth, intermittent, erratic, or
 lumpy. `SeasonalityAnalyzer` identifies spectral candidates and tests their
 harmonic significance. `VarianceRatioAnalyzer` reports persistence or
 mean reversion at logarithmically spaced horizons for each series.
+`TemporalStabilityAnalyzer` tests whether successive horizon-sized folds remain
+compatible with the current historical regime. Confirmed changes can motivate
+moving windows, recency weighting, regime segmentation, recalibration, or
+covariates that explain the break. It detects evidence of change, not its
+cause.
 
 ## Diagnostics and Decomposition
 
@@ -137,8 +162,10 @@ for section in summaries[1:]:
 
 The result contains `adi`, `cv2`, `zero_proportion`, `interval_cv`, `classification`, `foreca`,
 `limit`, `spectral_concentration`, the linear-trend diagnostics, and candidate
-and significant seasonal periods. Variance-ratio analysis remains available independently
-through `VarianceRatioAnalyzer`.
+and significant seasonal periods. Variance-ratio analysis remains available
+independently through `VarianceRatioAnalyzer`. Temporal-stability windows also
+remain separate because `summary()` can return multiple rows per series; use
+`changes()` or `regimes()` when a change- or regime-level table is needed.
 
 For forecast metrics, stabilization, or decomposed forecasting wrappers, see
 [`tinyshift.forecasting`](../forecasting/README.md).

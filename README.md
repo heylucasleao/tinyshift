@@ -254,9 +254,9 @@ print(f"Sample Entropy: {complexity}")
 perm_entropy = permutation_entropy(time_series, m=3, delay=1, normalize=True)
 print(f"Permutation Entropy: {perm_entropy}")
 
-# Calculate the ordinal predictability upper bound
+# Calculate ordinal regularity (the function name is retained for compatibility)
 theo_limit = theoretical_limit(time_series, m=3, delay=1)
-print(f"Ordinal Predictability Upper Bound (Πmax): {theo_limit}")
+print(f"Ordinal Regularity Index: {theo_limit}")
 
 # Inspect persistence at one horizon
 ratio, z_statistic, p_value = variance_ratio(time_series, horizon=7)

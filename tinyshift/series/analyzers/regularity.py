@@ -17,9 +17,9 @@ class RegularityAnalyzer(BaseSeriesAnalyzer):
     """Measure complementary spectral and ordinal regularity structure.
 
     The analyzer evaluates each panel series independently using three bounded
-    diagnostics: ForeCA forecastability, an ordinal predictability upper
-    bound, and normalized spectral concentration. These describe structure in
-    the observed signal; they do not estimate out-of-sample forecast accuracy.
+    diagnostics: ForeCA forecastability, an ordinal regularity index, and
+    normalized spectral concentration. These describe structure in the observed
+    signal; they do not estimate out-of-sample forecast accuracy.
 
     Parameters
     ----------

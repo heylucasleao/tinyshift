@@ -51,9 +51,10 @@ summary = IntermittencyAnalyzer().fit(df).summary()
 
 ### `RegularityAnalyzer`
 
-Reports complementary structure measures: ForeCA forecastability, the ordinal
-predictability upper bound, and normalized spectral concentration. These describe
-structure in the observed data; they are not out-of-sample forecast scores.
+Reports complementary structure measures: ForeCA forecastability, ordinal
+regularity derived from permutation entropy, and normalized spectral
+concentration. These describe structure in the observed data; they are not
+out-of-sample forecast scores. 
 
 ```python
 from tinyshift.series import RegularityAnalyzer
@@ -142,6 +143,11 @@ of detection or output: Wasserstein already measures the full empirical
 distribution, while regime mean difference and scale ratio explain the most
 common kinds of change.
 
+Temporal stability is a representativeness diagnostic rather than an intrinsic
+forecastability score. Confirmed changes can justify testing moving training
+windows, recency weighting, regime segmentation, recalibration, or covariates
+that explain the break. The analyzer detects evidence of change, not its cause.
+
 ## Choosing an Analyzer
 
 | Question | Analyzer |
@@ -157,8 +163,8 @@ common kinds of change.
 ## Combining Profiles
 
 The one-row-per-series analyzers can be combined with validated one-to-one
-merges. Keep `VarianceRatioAnalyzer` and `TemporalStabilityAnalyzer` separate because it
-may return multiple rows per `unique_id`.
+merges. Keep `VarianceRatioAnalyzer` and `TemporalStabilityAnalyzer` separate
+because both may return multiple rows per `unique_id`.
 
 ```python
 from tinyshift.series import (
