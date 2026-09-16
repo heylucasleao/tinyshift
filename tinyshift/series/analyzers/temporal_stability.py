@@ -92,6 +92,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         self._validate_params()
 
     def _validate_params(self) -> None:
+        """Validate window geometry and confirmation parameters."""
         for name, value, minimum in (
             ("horizon", self.horizon, 1),
             ("min_reference_windows", self.min_reference_windows, 2),
@@ -114,44 +115,32 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             ):
                 raise ValueError(f"'{name}' must be None or a positive integer.")
 
-    @staticmethod
-    def _validate_panel(
-        df: pd.DataFrame,
-        id_col: str,
-        time_col: str,
-        target_col: str,
-    ) -> None:
-        """Validate the common pandas-like panel contract."""
-        if not hasattr(df, "columns") or not hasattr(df, "groupby"):
-            raise TypeError("df must be a pandas-like DataFrame in panel format.")
-        required = [id_col, time_col, target_col]
-        missing = [column for column in required if column not in df.columns]
-        if missing:
-            raise ValueError(f"DataFrame is missing required columns: {missing}.")
-        if df[[id_col, time_col]].isna().any().any():
-            raise ValueError("ID and time values must not be missing.")
-        if df.duplicated([id_col, time_col]).any():
-            raise ValueError("Panel contains duplicate ID-time observations.")
-
     @property
     def step_size_(self) -> int:
+        """Return the effective distance between consecutive fold starts."""
         return self.horizon if self.step_size is None else int(self.step_size)
 
     @property
     def min_reference_size_(self) -> int:
+        """Return the minimum reference size measured in observations."""
         return self.horizon * self.min_reference_windows
 
     def _validate_target(self, df: pd.DataFrame, target_col: str) -> None:
+        """Require a numeric target before applying the grouped analysis."""
         if not pd.api.types.is_numeric_dtype(df[target_col]):
             raise ValueError(f"Target column {target_col!r} must be numeric.")
+        if not np.isfinite(df[target_col].to_numpy(dtype=float)).all():
+            raise ValueError("Target values must be finite.")
 
     @staticmethod
     def _reference_scale(values: np.ndarray) -> tuple[float, float]:
+        """Return reference standard deviation and its stabilized denominator."""
         standard_deviation = float(np.std(values, ddof=0))
         floor = np.sqrt(np.finfo(float).eps) * max(1.0, abs(float(np.median(values))))
         return standard_deviation, max(standard_deviation, floor)
 
     def _distance(self, reference: np.ndarray, current: np.ndarray) -> float:
+        """Return Wasserstein distance standardized by reference dispersion."""
         _, denominator = self._reference_scale(reference)
         return float(wasserstein_distance(reference, current) / denominator)
 
@@ -173,6 +162,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         return median + 3.0 * max(mad, numerical_floor)
 
     def _fold_starts(self, n_observations: int) -> list[int]:
+        """Return eligible fold starts under the configured temporal geometry."""
         starts = list(
             range(
                 self.min_reference_size_,
@@ -192,6 +182,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         start: int,
         end: int,
     ) -> TemporalRegime:
+        """Summarize one half-open segment as a temporal regime."""
         segment = values[start:end]
         return TemporalRegime(
             index=index,
@@ -319,115 +310,59 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         self.id_col_ = id_col
         self.time_col_ = time_col
         self.target_col_ = target_col
-        self.results_ = (
-            df.groupby(id_col)
-            .apply(self._analyze_group, include_groups=False)
-            .reset_index(drop=True)
-        )
+        self.results_ = {
+            unique_id: self.analyze(
+                group[target_col].to_numpy(dtype=float),
+                group[time_col].to_numpy(),
+            )
+            for unique_id, group in df.groupby(
+                id_col, sort=False, observed=True
+            )
+        }
         return self
-
-    def _analyze_group(self, group: pd.DataFrame) -> pd.DataFrame:
-        """Analyze one already ordered panel group and normalize its outputs."""
-        result = self.analyze(
-            group[self.target_col_].to_numpy(dtype=float),
-            group[self.time_col_].to_numpy(),
-        )
-        unique_id = group.name
-        windows = pd.DataFrame(
-            result.windows,
-            columns=[
-                "start_time",
-                "end_time",
-                "reference_size",
-                "distance_ratio",
-                "status",
-            ],
-        ).assign(_result="summary")
-        changes = pd.DataFrame(
-            [
-                {"change": index, **change.__dict__}
-                for index, change in enumerate(result.changes, start=1)
-            ],
-            columns=[
-                "change",
-                "estimated_change_time",
-                "detected_at",
-                "distance_ratio",
-                "diff_mean",
-                "scale_ratio",
-            ],
-        ).assign(_result="changes")
-        regimes = pd.DataFrame(
-            [
-                {"regime": regime.index, **regime.__dict__}
-                for regime in result.regimes
-            ],
-            columns=[
-                "regime",
-                "index",
-                "start_time",
-                "end_time",
-                "n_observations",
-                "mean",
-                "std",
-            ],
-        ).drop(columns="index", errors="ignore")
-        regimes = regimes.assign(_result="regimes")
-        frames = [windows, regimes]
-        if not changes.empty:
-            frames.insert(1, changes)
-        frame = pd.concat(frames, ignore_index=True, sort=False)
-        for column in changes.columns:
-            if column not in frame.columns:
-                frame[column] = np.nan
-        frame.insert(0, self.id_col_, unique_id)
-        return frame
 
     def _fit_single(self, values: pd.Series) -> TemporalStabilityResult:
         """Analyze a vector when invoked through the base analyzer contract."""
         return self.analyze(values.to_numpy(dtype=float))
 
     def _require_fitted(self) -> None:
+        """Reject result access before a panel has been analyzed."""
         if not hasattr(self, "results_"):
             raise RuntimeError("The analyzer must be fitted before requesting results.")
 
     def summary(self) -> pd.DataFrame:
         """Return every sequential reference-versus-fold comparison."""
         self._require_fitted()
-        columns = [
-            self.id_col_,
-            "start_time",
-            "end_time",
-            "reference_size",
-            "distance_ratio",
-            "status",
-        ]
-        return self.results_.loc[self.results_["_result"] == "summary", columns]
+        return pd.DataFrame(
+            [
+                {self.id_col_: unique_id, **window}
+                for unique_id, result in self.results_.items()
+                for window in result.windows
+            ]
+        )
 
     def changes(self) -> pd.DataFrame:
         """Return one row per confirmed distribution change."""
         self._require_fitted()
-        columns = [
-            self.id_col_,
-            "change",
-            "estimated_change_time",
-            "detected_at",
-            "distance_ratio",
-            "diff_mean",
-            "scale_ratio",
-        ]
-        return self.results_.loc[self.results_["_result"] == "changes", columns]
+        return pd.DataFrame(
+            [
+                {
+                    self.id_col_: unique_id,
+                    "change": index,
+                    **change.__dict__,
+                }
+                for unique_id, result in self.results_.items()
+                for index, change in enumerate(result.changes, start=1)
+            ]
+        )
 
     def regimes(self) -> pd.DataFrame:
         """Return one descriptive row per detected temporal regime."""
         self._require_fitted()
-        columns = [
-            self.id_col_,
-            "regime",
-            "start_time",
-            "end_time",
-            "n_observations",
-            "mean",
-            "std",
-        ]
-        return self.results_.loc[self.results_["_result"] == "regimes", columns]
+        return pd.DataFrame(
+            [
+                {self.id_col_: unique_id, "regime": regime.index, **regime.__dict__}
+                for unique_id, result in self.results_.items()
+                for regime in result.regimes
+            ]
+        ).drop(columns="index", errors="ignore")
