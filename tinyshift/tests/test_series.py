@@ -689,14 +689,19 @@ class TestTemporalStabilityAnalyzer:
 
         windows = analyzer.windows()
         assert len(windows) == 2
-        assert {
-            "standardized_wasserstein",
-            "threshold",
-            "exceeds_threshold",
-            "change_confirmed",
-        }.issubset(windows.columns)
+        assert windows.columns.tolist() == [
+            "unique_id",
+            "cutoff",
+            "fold_end",
+            "reference_start",
+            "reference_end",
+            "reference_size",
+            "distance_ratio",
+            "status",
+        ]
+        assert windows["status"].tolist() == ["stable", "stable"]
 
-    def test_automatic_threshold_is_calibrated_from_reference_folds(self):
+    def test_automatic_threshold_produces_finite_distance_ratios(self):
         values = np.tile([0.0, 1.0, 2.0, 1.0], 10)
         result = TemporalStabilityAnalyzer(
             horizon=4,
@@ -705,7 +710,9 @@ class TestTemporalStabilityAnalyzer:
         ).analyze(values)
 
         assert result.windows
-        assert all(np.isfinite(window["threshold"]) for window in result.windows)
+        assert all(
+            np.isfinite(window["distance_ratio"]) for window in result.windows
+        )
 
     def test_rejects_insufficient_history(self):
         analyzer = TemporalStabilityAnalyzer(horizon=5)

@@ -250,19 +250,16 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             confirmed = bool(
                 exceeds and confirmation_count >= self.confirmation_windows
             )
+            status = "confirmed" if confirmed else "candidate" if exceeds else "stable"
             windows.append(
                 {
                     "cutoff": times[start - 1],
-                    "fold_start": times[start],
                     "fold_end": times[start + self.horizon - 1],
                     "reference_start": times[regime_start],
                     "reference_end": times[reference_end - 1],
                     "reference_size": len(reference),
-                    "standardized_wasserstein": distance,
-                    "threshold": limit,
-                    "exceeds_threshold": exceeds,
-                    "confirmation_count": confirmation_count,
-                    "change_confirmed": confirmed,
+                    "distance_ratio": distance / limit,
+                    "status": status,
                 }
             )
 
