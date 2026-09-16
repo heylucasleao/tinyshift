@@ -38,14 +38,11 @@ class TemporalRegime:
     """Descriptive statistics for one detected temporal regime."""
 
     index: int
-    start: int
-    end: int
     start_time: Any
     end_time: Any
-    length: int
+    n_observations: int
     mean: float
-    variance: float
-    standard_deviation: float
+    std: float
 
 
 @dataclass(frozen=True)
@@ -234,14 +231,11 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         segment = values[start:end]
         return TemporalRegime(
             index=index,
-            start=start,
-            end=end - 1,
             start_time=times[start],
             end_time=times[end - 1],
-            length=len(segment),
+            n_observations=len(segment),
             mean=float(np.mean(segment)),
-            variance=float(np.var(segment, ddof=0)),
-            standard_deviation=float(np.std(segment, ddof=0)),
+            std=float(np.std(segment, ddof=0)),
         )
 
     def analyze(
@@ -368,7 +362,9 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         self._require_fitted()
         rows = []
         for unique_id, result in self.results_.items():
-            lengths = np.asarray([regime.length for regime in result.regimes])
+            lengths = np.asarray(
+                [regime.n_observations for regime in result.regimes]
+            )
             latest = result.changes[-1] if result.changes else None
             current = result.regimes[-1]
             rows.append(
@@ -382,7 +378,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
                     ],
                     "median_regime_length": float(np.median(lengths)),
                     "current_regime_start": current.start_time,
-                    "current_regime_length": current.length,
+                    "current_regime_length": current.n_observations,
                     "latest_change_time": (
                         latest.estimated_change_time if latest else pd.NaT
                     ),

@@ -638,7 +638,13 @@ class TestTemporalStabilityAnalyzer:
             frame.loc[20, "ds"],
             frame.loc[40, "ds"],
         ]
-        assert analyzer.regimes()["length"].tolist() == [20, 20, 20]
+        regimes = analyzer.regimes()
+        assert regimes["n_observations"].tolist() == [20, 20, 20]
+        assert "std" in regimes
+        assert "variance" not in regimes
+        assert "standard_deviation" not in regimes
+        assert "start" not in regimes
+        assert "end" not in regimes
         assert (analyzer.changes()["location_change"].abs() > 1.0).all()
 
     def test_stable_series_has_one_regime(self):
@@ -652,7 +658,7 @@ class TestTemporalStabilityAnalyzer:
 
         assert result.changes == []
         assert len(result.regimes) == 1
-        assert result.regimes[0].length == len(values)
+        assert result.regimes[0].n_observations == len(values)
 
     def test_windows_expose_sequential_evidence(self):
         frame = pd.DataFrame(
