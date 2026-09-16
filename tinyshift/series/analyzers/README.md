@@ -66,7 +66,7 @@ regimes = analyzer.regimes()   # descriptive regime segments
 `horizon`, `n_windows`, and `step_size` deliberately mirror temporal
 cross-validation concepts used by the forecasting API. Quantiles are not part
 of detection or output: Wasserstein already measures the full empirical
-distribution, while standardized mean change and scale ratio explain the most
+distribution, while regime mean difference and scale ratio explain the most
 common kinds of change.
 
 ### `IntermittencyAnalyzer`

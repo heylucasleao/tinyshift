@@ -645,7 +645,18 @@ class TestTemporalStabilityAnalyzer:
         assert "standard_deviation" not in regimes
         assert "start" not in regimes
         assert "end" not in regimes
-        assert (analyzer.changes()["location_change"].abs() > 1.0).all()
+        changes = analyzer.changes()
+        assert "position" not in changes
+        assert changes.columns.tolist() == [
+            "unique_id",
+            "change",
+            "estimated_change_time",
+            "detected_at",
+            "distance_ratio",
+            "diff_mean",
+            "scale_ratio",
+        ]
+        assert changes["diff_mean"].tolist() == [10.0, -15.0]
 
     def test_stable_series_has_one_regime(self):
         values = np.tile([0.0, 1.0, 2.0, 1.0], 15)

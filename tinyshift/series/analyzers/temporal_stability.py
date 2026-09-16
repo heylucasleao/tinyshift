@@ -20,16 +20,10 @@ from .base import BaseSeriesAnalyzer
 class TemporalChange:
     """One confirmed change between consecutive temporal regimes."""
 
-    position: int
     estimated_change_time: Any
     detected_at: Any
-    standardized_wasserstein: float
-    threshold: float
-    reference_mean: float
-    current_mean: float
-    location_change: float
-    reference_std: float
-    current_std: float
+    distance_ratio: float
+    diff_mean: float
     scale_ratio: float
 
 
@@ -189,37 +183,6 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             starts = starts[-int(self.n_windows) :]
         return starts
 
-    def _change(
-        self,
-        values: np.ndarray,
-        times: np.ndarray,
-        regime_start: int,
-        change_start: int,
-        detected_end: int,
-        distance: float,
-        threshold: float,
-    ) -> TemporalChange:
-        reference = values[regime_start:change_start]
-        current = values[change_start:detected_end]
-        reference_std, denominator = self._reference_scale(reference)
-        current_std = float(np.std(current, ddof=0))
-        reference_mean = float(np.mean(reference))
-        current_mean = float(np.mean(current))
-        floor = max(denominator - reference_std, np.finfo(float).eps)
-        return TemporalChange(
-            position=change_start,
-            estimated_change_time=times[change_start],
-            detected_at=times[detected_end - 1],
-            standardized_wasserstein=distance,
-            threshold=threshold,
-            reference_mean=reference_mean,
-            current_mean=current_mean,
-            location_change=(current_mean - reference_mean) / denominator,
-            reference_std=reference_std,
-            current_std=current_std,
-            scale_ratio=(current_std + floor) / (reference_std + floor),
-        )
-
     @staticmethod
     def _regime(
         values: np.ndarray,
@@ -262,7 +225,8 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         regime_start = 0
         pending_start: int | None = None
         confirmation_count = 0
-        changes: list[TemporalChange] = []
+        change_positions: list[int] = []
+        change_evidence: list[tuple[Any, float, float]] = []
         windows: list[dict[str, Any]] = []
 
         for start in starts:
@@ -304,26 +268,42 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
 
             if confirmed:
                 detected_end = start + self.horizon
-                changes.append(
-                    self._change(
-                        values,
-                        times,
-                        regime_start,
-                        int(pending_start),
-                        detected_end,
-                        distance,
-                        limit,
-                    )
+                change_position = int(pending_start)
+                change_evidence.append(
+                    (times[detected_end - 1], distance, limit)
                 )
-                regime_start = int(pending_start)
+                change_positions.append(change_position)
+                regime_start = change_position
                 pending_start = None
                 confirmation_count = 0
 
-        boundaries = [0, *(change.position for change in changes), len(values)]
+        boundaries = [0, *change_positions, len(values)]
         regimes = [
             self._regime(values, times, index, start, end)
             for index, (start, end) in enumerate(pairwise(boundaries))
         ]
+        changes = []
+        for position, evidence, previous, current in zip(
+            change_positions,
+            change_evidence,
+            regimes[:-1],
+            regimes[1:],
+            strict=True,
+        ):
+            detected_at, distance, limit = evidence
+            scale_floor = np.sqrt(np.finfo(float).eps) * max(
+                1.0, abs(previous.mean)
+            )
+            changes.append(
+                TemporalChange(
+                    estimated_change_time=times[position],
+                    detected_at=detected_at,
+                    distance_ratio=distance / limit,
+                    diff_mean=current.mean - previous.mean,
+                    scale_ratio=(current.std + scale_floor)
+                    / (previous.std + scale_floor),
+                )
+            )
         return TemporalStabilityResult(changes, regimes, windows)
 
     def fit(
@@ -382,12 +362,10 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
                     "latest_change_time": (
                         latest.estimated_change_time if latest else pd.NaT
                     ),
-                    "latest_standardized_wasserstein": (
-                        latest.standardized_wasserstein if latest else np.nan
+                    "latest_distance_ratio": (
+                        latest.distance_ratio if latest else np.nan
                     ),
-                    "latest_location_change": (
-                        latest.location_change if latest else np.nan
-                    ),
+                    "latest_diff_mean": latest.diff_mean if latest else np.nan,
                     "latest_scale_ratio": latest.scale_ratio if latest else np.nan,
                 }
             )
