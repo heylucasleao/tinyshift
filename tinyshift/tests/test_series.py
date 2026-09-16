@@ -716,6 +716,7 @@ class TestTemporalStabilityAnalyzer:
         ).fit(frame)
 
         regimes = analyzer.regimes()
+        assert regimes["regime"].tolist() == [1, 2, 3]
         assert regimes["n_observations"].tolist() == [20, 20, 20]
         assert "std" in regimes
         assert "variance" not in regimes

@@ -31,7 +31,6 @@ class TemporalChange:
 class TemporalRegime:
     """Descriptive statistics for one detected temporal regime."""
 
-    index: int
     start_time: Any
     end_time: Any
     n_observations: int
@@ -239,14 +238,12 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
     def _regime(
         values: np.ndarray,
         times: np.ndarray,
-        index: int,
         start: int,
         end: int,
     ) -> TemporalRegime:
         """Summarize one half-open segment as a temporal regime."""
         segment = values[start:end]
         return TemporalRegime(
-            index=index,
             start_time=times[start],
             end_time=times[end - 1],
             n_observations=len(segment),
@@ -398,8 +395,8 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         """
         boundaries = [0, *(change.position for change in evidence), len(values)]
         regimes = [
-            self._regime(values, times, index, start, end)
-            for index, (start, end) in enumerate(pairwise(boundaries))
+            self._regime(values, times, start, end)
+            for start, end in pairwise(boundaries)
         ]
         changes = []
         for change, previous, current in zip(
@@ -596,8 +593,12 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         self._require_fitted()
         return pd.DataFrame(
             [
-                {self.id_col_: unique_id, "regime": regime.index, **regime.__dict__}
+                {
+                    self.id_col_: unique_id,
+                    "regime": index,
+                    **regime.__dict__,
+                }
                 for unique_id, result in self.results_.items()
-                for regime in result.regimes
+                for index, regime in enumerate(result.regimes, start=1)
             ]
-        ).drop(columns="index", errors="ignore")
+        )
