@@ -623,6 +623,82 @@ class TestTemporalStabilityAnalyzer:
         assert analyzer.min_reference_windows == 5
         assert analyzer.confirmation_windows == 3
 
+    def test_reference_scale_uses_dispersion_and_stabilizes_constant_values(self):
+        varying_scale = TemporalStabilityAnalyzer._reference_scale(np.array([0.0, 2.0]))
+        constant_scale = TemporalStabilityAnalyzer._reference_scale(np.zeros(4))
+
+        assert varying_scale == pytest.approx(1.0)
+        assert constant_scale == pytest.approx(np.sqrt(np.finfo(float).eps))
+
+    def test_distance_is_standardized_by_reference_scale(self):
+        analyzer = TemporalStabilityAnalyzer(horizon=2)
+
+        distance = analyzer._distance(
+            reference=np.array([0.0, 2.0]),
+            current=np.array([1.0, 3.0]),
+        )
+
+        assert distance == pytest.approx(1.0)
+
+    def test_threshold_uses_median_plus_three_mads(self, monkeypatch):
+        analyzer = TemporalStabilityAnalyzer(horizon=2)
+        distances = iter([1.0, 2.0, 4.0])
+        monkeypatch.setattr(analyzer, "_distance", lambda *_: next(distances))
+
+        threshold = analyzer._resolve_threshold(np.arange(8.0))
+
+        assert threshold == pytest.approx(5.0)
+
+    def test_comparison_windows_freeze_reference_at_pending_change(self):
+        analyzer = TemporalStabilityAnalyzer(horizon=2)
+        values = np.arange(12.0)
+
+        expanding_reference, current = analyzer._comparison_windows(
+            values, start=8, regime_start=2, pending_start=None
+        )
+        frozen_reference, next_current = analyzer._comparison_windows(
+            values, start=10, regime_start=2, pending_start=8
+        )
+
+        np.testing.assert_array_equal(expanding_reference, values[2:8])
+        np.testing.assert_array_equal(current, values[8:10])
+        np.testing.assert_array_equal(frozen_reference, values[2:8])
+        np.testing.assert_array_equal(next_current, values[10:12])
+
+    def test_evaluate_shift_returns_distance_and_reference_threshold(self, monkeypatch):
+        analyzer = TemporalStabilityAnalyzer(horizon=2)
+        reference = np.arange(4.0)
+        current = np.arange(4.0, 6.0)
+        monkeypatch.setattr(analyzer, "_distance", lambda ref, cur: 1.5)
+        monkeypatch.setattr(analyzer, "_resolve_threshold", lambda ref: 1.25)
+
+        result = analyzer._evaluate_shift(reference, current)
+
+        assert result == (1.5, 1.25)
+
+    def test_fold_starts_respect_step_size_and_recent_window_limit(self):
+        analyzer = TemporalStabilityAnalyzer(
+            horizon=2,
+            n_windows=2,
+            step_size=3,
+            min_reference_windows=2,
+        )
+
+        assert analyzer._fold_starts(15) == [10, 13]
+
+    def test_scan_keeps_change_candidate_until_required_confirmation(self):
+        analyzer = TemporalStabilityAnalyzer(
+            horizon=5,
+            min_reference_windows=4,
+            confirmation_windows=2,
+        )
+        values = np.concatenate([np.zeros(20), np.full(10, 10.0)])
+
+        evidence, windows = analyzer._scan_windows(values, np.arange(len(values)))
+
+        assert [window["status"] for window in windows] == ["candidate", "confirmed"]
+        assert [change.position for change in evidence] == [20]
+
     def test_detects_and_resets_after_persistent_level_changes(self):
         values = np.concatenate([np.zeros(20), np.full(20, 10.0), np.full(20, -5.0)])
         frame = pd.DataFrame(
@@ -640,6 +716,7 @@ class TestTemporalStabilityAnalyzer:
         ).fit(frame)
 
         regimes = analyzer.regimes()
+        assert regimes["regime"].tolist() == [1, 2, 3]
         assert regimes["n_observations"].tolist() == [20, 20, 20]
         assert "std" in regimes
         assert "variance" not in regimes

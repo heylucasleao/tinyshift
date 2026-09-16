@@ -31,7 +31,6 @@ class TemporalChange:
 class TemporalRegime:
     """Descriptive statistics for one detected temporal regime."""
 
-    index: int
     start_time: Any
     end_time: Any
     n_observations: int
@@ -163,19 +162,24 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             raise ValueError("Target values must be finite.")
 
     @staticmethod
-    def _reference_scale(values: np.ndarray) -> tuple[float, float]:
-        """Return reference standard deviation and its stabilized denominator."""
+    def _reference_scale(values: np.ndarray) -> float:
+        """Return the stabilized reference standard deviation."""
         standard_deviation = float(np.std(values, ddof=0))
         floor = np.sqrt(np.finfo(float).eps) * max(1.0, abs(float(np.median(values))))
-        return standard_deviation, max(standard_deviation, floor)
+        return max(standard_deviation, floor)
 
     def _distance(self, reference: np.ndarray, current: np.ndarray) -> float:
         """Return Wasserstein distance standardized by reference dispersion."""
-        _, denominator = self._reference_scale(reference)
-        return float(wasserstein_distance(reference, current) / denominator)
+        # Standardization makes shifts comparable across series: the same
+        # absolute change can be material for a stable series and negligible
+        # for a naturally volatile one.
+        reference_scale = self._reference_scale(reference)
+        return float(wasserstein_distance(reference, current) / reference_scale)
 
     def _resolve_threshold(self, reference: np.ndarray) -> float:
         """Calibrate a robust limit from sequential historical pseudo-folds."""
+        # These pseudo-folds estimate the range of distances normally observed
+        # within the active regime, without requiring a global cutoff.
         distances = []
         for stop in range(self.horizon * 2, len(reference) + 1, self.horizon):
             history = reference[: stop - self.horizon]
@@ -190,6 +194,32 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         mad = float(np.median(np.abs(distances - median)))
         numerical_floor = np.sqrt(np.finfo(float).eps) * max(1.0, median)
         return median + 3.0 * max(mad, numerical_floor)
+
+    def _comparison_windows(
+        self,
+        values: np.ndarray,
+        start: int,
+        regime_start: int,
+        pending_start: int | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the active reference and current comparison fold.
+
+        Once a candidate change exists, the reference ends at its first fold.
+        Freezing it there prevents candidate observations from making later
+        confirmation folds look artificially similar to the reference.
+        """
+        reference_end = start if pending_start is None else pending_start
+        reference = values[regime_start:reference_end]
+        current = values[start : start + self.horizon]
+        return reference, current
+
+    def _evaluate_shift(
+        self, reference: np.ndarray, current: np.ndarray
+    ) -> tuple[float, float]:
+        """Return a fold's standardized distance and reference-based limit."""
+        distance = self._distance(reference, current)
+        threshold = self._resolve_threshold(reference)
+        return distance, threshold
 
     def _fold_starts(self, n_observations: int) -> list[int]:
         """Return eligible fold starts under the configured temporal geometry."""
@@ -208,14 +238,12 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
     def _regime(
         values: np.ndarray,
         times: np.ndarray,
-        index: int,
         start: int,
         end: int,
     ) -> TemporalRegime:
         """Summarize one half-open segment as a temporal regime."""
         segment = values[start:end]
         return TemporalRegime(
-            index=index,
             start_time=times[start],
             end_time=times[end - 1],
             n_observations=len(segment),
@@ -281,13 +309,18 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         windows: list[dict[str, Any]] = []
 
         for start in starts:
+            # A newly confirmed regime must accumulate enough observations
+            # before it can provide a reliable reference distribution.
             if start - regime_start < self.min_reference_size_:
                 continue
-            reference_end = pending_start if pending_start is not None else start
-            reference = values[regime_start:reference_end]
-            current = values[start : start + self.horizon]
-            limit = self._resolve_threshold(reference)
-            distance = self._distance(reference, current)
+
+            reference, current = self._comparison_windows(
+                values=values,
+                start=start,
+                regime_start=regime_start,
+                pending_start=pending_start,
+            )
+            distance, limit = self._evaluate_shift(reference, current)
             exceeds = bool(distance > limit)
 
             if exceeds:
@@ -362,8 +395,8 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         """
         boundaries = [0, *(change.position for change in evidence), len(values)]
         regimes = [
-            self._regime(values, times, index, start, end)
-            for index, (start, end) in enumerate(pairwise(boundaries))
+            self._regime(values, times, start, end)
+            for start, end in pairwise(boundaries)
         ]
         changes = []
         for change, previous, current in zip(
@@ -560,8 +593,12 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         self._require_fitted()
         return pd.DataFrame(
             [
-                {self.id_col_: unique_id, "regime": regime.index, **regime.__dict__}
+                {
+                    self.id_col_: unique_id,
+                    "regime": index,
+                    **regime.__dict__,
+                }
                 for unique_id, result in self.results_.items()
-                for regime in result.regimes
+                for index, regime in enumerate(result.regimes, start=1)
             ]
-        ).drop(columns="index", errors="ignore")
+        )
