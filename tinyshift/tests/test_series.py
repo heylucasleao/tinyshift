@@ -800,6 +800,11 @@ class TestForecastability:
     def test_create_pami_lags_uses_first_local_minimum(self):
         assert create_pami_lags({"a": [4, 9]}, mode="point") == {"a": [4]}
 
+    def test_create_pami_lags_accepts_positional_arguments(self):
+        assert create_pami_lags({"a": [4, 9]}, "short", 1, 2) == {
+            "a": [1, 2, 4]
+        }
+
     def test_pami_analyzer_clips_max_tau_to_valid_range(self, monkeypatch):
         evaluated_taus = []
 
@@ -826,9 +831,11 @@ class TestForecastability:
             {"unique_id": ["a"] * 8, "ds": np.arange(8), "y": np.arange(8.0)}
         )
 
-        result = PAMIAnalyzer(max_tau=3).fit(frame).summary()
+        analyzer = PAMIAnalyzer(max_tau=3).fit(frame)
+        result = analyzer.summary()
 
         assert result.to_dict("records") == [{"unique_id": "a", "local_minima": [2]}]
+        assert analyzer.lags("point", 1, 1) == {"a": [2]}
 
     def test_analyzers_expose_summary_without_profile(self):
         for analyzer in (

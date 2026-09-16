@@ -27,7 +27,6 @@ class PAMIResult:
 
 def _format_lags(
     local_minima: Sequence[int],
-    *,
     mode: LagMode,
     fallback: int,
     short: int,
@@ -50,7 +49,6 @@ def _format_lags(
 
 def create_pami_lags(
     local_minima: Mapping[Any, Sequence[int]],
-    *,
     mode: LagMode = "range",
     fallback: int = 1,
     short: int = 1,
@@ -250,7 +248,6 @@ class PAMIAnalyzer(BaseSeriesAnalyzer):
 
     def lags(
         self,
-        *,
         mode: LagMode = "range",
         fallback: int = 1,
         short: int = 1,
