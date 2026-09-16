@@ -62,6 +62,9 @@ changes = analyzer.changes()   # confirmed changes
 regimes = analyzer.regimes()   # descriptive regime segments
 ```
 
+Rows must already be ordered by time within each series; the analyzer preserves
+the input order instead of sorting internally.
+
 `horizon`, `n_windows`, and `step_size` deliberately mirror temporal
 cross-validation concepts used by the forecasting API. Quantiles are not part
 of detection or output: Wasserstein already measures the full empirical
