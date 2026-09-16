@@ -14,8 +14,9 @@ Analyzers expect a long-format pandas DataFrame with one row per observation:
 | `y` | Numeric target value | `y` |
 
 The base class validates the panel, rejects missing identifiers or timestamps,
-rejects duplicate ID-time pairs, sorts each series by time, and fits each ID
-independently. Custom column names are supported through `fit()`.
+rejects duplicate ID-time pairs, preserves the input row order, and fits each
+ID independently. Data must already be ordered by time within each series.
+Custom column names are supported through `fit()`.
 
 ```python
 from tinyshift.series import SeasonalityAnalyzer
@@ -35,41 +36,6 @@ Every analyzer returns `self` from `fit()`. Results are retained in
 or inspection. The exact result structure is analyzer-specific.
 
 ## Available Analyzers
-
-### `TemporalStabilityAnalyzer`
-
-Replays a series through horizon-sized folds and compares each fold with the
-expanding reference of its current regime. Detection uses Wasserstein distance
-standardized by reference scale. Persistent changes close the current regime,
-record their estimated and confirmation times, and reset the reference.
-
-The detection threshold is calibrated robustly from historical pseudo-folds
-using their median distance plus three times the median absolute deviation.
-
-```python
-from tinyshift.series import TemporalStabilityAnalyzer
-
-analyzer = TemporalStabilityAnalyzer(
-    horizon=14,
-    n_windows=None,
-    step_size=14,
-    min_reference_windows=4,
-    confirmation_windows=2,
-).fit(df)
-
-summary = analyzer.summary()   # every sequential comparison
-changes = analyzer.changes()   # confirmed changes
-regimes = analyzer.regimes()   # descriptive regime segments
-```
-
-Rows must already be ordered by time within each series; the analyzer preserves
-the input order instead of sorting internally.
-
-`horizon`, `n_windows`, and `step_size` deliberately mirror temporal
-cross-validation concepts used by the forecasting API. Quantiles are not part
-of detection or output: Wasserstein already measures the full empirical
-distribution, while regime mean difference and scale ratio explain the most
-common kinds of change.
 
 ### `IntermittencyAnalyzer`
 
@@ -143,6 +109,50 @@ from tinyshift.series import VarianceRatioAnalyzer
 
 summary = VarianceRatioAnalyzer(horizons=[2, 4, 8]).fit(df).summary()
 ```
+
+### `TemporalStabilityAnalyzer`
+
+Replays a series through horizon-sized folds and compares each fold with the
+expanding reference of its current regime. Detection uses Wasserstein distance
+standardized by reference scale. Persistent changes close the current regime,
+record their estimated and confirmation times, and reset the reference.
+
+The detection threshold is calibrated robustly from historical pseudo-folds
+using their median distance plus three times the median absolute deviation.
+
+```python
+from tinyshift.series import TemporalStabilityAnalyzer
+
+analyzer = TemporalStabilityAnalyzer(
+    horizon=14,
+    n_windows=None,
+    step_size=14,
+    min_reference_windows=4,
+    confirmation_windows=2,
+).fit(df)
+
+summary = analyzer.summary()   # every sequential comparison
+changes = analyzer.changes()   # confirmed changes
+regimes = analyzer.regimes()   # descriptive regime segments
+```
+
+`horizon`, `n_windows`, and `step_size` deliberately mirror temporal
+cross-validation concepts used by the forecasting API. Quantiles are not part
+of detection or output: Wasserstein already measures the full empirical
+distribution, while regime mean difference and scale ratio explain the most
+common kinds of change.
+
+## Choosing an Analyzer
+
+| Question | Analyzer |
+|---|---|
+| Does the series have a trend? | `TrendAnalyzer` |
+| Are there relevant seasonal patterns? | `SeasonalityAnalyzer` |
+| Does the series contain predictable structure? | `RegularityAnalyzer` |
+| Which nonlinear lags are relevant? | `PAMIAnalyzer` |
+| Is there persistence or mean reversion? | `VarianceRatioAnalyzer` |
+| Is the profile intermittent or erratic? | `IntermittencyAnalyzer` |
+| Does the distribution change over time? | `TemporalStabilityAnalyzer` |
 
 ## Combining Profiles
 

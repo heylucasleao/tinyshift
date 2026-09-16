@@ -326,10 +326,10 @@ class TestVarianceRatioAnalyzer:
             "significant_dependence",
         }
 
-    def test_uses_explicit_horizons_and_sorts_panel(self):
+    def test_uses_explicit_horizons_and_custom_columns(self):
         values = np.cumsum(np.random.RandomState(1).normal(size=40))
         frame = pd.DataFrame(
-            {"item": "a", "date": np.arange(40)[::-1], "value": values[::-1]}
+            {"item": "a", "date": np.arange(40), "value": values}
         )
 
         analyzer = VarianceRatioAnalyzer(horizons=[8, 2, 4, 2]).fit(
@@ -447,7 +447,7 @@ class TestIntermittencyAnalyzer:
         assert analyzer.results_["a"]["classification"] == "intermittent"
         assert CanonicalAnalyzer is IntermittencyAnalyzer
 
-    def test_sorts_panel_by_id_and_time_and_returns_id_as_column(self):
+    def test_preserves_panel_order_and_returns_id_as_column(self):
         frame = pd.DataFrame(
             {
                 "unique_id": ["a", "a", "a", "a"],
@@ -467,7 +467,7 @@ class TestIntermittencyAnalyzer:
             "classification",
         ]
         np.testing.assert_array_equal(
-            IntermittencyAnalyzer().fit(frame).results_["a"]["intervals"], [2]
+            IntermittencyAnalyzer().fit(frame).results_["a"]["intervals"], [1]
         )
 
     def test_column_names_are_fit_parameters(self):

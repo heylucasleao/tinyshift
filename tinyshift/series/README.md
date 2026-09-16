@@ -5,14 +5,17 @@ intermittency, seasonality, spectral structure, and combined profiling. Forecast
 decomposition, evaluation, and stabilization belong to
 `tinyshift.forecasting`.
 
+Panel analyzers preserve input row order. Data must already be ordered by time
+within each series before calling `fit()`.
+
 ## Modules
 
 - `dependence`: permutation auto-mutual information (PAMI).
 - `diagnostic`: variance-ratio and trend/seasonal significance tests.
 - `entropy`: sample entropy, regularity, permutation entropy, and its derived
   ordinal predictability upper bound.
-- `analyzers`: panel-oriented intermittency, temporal stability, PAMI,
-  regularity, seasonality, trend, and variance-ratio analyzers with a shared
+- `analyzers`: panel-oriented intermittency, PAMI, regularity, seasonality,
+  trend, variance-ratio, and temporal-stability analyzers with a shared
   `fit()`/`summary()` convention.
   See the [analyzer reference](analyzers/README.md).
 - `spectral`: shared spectrum preparation, ForeCA, and spectral concentration.
