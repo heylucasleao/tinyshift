@@ -135,9 +135,29 @@ class BaseDriftAnalyzer(BaseEstimator, Generic[DetectorT]):
         Returns
         -------
         pandas.DataFrame
-            One row per current ID, in first-appearance order, with columns for
-            ID, internal ``score``, empirical ``threshold``, ``p_value``,
-            ``drift``, ``reference_size``, and ``current_size``.
+            One row per current ID, in first-appearance order.
+
+        Columns
+        -------
+        **id_col** : object
+            Identifier of the independently tested population. The actual
+            column name is the resolved value of ``id_col``.
+        **score** : float
+            Observed distribution distance for that ID. It describes magnitude
+            in the detector's metric and is retained as a diagnostic; it is not
+            the decision rule.
+        **threshold** : float
+            Empirical ``1 - alpha`` quantile of that ID's permutation-score
+            null distribution.
+        **p_value** : float
+            Plus-one-corrected Monte Carlo permutation p-value for that ID.
+        **drift** : bool
+            Whether that ID's ``p_value`` is less than or equal to its
+            detector's ``alpha``.
+        **reference_size** : int
+            Number of reference observations fitted for that ID.
+        **current_size** : int
+            Number of current observations tested for that ID.
 
         Raises
         ------

@@ -118,3 +118,28 @@ The result has one row per current ID:
 `CategoricalDriftAnalyzer` provides the same lifecycle for `CatDrift`. Current
 IDs without a fitted reference raise an error. Reference IDs absent from a
 current batch are omitted from that result.
+
+```
+                   BaseDrift
+                       │
+                permutation test
+                       │
+          ┌────────────┴────────────┐
+          │                         │
+       ConDrift                  CatDrift
+          │                         │
+   Wasserstein               Jensen-Shannon
+          │                         │
+          └────────────┬────────────┘
+                       │
+               observed score
+                       │
+                Monte Carlo H0
+                       │
+                    p-value
+                       │
+                p <= alpha ?
+                  /          \
+                yes           no
+              drift        no drift
+```

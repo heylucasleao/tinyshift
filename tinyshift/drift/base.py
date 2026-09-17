@@ -206,9 +206,31 @@ class BaseDrift(BaseEstimator, ABC):
         Returns
         -------
         DriftResult
-            Permutation-test result containing the observed distance, empirical
-            critical value, Monte Carlo p-value, drift decision, and sample
-            sizes.
+            Structured result of the permutation test.
+
+        Result Fields
+        -------------
+        **score** : float
+            Observed distance between the fitted reference distribution and
+            the current distribution. For :class:`ConDrift`, this is the
+            standardized Wasserstein distance. For :class:`CatDrift`, this is
+            the base-2 Jensen--Shannon distance. It is a diagnostic magnitude,
+            not the drift decision rule.
+        **threshold** : float
+            Empirical ``1 - alpha`` quantile of the permutation-score null
+            distribution. A score above this value is in the rejection region,
+            subject to the discrete p-value resolution.
+        **p_value** : float
+            Monte Carlo probability, under random group-label assignments, of
+            obtaining a score at least as large as the observed score. It uses
+            the plus-one correction and therefore cannot be zero.
+        **drift** : bool
+            Final statistical decision. ``True`` exactly when
+            ``p_value <= alpha``.
+        **reference_size** : int
+            Number of observations stored during :meth:`fit`.
+        **current_size** : int
+            Number of validated observations supplied in ``X``.
 
         Raises
         ------
