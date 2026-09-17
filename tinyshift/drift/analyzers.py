@@ -75,6 +75,7 @@ class BaseDriftAnalyzer(BaseEstimator, Generic[DetectorT]):
                     id_col: unique_id,
                     "score": result.score,
                     "threshold": result.threshold,
+                    "p_value": result.p_value,
                     "drift": result.drift,
                     "reference_size": result.reference_size,
                     "current_size": result.current_size,

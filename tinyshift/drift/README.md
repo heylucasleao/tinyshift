@@ -15,7 +15,7 @@ from tinyshift.drift import ConDrift
 
 detector = ConDrift(
     metric="wasserstein",
-    threshold="bootstrap",
+    threshold="permutation",
     normalize=True,
     alpha=0.05,
     random_state=42,
@@ -23,17 +23,36 @@ detector = ConDrift(
 detector.fit(reference_values)
 
 result = detector.predict(current_values)
-print(result.score, result.threshold, result.drift)
+print(result.score, result.threshold, result.p_value, result.drift)
 ```
 
 `score(current)` returns only the distance. `predict(current)` returns a
-`DriftResult` containing the score, threshold, classification, and both sample
-sizes. With `threshold=None`, the score remains available and `drift` is
-`None`. A numeric threshold can be supplied directly.
+`DriftResult` containing the score, threshold, p-value, classification, and
+both sample sizes. With `threshold=None`, the score remains available and
+`drift` is `None`. A numeric threshold can be supplied directly; manual
+thresholds do not produce a p-value.
 
-Bootstrap thresholds are calibrated under the fitted empirical reference and
-cached by current sample size. This matters because the expected sampling
-variation changes with batch size.
+### Inference methods
+
+- `threshold="permutation"` (default) pools reference and current observations,
+  repeatedly permutes their labels while preserving sample sizes, and computes
+  a finite-sample Monte Carlo p-value. Under the null, this is valid when the
+  observations are independent and the group labels are exchangeable.
+- `threshold="cross_conformal"` repeatedly holds out pseudo-current folds from
+  the reference without replacement. It is a useful reference-only calibration
+  and is cached by current sample size, but its overlapping folds make its
+  p-value approximate rather than an exact conformal guarantee. Current size
+  must be smaller than reference size.
+- `threshold="bootstrap"` independently resamples reference and pseudo-current
+  samples with replacement from the fitted empirical reference. It is retained
+  as an empirical alternative and is cached by current sample size.
+- `threshold=<float>` applies a fixed operational limit, and `threshold=None`
+  reports only the score.
+
+All resampling p-values use `(exceedances + 1) / (n_resamples + 1)`, so they are
+never zero. At least `1 / alpha - 1` resamples are required for rejection to be
+possible. Permutation testing with Wasserstein follows the same two-sample
+principle used by [waddR](https://doi.org/10.1093/bioinformatics/btab226).
 
 Continuous samples use Wasserstein distance. With `normalize=True` (the
 default), distance is divided by reference standard deviation so differently
@@ -57,7 +76,7 @@ up the reference and current populations.
 ```python
 from tinyshift.drift import ConDrift, ContinuousDriftAnalyzer
 
-analyzer = ContinuousDriftAnalyzer(ConDrift(threshold="bootstrap", random_state=42))
+analyzer = ContinuousDriftAnalyzer(ConDrift(threshold="permutation", random_state=42))
 analyzer.fit(reference_df, id_col="unique_id", target_col="y")
 
 result = analyzer.predict(current_df)
@@ -65,10 +84,10 @@ result = analyzer.predict(current_df)
 
 The result has one row per current ID:
 
-| unique_id | score | threshold | drift | reference_size | current_size |
-|---|---:|---:|---|---:|---:|
-| A | 0.18 | 0.31 | false | 120 | 30 |
-| B | 0.72 | 0.28 | true | 100 | 28 |
+| unique_id | score | threshold | p_value | drift | reference_size | current_size |
+|---|---:|---:|---:|---|---:|---:|
+| A | 0.18 | 0.31 | 0.431 | false | 120 | 30 |
+| B | 0.72 | 0.28 | 0.002 | true | 100 | 28 |
 
 `CategoricalDriftAnalyzer` provides the same lifecycle for `CatDrift`. Current
 IDs without a fitted reference raise an error. Reference IDs absent from a

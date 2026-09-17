@@ -32,7 +32,7 @@ class CatDrift(BaseDrift):
     def __init__(
         self,
         metric: str = "jensen_shannon",
-        threshold: float | str | None = "bootstrap",
+        threshold: float | str | None = "permutation",
         alpha: float = 0.05,
         n_resamples: int = 500,
         random_state: int | None = None,

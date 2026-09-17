@@ -21,6 +21,7 @@ class TestConDrift:
         result = detector.predict([10.0, 11.0])
         assert isinstance(result, DriftResult)
         assert result.score > result.threshold
+        assert result.p_value is None
         assert result.drift is True
         assert (result.reference_size, result.current_size) == (4, 2)
         assert detector.score([10.0, 11.0]) == pytest.approx(result.score)
@@ -29,6 +30,7 @@ class TestConDrift:
         result = ConDrift(threshold=None).fit([0.0, 1.0]).predict([0.0, 1.0])
         assert result.score == pytest.approx(0.0)
         assert result.threshold is None
+        assert result.p_value is None
         assert result.drift is None
 
     def test_normalization_is_scale_independent(self):
@@ -39,15 +41,53 @@ class TestConDrift:
         )
 
     def test_bootstrap_is_reproducible_and_cached_by_current_size(self):
-        detector = ConDrift(n_resamples=30, random_state=7, min_current_size=1).fit(
-            np.arange(10.0)
-        )
+        detector = ConDrift(
+            threshold="bootstrap",
+            n_resamples=30,
+            random_state=7,
+            min_current_size=1,
+        ).fit(np.arange(10.0))
         first = detector.predict([1.0, 2.0, 3.0])
         second = detector.predict([7.0, 8.0, 9.0])
         other_size = detector.predict([1.0, 2.0])
         assert first.threshold == second.threshold == detector.thresholds_[3]
         assert other_size.threshold == detector.thresholds_[2]
         assert set(detector.thresholds_) == {2, 3}
+
+    def test_permutation_detects_a_large_shift(self):
+        detector = ConDrift(
+            threshold="permutation",
+            normalize=False,
+            n_resamples=99,
+            random_state=7,
+        ).fit(np.linspace(0, 1, 40))
+
+        result = detector.predict(np.linspace(10, 11, 20))
+
+        assert result.p_value == pytest.approx(0.01)
+        assert result.score > result.threshold
+        assert result.drift is True
+        assert detector.calibration_scores_ == {}
+
+    def test_cross_conformal_is_cached_by_current_size(self):
+        detector = ConDrift(
+            threshold="cross_conformal", n_resamples=39, random_state=7
+        ).fit(np.arange(20.0))
+
+        first = detector.predict([1.0, 2.0, 3.0])
+        second = detector.predict([17.0, 18.0, 19.0])
+
+        assert first.threshold == second.threshold
+        assert first.p_value > second.p_value
+        assert 3 in detector.calibration_scores_
+
+    def test_cross_conformal_requires_a_smaller_current_sample(self):
+        detector = ConDrift(threshold="cross_conformal", n_resamples=19).fit(
+            np.arange(5.0)
+        )
+
+        with pytest.raises(ValueError, match="smaller"):
+            detector.predict(np.arange(5.0))
 
     @pytest.mark.parametrize("values", [["bad", "data"], [1.0, np.inf]])
     def test_invalid_continuous_values_are_rejected(self, values):
@@ -94,11 +134,12 @@ class TestCatDrift:
             CatDrift().fit(["a", None])
 
     def test_bootstrap_supports_string_categories(self):
-        detector = CatDrift(n_resamples=20, random_state=1).fit(
+        detector = CatDrift(threshold="bootstrap", n_resamples=20, random_state=1).fit(
             ["a", "a", "b", "b", "c"]
         )
         result = detector.predict(["a", "b"])
         assert np.isfinite(result.threshold)
+        assert 0 < result.p_value <= 1
         assert isinstance(result.drift, bool)
 
 
@@ -123,6 +164,7 @@ class TestDriftAnalyzers:
             "entity",
             "score",
             "threshold",
+            "p_value",
             "drift",
             "reference_size",
             "current_size",

@@ -19,7 +19,7 @@ class ConDrift(BaseDrift):
     def __init__(
         self,
         metric: str = "wasserstein",
-        threshold: float | str | None = "bootstrap",
+        threshold: float | str | None = "permutation",
         normalize: bool = True,
         alpha: float = 0.05,
         n_resamples: int = 500,
@@ -70,3 +70,10 @@ class ConDrift(BaseDrift):
         if not self.normalize:
             return distance
         return distance / self.scale_
+
+    def _inference_distance(self, reference: np.ndarray, current: np.ndarray) -> float:
+        distance = float(wasserstein_distance(reference, current))
+        if not self.normalize:
+            return distance
+        scale = max(float(np.std(reference)), np.finfo(float).eps)
+        return distance / scale
