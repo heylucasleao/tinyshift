@@ -22,13 +22,12 @@ class TestConDrift:
         assert result.p_value == pytest.approx(0.01)
         assert result.drift is True
         assert (result.reference_size, result.current_size) == (40, 20)
-        assert detector.score(np.linspace(10, 11, 20)) == pytest.approx(result.score)
 
     def test_normalization_is_scale_independent(self):
-        small = ConDrift().fit([0.0, 1.0, 2.0])
-        large = ConDrift().fit([0.0, 10.0, 20.0])
-        assert small.score([1.0, 2.0, 3.0]) == pytest.approx(
-            large.score([10.0, 20.0, 30.0])
+        small = ConDrift(n_resamples=19).fit([0.0, 1.0, 2.0])
+        large = ConDrift(n_resamples=19).fit([0.0, 10.0, 20.0])
+        assert small.predict([1.0, 2.0, 3.0]).score == pytest.approx(
+            large.predict([10.0, 20.0, 30.0]).score
         )
 
     @pytest.mark.parametrize("values", [["bad", "data"], [1.0, np.inf]])
@@ -38,11 +37,11 @@ class TestConDrift:
 
     def test_lifecycle_and_minimum_sizes_are_validated(self):
         with pytest.raises(NotFittedError):
-            ConDrift().score([1.0, 2.0])
+            ConDrift().predict([1.0, 2.0])
         with pytest.raises(ValueError, match="at least 2"):
             ConDrift().fit([1.0])
         with pytest.raises(ValueError, match="at least 2"):
-            ConDrift().fit([1.0, 2.0]).score([1.0])
+            ConDrift().fit([1.0, 2.0]).predict([1.0])
 
     def test_estimator_clone_preserves_configuration(self):
         detector = ConDrift(random_state=4)
@@ -51,12 +50,12 @@ class TestConDrift:
 
 class TestCatDrift:
     def test_jensen_shannon_distance(self):
-        detector = CatDrift().fit(["a", "a", "b", "b"])
-        assert detector.score(["a", "b", "b", "b"]) > 0
+        detector = CatDrift(n_resamples=19).fit(["a", "a", "b", "b"])
+        assert detector.predict(["a", "b", "b", "b"]).score > 0
 
     def test_unseen_categories_contribute_to_distance(self):
-        detector = CatDrift(min_current_size=1).fit(["known", "known"])
-        assert detector.score(["new"]) == pytest.approx(1.0)
+        detector = CatDrift(min_current_size=1, n_resamples=19).fit(["known", "known"])
+        assert detector.predict(["new"]).score == pytest.approx(1.0)
 
     def test_missing_values_are_rejected(self):
         with pytest.raises(ValueError, match="missing"):

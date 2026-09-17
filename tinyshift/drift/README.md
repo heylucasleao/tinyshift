@@ -23,10 +23,11 @@ result = detector.predict(current_values)
 print(result.score, result.threshold, result.p_value, result.drift)
 ```
 
-`score(current)` returns only the distribution distance and does not run
-inference. `predict(current)` always runs a two-sample permutation test and
-returns a `DriftResult` containing score, critical threshold, Monte Carlo
-p-value, decision, and both sample sizes.
+`predict(current)` runs a two-sample permutation test and returns a
+`DriftResult` containing the internal distance, critical threshold, Monte
+Carlo p-value, decision, and both sample sizes. Users should base monitoring
+decisions on `p_value` and `drift`; the distance is retained for analyzer
+reporting and diagnostics.
 
 The permutation test pools reference and current observations, repeatedly
 permutes their labels while preserving sample sizes, and recomputes the

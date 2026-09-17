@@ -130,7 +130,7 @@ result = detector.predict(current_values)
 ```
 
 `ConDrift` uses normalized Wasserstein distance and the same permutation
-inference. Use `score(current_values)` when only the distance is needed.
+inference. Monitoring decisions are exposed through `p_value` and `drift`.
 
 ### 3. Outlier Detection
 
