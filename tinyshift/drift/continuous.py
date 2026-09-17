@@ -18,16 +18,12 @@ class ConDrift(BaseDrift):
 
     def __init__(
         self,
-        metric: str = "wasserstein",
-        normalize: bool = True,
         alpha: float = 0.05,
         n_resamples: int = 500,
         random_state: int | None = None,
         min_reference_size: int = 2,
         min_current_size: int = 2,
     ) -> None:
-        self.metric = metric
-        self.normalize = normalize
         super().__init__(
             alpha,
             n_resamples,
@@ -35,13 +31,6 @@ class ConDrift(BaseDrift):
             min_reference_size,
             min_current_size,
         )
-
-    def _validate_params(self) -> None:
-        super()._validate_params()
-        if self.metric != "wasserstein":
-            raise ValueError("metric must be 'wasserstein'.")
-        if not isinstance(self.normalize, bool):
-            raise TypeError("normalize must be a boolean.")
 
     def _validate_sample(self, values: Any, name: str) -> np.ndarray:
         if isinstance(values, pd.Series):
@@ -65,13 +54,9 @@ class ConDrift(BaseDrift):
 
     def _distance(self, reference: np.ndarray, current: np.ndarray) -> float:
         distance = float(wasserstein_distance(reference, current))
-        if not self.normalize:
-            return distance
         return distance / self.scale_
 
     def _inference_distance(self, reference: np.ndarray, current: np.ndarray) -> float:
         distance = float(wasserstein_distance(reference, current))
-        if not self.normalize:
-            return distance
         scale = max(float(np.std(reference)), np.finfo(float).eps)
         return distance / scale

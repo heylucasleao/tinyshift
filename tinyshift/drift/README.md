@@ -14,8 +14,6 @@ Series.
 from tinyshift.drift import ConDrift
 
 detector = ConDrift(
-    metric="wasserstein",
-    normalize=True,
     alpha=0.05,
     n_resamples=999,
     random_state=42,
@@ -47,18 +45,52 @@ for rejection to be possible. Permutation testing with Wasserstein follows the
 same two-sample principle used by
 [waddR](https://doi.org/10.1093/bioinformatics/btab226).
 
-Continuous samples use Wasserstein distance. With `normalize=True` (the
-default), distance is divided by reference standard deviation. During
-permutation inference, this scale is recomputed for every permuted reference.
+## Score interpretation
 
-Categorical samples support:
+Both detectors return unit-independent scores, but their ranges are different.
+The permutation p-value, rather than an arbitrary score cutoff, determines the
+drift decision.
 
-- `metric="jensen_shannon"` (default)
-- `metric="psi"`
-- `metric="chebyshev"`
+### Continuous score
 
-Reference and current categories are aligned over their union, so previously
-unseen categories contribute to the distance. Missing values are rejected.
+`ConDrift` uses Wasserstein distance divided by the reference standard
+deviation:
+
+```text
+0 ------------------------------------------------------------> ∞
+identical distributions                     increasing change
+```
+
+Examples:
+
+- `0.0`: the empirical distributions are identical;
+- `0.5`: the Wasserstein distance is half the reference standard deviation;
+- `1.0`: the Wasserstein distance equals one reference standard deviation;
+- `2.0`: the Wasserstein distance equals two reference standard deviations.
+
+The score is not bounded above. During permutation inference, the standard
+deviation is recomputed from every permuted reference group.
+
+### Categorical score
+
+`CatDrift` uses Jensen–Shannon distance with logarithm base 2:
+
+```text
+0 ------------------------------------------------------------> 1
+identical distributions                  disjoint distributions
+```
+
+Examples:
+
+- `0.0`: the categorical distributions are identical;
+- values near `0.0`: category proportions are similar;
+- values near `1.0`: the distributions have little overlap;
+- `1.0`: their supports are completely disjoint.
+
+SciPy's `jensenshannon` returns the square root of the Jensen–Shannon
+divergence. Using `base=2` bounds that distance to `[0, 1]`. Reference and
+current categories are aligned over their union, so previously unseen
+categories contribute to the score. Missing values are rejected.
 
 ## Panel analyzers
 

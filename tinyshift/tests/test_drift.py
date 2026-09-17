@@ -10,16 +10,12 @@ from tinyshift.drift import (
     ConDrift,
     ContinuousDriftAnalyzer,
     DriftResult,
-    chebyshev,
-    psi,
 )
 
 
 class TestConDrift:
     def test_permutation_and_structured_result(self):
-        detector = ConDrift(normalize=False, n_resamples=99, random_state=7).fit(
-            np.linspace(0, 1, 40)
-        )
+        detector = ConDrift(n_resamples=99, random_state=7).fit(np.linspace(0, 1, 40))
         result = detector.predict(np.linspace(10, 11, 20))
         assert isinstance(result, DriftResult)
         assert result.score > result.threshold
@@ -49,26 +45,17 @@ class TestConDrift:
             ConDrift().fit([1.0, 2.0]).score([1.0])
 
     def test_estimator_clone_preserves_configuration(self):
-        detector = ConDrift(metric="wasserstein", normalize=False, random_state=4)
+        detector = ConDrift(random_state=4)
         assert clone(detector).get_params() == detector.get_params()
 
 
 class TestCatDrift:
-    def test_metric_helpers(self):
-        assert chebyshev(np.array([0.2, 0.8]), np.array([0.3, 0.7])) == pytest.approx(
-            0.1
-        )
-        assert psi(np.array([0.5, 0.5]), np.array([0.4, 0.6])) > 0
-
-    @pytest.mark.parametrize("metric", ["chebyshev", "jensen_shannon", "psi"])
-    def test_supported_metrics(self, metric):
-        detector = CatDrift(metric=metric).fit(["a", "a", "b", "b"])
-        assert detector.score(["a", "b", "b", "b"]) >= 0
+    def test_jensen_shannon_distance(self):
+        detector = CatDrift().fit(["a", "a", "b", "b"])
+        assert detector.score(["a", "b", "b", "b"]) > 0
 
     def test_unseen_categories_contribute_to_distance(self):
-        detector = CatDrift(metric="chebyshev", min_current_size=1).fit(
-            ["known", "known"]
-        )
+        detector = CatDrift(min_current_size=1).fit(["known", "known"])
         assert detector.score(["new"]) == pytest.approx(1.0)
 
     def test_missing_values_are_rejected(self):
@@ -119,7 +106,7 @@ class TestDriftAnalyzers:
 
     def test_categorical_analyzer_uses_one_result_per_id(self):
         analyzer = CategoricalDriftAnalyzer(
-            CatDrift(metric="chebyshev", n_resamples=99, random_state=7)
+            CatDrift(n_resamples=99, random_state=7)
         ).fit(_panel(["x"] * 40, ["z"] * 40), "entity", "value")
         result = analyzer.predict(_panel(["y"] * 20, ["z"] * 20))
         assert len(result) == 2

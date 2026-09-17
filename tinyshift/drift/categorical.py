@@ -14,31 +14,17 @@ from scipy.spatial.distance import jensenshannon
 from .base import BaseDrift
 
 
-def chebyshev(a: np.ndarray, b: np.ndarray) -> float:
-    """Return the largest absolute probability difference."""
-    return float(np.max(np.abs(a - b)))
-
-
-def psi(observed: np.ndarray, expected: np.ndarray, epsilon: float = 1e-4) -> float:
-    """Return the population stability index between two distributions."""
-    observed = np.clip(observed, epsilon, 1)
-    expected = np.clip(expected, epsilon, 1)
-    return float(np.sum((observed - expected) * np.log(observed / expected)))
-
-
 class CatDrift(BaseDrift):
     """Compare categorical samples with a fitted reference distribution."""
 
     def __init__(
         self,
-        metric: str = "jensen_shannon",
         alpha: float = 0.05,
         n_resamples: int = 500,
         random_state: int | None = None,
         min_reference_size: int = 2,
         min_current_size: int = 2,
     ) -> None:
-        self.metric = metric
         super().__init__(
             alpha,
             n_resamples,
@@ -46,11 +32,6 @@ class CatDrift(BaseDrift):
             min_reference_size,
             min_current_size,
         )
-
-    def _validate_params(self) -> None:
-        super()._validate_params()
-        if self.metric not in {"chebyshev", "jensen_shannon", "psi"}:
-            raise ValueError("metric must be 'chebyshev', 'jensen_shannon', or 'psi'.")
 
     def _validate_sample(self, values: Any, name: str) -> np.ndarray:
         if isinstance(values, pd.Series):
@@ -85,8 +66,4 @@ class CatDrift(BaseDrift):
 
     def _distance(self, reference: np.ndarray, current: np.ndarray) -> float:
         reference_prob, current_prob = self._probabilities(reference, current)
-        if self.metric == "chebyshev":
-            return chebyshev(reference_prob, current_prob)
-        if self.metric == "psi":
-            return psi(current_prob, reference_prob)
-        return float(jensenshannon(reference_prob, current_prob))
+        return float(jensenshannon(reference_prob, current_prob, base=2))

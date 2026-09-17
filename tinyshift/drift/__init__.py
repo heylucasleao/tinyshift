@@ -4,7 +4,7 @@
 
 from .analyzers import CategoricalDriftAnalyzer, ContinuousDriftAnalyzer
 from .base import DriftResult
-from .categorical import CatDrift, chebyshev, psi
+from .categorical import CatDrift
 from .continuous import ConDrift
 
 __all__ = [
@@ -13,6 +13,4 @@ __all__ = [
     "ConDrift",
     "ContinuousDriftAnalyzer",
     "DriftResult",
-    "chebyshev",
-    "psi",
 ]

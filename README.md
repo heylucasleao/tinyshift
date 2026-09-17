@@ -97,37 +97,22 @@ uv sync --extra dev
 
 ### 1. Categorical Data Drift Detection
 
-TinyShift provides sklearn-compatible drift detectors that follow the familiar `fit()` and `score()` pattern:
+TinyShift provides sklearn-compatible reference-to-current drift detectors:
 
 ```python
-import pandas as pd
 from tinyshift.drift import CatDrift
 
-# Load your data
-df = pd.read_csv("data.csv")
-reference_data = df[df["date"] < '2024-07-01']
-analysis_data = df[df["date"] >= '2024-07-01'] 
-
-# Initialize and fit the drift detector
 detector = CatDrift(
-    freq="D",                    # Daily frequency
-    func="chebyshev",           # Distance metric
-    drift_limit="auto",         # Automatic threshold detection
-    method="expanding"          # Comparison method
-)
+    n_resamples=999,
+    random_state=42,
+).fit(reference_values)
 
-# Fit on reference data
-detector.fit(reference_data)
-
-# Score new data for drift
-drift_scores = detector.predict(analysis_data)
-print(drift_scores)
+result = detector.predict(current_values)
+print(result.score, result.p_value, result.drift)
 ```
 
-Available distance metrics for **categorical** data:
-- `"chebyshev"`: Maximum absolute difference between distributions
-- `"jensenshannon"`: Jensen-Shannon divergence  
-- `"psi"`: Population Stability Index
+`CatDrift` uses Jensen–Shannon distance with logarithm base 2, producing a
+score in `[0, 1]`, and a two-sample permutation test.
 
 ### 2. Continuous Data Drift Detection
 
@@ -136,18 +121,16 @@ For numerical features, use the continuous drift detector:
 ```python
 from tinyshift.drift import ConDrift
 
-# Initialize continuous drift detector
 detector = ConDrift(
-    freq="W",                   # Weekly frequency  
-    func="ws",                  # Wasserstein distance
-    drift_limit="auto",
-    method="expanding"
-)
+    n_resamples=999,
+    random_state=42,
+).fit(reference_values)
 
-# Fit and score
-detector.fit(reference_data)
-drift_predicts = detector.predict(analysis_data)
+result = detector.predict(current_values)
 ```
+
+`ConDrift` uses normalized Wasserstein distance and the same permutation
+inference. Use `score(current_values)` when only the distance is needed.
 
 ### 3. Outlier Detection
 
