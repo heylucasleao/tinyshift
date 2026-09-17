@@ -2,7 +2,15 @@
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-from .categorical import CatDrift, chebyshev, psi
+from .analyzers import CategoricalDriftAnalyzer, ContinuousDriftAnalyzer
+from .base import DriftResult
+from .categorical import CatDrift
 from .continuous import ConDrift
 
-__all__ = ["CatDrift", "ConDrift", "chebyshev", "psi"]
+__all__ = [
+    "CatDrift",
+    "CategoricalDriftAnalyzer",
+    "ConDrift",
+    "ContinuousDriftAnalyzer",
+    "DriftResult",
+]

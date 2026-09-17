@@ -1,260 +1,203 @@
-# Copyright (c) 2024-2026 Lucas Leão
-# tinyshift - A small toolbox for mlops
-# Licensed under the MIT License
-
-
 import numpy as np
 import pandas as pd
 import pytest
 from sklearn.base import clone
+from sklearn.exceptions import NotFittedError
 
-from tinyshift.drift.categorical import CatDrift, chebyshev, psi
-from tinyshift.drift.continuous import ConDrift
-
-
-def _categorical_panel(series_values):
-    rows = []
-    for unique_id, periods in series_values.items():
-        for day, values in enumerate(periods):
-            for value in values:
-                rows.append(
-                    (
-                        unique_id,
-                        pd.Timestamp("2024-01-01") + pd.DateOffset(days=day),
-                        value,
-                    )
-                )
-    return pd.DataFrame(rows, columns=["unique_id", "ds", "y"])
-
-
-def _continuous_panel(series_values):
-    rows = []
-    for unique_id, periods in series_values.items():
-        for day, values in enumerate(periods):
-            for value in values:
-                rows.append(
-                    (
-                        unique_id,
-                        pd.Timestamp("2024-01-01") + pd.DateOffset(days=day),
-                        value,
-                    )
-                )
-    return pd.DataFrame(rows, columns=["unique_id", "ds", "y"])
-
-
-class TestCatDrift:
-    def test_chebyshev_distance(self):
-        assert chebyshev(np.array([0.2, 0.8]), np.array([0.3, 0.7])) == pytest.approx(
-            0.1
-        )
-
-    def test_psi(self):
-        assert psi(np.array([0.5, 0.5]), np.array([0.4, 0.6])) > 0
-
-    def test_fit_and_predict(self):
-        df = pd.DataFrame(
-            {
-                "unique_id": ["A"] * 6 + ["B"] * 6,
-                "ds": pd.date_range("2024-01-01", periods=12, freq="D"),
-                "y": ["x", "x", "y", "y", "x", "x", "y", "y", "x", "x", "y", "y"],
-            }
-        )
-
-        model = CatDrift(
-            freq="D", func="chebyshev", drift_limit="auto", method="expanding"
-        )
-        fitted = model.fit(df)
-
-        assert fitted.reference_distribution is not None
-        assert fitted.thresholds
-
-        predictions = model.predict(df)
-        assert "drift" in predictions.columns
-        assert predictions["drift"].dtype == bool
-
-    @pytest.mark.parametrize("func_name", ["chebyshev", "jensenshannon", "psi"])
-    def test_fit_and_predict_supports_other_categorical_metrics(self, func_name):
-        df = pd.DataFrame(
-            {
-                "unique_id": ["A"] * 6 + ["B"] * 6,
-                "ds": pd.date_range("2024-01-01", periods=12, freq="D"),
-                "y": ["x", "x", "y", "y", "x", "x", "y", "y", "x", "x", "y", "y"],
-            }
-        )
-
-        model = CatDrift(
-            freq="D",
-            func=func_name,
-            drift_limit="auto",
-            method="expanding",
-        )
-        fitted = model.fit(df)
-
-        predictions = model.predict(df)
-
-        assert fitted.reference_distribution is not None
-        assert np.isfinite(predictions["metric"]).all()
-        assert "drift" in predictions.columns
-        assert predictions["drift"].dtype == bool
-
-    def test_jackknife_method_works(self):
-        df = pd.DataFrame(
-            {
-                "unique_id": ["A"] * 6 + ["B"] * 6,
-                "ds": pd.date_range("2024-01-01", periods=12, freq="D"),
-                "y": ["x", "x", "y", "y", "x", "x", "y", "y", "x", "x", "y", "y"],
-            }
-        )
-
-        model = CatDrift(
-            freq="D",
-            func="chebyshev",
-            drift_limit="auto",
-            method="jackknife",
-        )
-        fitted = model.fit(df)
-        predictions = model.predict(df)
-
-        assert fitted.reference_distribution is not None
-        assert np.isfinite(predictions["metric"]).all()
-        assert predictions["drift"].dtype == bool
-
-    def test_invalid_method_and_function_raise(self):
-        with pytest.raises(ValueError):
-            CatDrift(freq="D", method="invalid")
-
-        with pytest.raises(ValueError):
-            CatDrift(freq="D", func="invalid")
-
-    def test_reference_distributions_are_normalized_per_series(self):
-        df = _categorical_panel(
-            {"A": [["x", "x"], ["x", "y"]], "B": [["z", "z"], ["z", "y"]]}
-        )
-        model = CatDrift(freq="D", drift_limit=(None, 1.0)).fit(df)
-
-        assert sum(model.reference_distribution["A"].values()) == pytest.approx(1.0)
-        assert sum(model.reference_distribution["B"].values()) == pytest.approx(1.0)
-
-    def test_threshold_calibration_is_isolated_by_series(self):
-        a_periods = [["x", "x"], ["x", "y"], ["x", "x"], ["y", "y"]]
-        b_periods = [["z", "z"], ["w", "w"], ["z", "w"], ["w", "w"]]
-        only_a = CatDrift(freq="D", drift_limit="mad").fit(
-            _categorical_panel({"A": a_periods})
-        )
-        with_b = CatDrift(freq="D", drift_limit="mad").fit(
-            _categorical_panel({"A": a_periods, "B": b_periods})
-        )
-
-        assert with_b.thresholds["A"] == pytest.approx(only_a.thresholds["A"])
-
-    def test_unseen_category_is_included_in_distance(self):
-        reference = _categorical_panel({"A": [["x"], ["x"], ["x"]]})
-        analysis = _categorical_panel({"A": [["new"]]})
-        model = CatDrift(freq="D", func="chebyshev", drift_limit=(None, 0.5)).fit(
-            reference
-        )
-
-        result = model.predict(analysis)
-
-        assert result.loc[0, "metric"] == pytest.approx(1.0)
-        assert bool(result.loc[0, "drift"])
-
-    def test_metric_equal_to_threshold_is_not_drift(self):
-        reference = _categorical_panel({"A": [["x"], ["x"], ["x"]]})
-        model = CatDrift(freq="D", drift_limit=(None, 0.0)).fit(reference)
-
-        result = model.predict(_categorical_panel({"A": [["x"]]}))
-
-        assert result.loc[0, "metric"] == 0.0
-        assert not bool(result.loc[0, "drift"])
-
-    def test_unknown_series_and_score_before_fit_are_rejected(self):
-        reference = _categorical_panel({"A": [["x"], ["x"]]})
-        unknown = _categorical_panel({"B": [["x"]]})
-        model = CatDrift(freq="D", drift_limit=(None, 1.0))
-
-        with pytest.raises(ValueError, match="fitted"):
-            model.score(reference)
-        model.fit(reference)
-        with pytest.raises(ValueError, match="No reference distribution"):
-            model.score(unknown)
-
-    def test_estimator_clone_preserves_function_name(self):
-        model = CatDrift(freq="D", func="psi")
-
-        assert clone(model).func == "psi"
+from tinyshift.drift import (
+    CatDrift,
+    CategoricalDriftAnalyzer,
+    ConDrift,
+    ContinuousDriftAnalyzer,
+    DriftResult,
+)
 
 
 class TestConDrift:
-    def test_fit_and_predict(self):
-        df = pd.DataFrame(
-            {
-                "unique_id": ["A"] * 6 + ["B"] * 6,
-                "ds": pd.date_range("2024-01-01", periods=12, freq="D"),
-                "y": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5],
-            }
+    def test_permutation_and_structured_result(self):
+        detector = ConDrift(n_resamples=99, random_state=7).fit(np.linspace(0, 1, 40))
+        result = detector.predict(np.linspace(10, 11, 20))
+        assert isinstance(result, DriftResult)
+        assert result.score > result.threshold
+        assert result.p_value == pytest.approx(0.01)
+        assert result.drift is True
+        assert (result.reference_size, result.current_size) == (40, 20)
+
+    def test_normalization_is_scale_independent(self):
+        small = ConDrift(n_resamples=19).fit([0.0, 1.0, 2.0])
+        large = ConDrift(n_resamples=19).fit([0.0, 10.0, 20.0])
+        assert small.predict([1.0, 2.0, 3.0]).score == pytest.approx(
+            large.predict([10.0, 20.0, 30.0]).score
         )
-
-        model = ConDrift(freq="D", func="ws", drift_limit="auto", method="expanding")
-        fitted = model.fit(df)
-
-        assert fitted.reference_distribution is not None
-        assert fitted.thresholds
-
-        predictions = model.predict(df)
-        assert "drift" in predictions.columns
-        assert predictions["drift"].dtype == bool
-
-    def test_jackknife_method_works(self):
-        df = pd.DataFrame(
-            {
-                "unique_id": ["A"] * 6 + ["B"] * 6,
-                "ds": pd.date_range("2024-01-01", periods=12, freq="D"),
-                "y": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 2.0, 2.1, 2.2, 2.3, 2.4, 2.5],
-            }
-        )
-
-        model = ConDrift(freq="D", func="ws", drift_limit="auto", method="jackknife")
-        fitted = model.fit(df)
-        predictions = model.predict(df)
-
-        assert fitted.reference_distribution is not None
-        assert np.isfinite(predictions["metric"]).all()
-        assert predictions["drift"].dtype == bool
-
-    def test_threshold_calibration_is_isolated_by_series(self):
-        a_periods = [[0.0, 0.1], [0.2, 0.3], [0.0, 0.2], [0.4, 0.5]]
-        b_periods = [[100.0], [-100.0], [200.0], [-200.0]]
-        only_a = ConDrift(freq="D", drift_limit="mad").fit(
-            _continuous_panel({"A": a_periods})
-        )
-        with_b = ConDrift(freq="D", drift_limit="mad").fit(
-            _continuous_panel({"A": a_periods, "B": b_periods})
-        )
-
-        assert with_b.thresholds["A"] == pytest.approx(only_a.thresholds["A"])
 
     @pytest.mark.parametrize("values", [["bad", "data"], [1.0, np.inf]])
-    def test_non_finite_or_non_numeric_target_is_rejected(self, values):
-        df = pd.DataFrame(
-            {
-                "unique_id": ["A", "A"],
-                "ds": pd.date_range("2024-01-01", periods=2, freq="D"),
-                "y": values,
-            }
-        )
-
+    def test_invalid_continuous_values_are_rejected(self, values):
         with pytest.raises(ValueError, match="numeric|finite"):
-            ConDrift(freq="D").fit(df)
+            ConDrift().fit(values)
 
-    @pytest.mark.parametrize("method", ["expanding", "jackknife"])
-    def test_single_reference_period_is_rejected(self, method):
-        df = _continuous_panel({"A": [[1.0, 2.0]]})
+    def test_lifecycle_and_minimum_sizes_are_validated(self):
+        with pytest.raises(NotFittedError):
+            ConDrift().predict([1.0, 2.0])
+        with pytest.raises(ValueError, match="at least 2"):
+            ConDrift().fit([1.0])
+        with pytest.raises(ValueError, match="at least 2"):
+            ConDrift().fit([1.0, 2.0]).predict([1.0])
 
-        with pytest.raises(ValueError, match="at least two reference periods"):
-            ConDrift(freq="D", method=method).fit(df)
+    def test_estimator_clone_preserves_configuration(self):
+        detector = ConDrift(random_state=4)
+        assert clone(detector).get_params() == detector.get_params()
 
-    def test_estimator_clone_preserves_function_name(self):
-        model = ConDrift(freq="D", func="ws")
+    @pytest.mark.parametrize(
+        ("parameter", "value", "message"),
+        [
+            ("alpha", 0, "alpha"),
+            ("alpha", 1, "alpha"),
+            ("alpha", "0.05", "alpha"),
+            ("n_resamples", 0, "n_resamples"),
+            ("n_resamples", True, "n_resamples"),
+            ("min_reference_size", 0, "min_reference_size"),
+            ("min_current_size", 1.5, "min_current_size"),
+        ],
+    )
+    def test_invalid_parameters_are_rejected(self, parameter, value, message):
+        detector = ConDrift(**{parameter: value})
+        with pytest.raises(ValueError, match=message):
+            detector.fit([1.0, 2.0])
 
-        assert clone(model).func == "ws"
+    def test_seed_makes_permutation_inference_reproducible(self):
+        reference = np.linspace(0, 1, 20)
+        current = np.linspace(0.25, 1.25, 10)
+        first = ConDrift(n_resamples=31, random_state=12).fit(reference).predict(current)
+        second = ConDrift(n_resamples=31, random_state=12).fit(reference).predict(current)
+        assert first == second
+
+    def test_identical_samples_have_no_drift(self):
+        sample = np.arange(10, dtype=float)
+        result = ConDrift(n_resamples=19, random_state=2).fit(sample).predict(sample)
+        assert result.score == pytest.approx(0.0)
+        assert result.p_value == pytest.approx(1.0)
+        assert result.drift is False
+
+    def test_multidimensional_samples_are_rejected(self):
+        with pytest.raises(ValueError, match="one-dimensional"):
+            ConDrift().fit([[1.0, 2.0], [3.0, 4.0]])
+
+
+class TestCatDrift:
+    def test_jensen_shannon_distance(self):
+        detector = CatDrift(n_resamples=19).fit(["a", "a", "b", "b"])
+        assert detector.predict(["a", "b", "b", "b"]).score > 0
+
+    def test_unseen_categories_contribute_to_distance(self):
+        detector = CatDrift(min_current_size=1, n_resamples=19).fit(["known", "known"])
+        assert detector.predict(["new"]).score == pytest.approx(1.0)
+
+    def test_missing_values_are_rejected(self):
+        with pytest.raises(ValueError, match="missing"):
+            CatDrift().fit(["a", None])
+
+    def test_permutation_supports_string_categories(self):
+        detector = CatDrift(n_resamples=20, random_state=1).fit(
+            ["a", "a", "b", "b", "c"]
+        )
+        result = detector.predict(["a", "b"])
+        assert np.isfinite(result.threshold)
+        assert 0 < result.p_value <= 1
+        assert isinstance(result.drift, bool)
+
+    def test_identical_samples_have_zero_distance_and_no_drift(self):
+        sample = ["a", "a", "b", "c"]
+        result = CatDrift(n_resamples=19, random_state=2).fit(sample).predict(sample)
+        assert result.score == pytest.approx(0.0)
+        assert result.p_value == pytest.approx(1.0)
+        assert result.drift is False
+
+    def test_unhashable_categories_are_rejected(self):
+        values = np.empty(2, dtype=object)
+        values[:] = [{"category": "a"}, {"category": "b"}]
+        with pytest.raises(ValueError, match="hashable"):
+            CatDrift().fit(values)
+
+
+def _panel(a_values, b_values):
+    return pd.DataFrame(
+        {
+            "entity": ["A"] * len(a_values) + ["B"] * len(b_values),
+            "value": list(a_values) + list(b_values),
+        }
+    )
+
+
+class TestDriftAnalyzers:
+    def test_analyzer_rejects_wrong_detector_type(self):
+        with pytest.raises(TypeError, match="ConDrift"):
+            ContinuousDriftAnalyzer(CatDrift())
+
+    def test_summary_requires_prediction(self):
+        analyzer = ContinuousDriftAnalyzer().fit(
+            _panel([1.0, 2.0], [3.0, 4.0]), "entity", "value"
+        )
+        with pytest.raises(NotFittedError):
+            analyzer.summary()
+
+    @pytest.mark.parametrize(
+        "frame, error, message",
+        [
+            ([], TypeError, "DataFrame"),
+            (pd.DataFrame(), ValueError, "missing required columns"),
+            (
+                pd.DataFrame({"entity": [None, None], "value": [1.0, 2.0]}),
+                ValueError,
+                "must not be missing",
+            ),
+        ],
+    )
+    def test_reference_frame_is_validated(self, frame, error, message):
+        with pytest.raises(error, match=message):
+            ContinuousDriftAnalyzer().fit(frame, "entity", "value")
+
+    def test_continuous_analyzer_fits_independent_detectors(self):
+        reference = _panel(np.linspace(0, 1, 40), np.linspace(100, 101, 40))
+        current = _panel(np.linspace(10, 11, 20), np.linspace(100, 101, 20))
+        analyzer = ContinuousDriftAnalyzer(
+            ConDrift(n_resamples=99, random_state=7)
+        ).fit(reference, id_col="entity", target_col="value")
+        result = analyzer.predict(current)
+        assert list(result.columns) == [
+            "entity",
+            "score",
+            "threshold",
+            "p_value",
+            "drift",
+            "reference_size",
+            "current_size",
+        ]
+        assert list(result["entity"]) == ["A", "B"]
+        assert bool(result.loc[result["entity"] == "A", "drift"].iloc[0])
+        assert not bool(result.loc[result["entity"] == "B", "drift"].iloc[0])
+        pd.testing.assert_frame_equal(analyzer.summary(), result)
+        assert analyzer.detectors_["A"] is not analyzer.detectors_["B"]
+
+    def test_categorical_analyzer_uses_one_result_per_id(self):
+        analyzer = CategoricalDriftAnalyzer(
+            CatDrift(n_resamples=99, random_state=7)
+        ).fit(_panel(["x"] * 40, ["z"] * 40), "entity", "value")
+        result = analyzer.predict(_panel(["y"] * 20, ["z"] * 20))
+        assert len(result) == 2
+        assert result.set_index("entity").loc["A", "drift"]
+        assert not result.set_index("entity").loc["B", "drift"]
+
+    def test_unknown_current_id_is_rejected(self):
+        analyzer = ContinuousDriftAnalyzer(ConDrift()).fit(
+            _panel([1.0, 2.0], [3.0, 4.0]), "entity", "value"
+        )
+        unknown = pd.DataFrame({"entity": ["C", "C"], "value": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="No reference distribution"):
+            analyzer.predict(unknown)
+
+    def test_missing_reference_ids_do_not_appear_in_current_result(self):
+        analyzer = ContinuousDriftAnalyzer(ConDrift()).fit(
+            _panel([1.0, 2.0], [3.0, 4.0]), "entity", "value"
+        )
+        current = pd.DataFrame({"entity": ["A", "A"], "value": [1.0, 2.0]})
+        assert analyzer.predict(current)["entity"].tolist() == ["A"]

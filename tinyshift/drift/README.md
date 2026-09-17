@@ -1,163 +1,145 @@
-# Data Drift Detection Module (`drift`)
+# Data drift
 
-The `drift` module provides data drift detection tools for monitoring distribution changes in categorical and continuous features over time. Built for production MLOps workflows with automatic threshold detection and comprehensive statistical analysis.
+`tinyshift.drift` compares a current population with a previously fitted
+reference population. It is independent of time windows:
+`TemporalStabilityAnalyzer` is the component for detecting regime changes
+inside a time series.
 
-## Features
+## Vector detectors
 
-### 1. Categorical Drift Detection (`CatDrift`)
-
-#### **`CatDrift`** - Categorical Feature Drift Monitoring
-Detects drift in categorical data distributions using probability-based distance metrics with time-series grouping capabilities.
-
-```python
-from tinyshift.drift import CatDrift
-import pandas as pd
-
-# Initialize detector
-detector = CatDrift(
-    freq="D",                    # Daily time grouping
-    func="chebyshev",           # Distance metric
-    drift_limit="auto",         # Automatic threshold
-    method="expanding"          # Comparison strategy
-)
-
-# Fit on reference data
-detector.fit(reference_df)
-
-# Score new data for drift
-drift_scores = detector.predict(analysis_df)
-```
-
-**Available Distance Metrics:**
-- **`"chebyshev"`**: Maximum absolute difference between category probabilities
-  - **Use case**: Robust to outlier categories, focuses on worst-case divergence
-  - **Range**: [0, 1], where 1 = complete distribution change
-- **`"jensenshannon"`**: Jensen-Shannon distance (the square root of the divergence; symmetric and bounded)
-  - **Use case**: Balanced sensitivity, probabilistically interpretable
-  - **Range**: [0, 1], where 0 = identical distributions
-- **`"psi"`**: Population Stability Index (banking/credit risk standard)
-  - **Use case**: Highly sensitive to small changes, industry standard
-  - **Range**: [0, ∞], where PSI > 0.25 typically indicates significant drift
-
-**Comparison Methods:**
-- **`"expanding"`**: Each point compared against all accumulated historical data
-  - **Use case**: Cumulative drift detection, stable baselines
-- **`"jackknife"`**: Leave-one-out comparison against all other time points
-  - **Use case**: Peer comparison, anomaly detection in time series
-
----
-
-### 2. Continuous Drift Detection (`ConDrift`)
-
-#### **`ConDrift`** - Continuous Feature Drift Monitoring
-Monitors numerical feature distributions using optimal transport and statistical distance measures.
+`ConDrift` and `CatDrift` accept one-dimensional lists, NumPy arrays, or pandas
+Series.
 
 ```python
 from tinyshift.drift import ConDrift
 
-# Initialize detector
 detector = ConDrift(
-    freq="W",                   # Weekly time grouping
-    func="ws",                  # Wasserstein distance
-    drift_limit="auto",         # Automatic threshold
-    method="expanding"          # Comparison strategy
-)
+    alpha=0.05,
+    n_resamples=999,
+    random_state=42,
+).fit(reference_values)
 
-# Fit and score
-detector.fit(reference_df)
-drift_scores = detector.predict(analysis_df)
+result = detector.predict(current_values)
+print(result.score, result.threshold, result.p_value, result.drift)
 ```
 
-**Available Distance Metrics:**
-- **`"ws"`**: Wasserstein distance (Earth Mover's Distance)
-  - **Use case**: Captures shape, location, and scale changes
-  - **Range**: [0, ∞], interpretable as "cost to transform distributions"
-  - **Advantages**: Preserves metric properties and compares empirical distributions directly
-  - **Caution**: Extreme values can materially increase the distance
+`predict(current)` runs a two-sample permutation test and returns a
+`DriftResult` containing the internal distance, critical threshold, Monte
+Carlo p-value, decision, and both sample sizes. Users should base monitoring
+decisions on `p_value` and `drift`; the distance is retained for analyzer
+reporting and diagnostics.
 
+The permutation test pools reference and current observations, repeatedly
+permutes their labels while preserving sample sizes, and recomputes the
+statistic. Under the null hypothesis of equal distributions, it has
+finite-sample validity when observations are independent and group labels are
+exchangeable.
 
----
-
-## Automatic Threshold Detection
-
-Both detectors support automatic drift threshold determination:
+P-values use:
 
 ```python
-# Automatic threshold methods
-detector = CatDrift(freq="D", drift_limit="auto")   # Statistical interval estimation
-detector = CatDrift(freq="D", drift_limit="mad")    # Median Absolute Deviation
-detector = CatDrift(freq="D", drift_limit="stddev")
-
-# Manual threshold specification
-detector = CatDrift(freq="D", drift_limit=(None, 0.95))
+(exceedances + 1) / (n_resamples + 1)
 ```
 
-**Threshold Methods:**
-- **`"auto"`**: Statistical interval estimation using reference distribution
-- **`"mad"`**: Median Absolute Deviation (robust to outliers)
-- **`"stddev"`**: Standard deviation-based bounds (assumes normality)
-- **`(lower, upper)`**: Custom threshold tuple
+They are therefore never zero. At least `1 / alpha - 1` resamples are required
+for rejection to be possible. Permutation testing with Wasserstein follows the
+same two-sample principle used by
+[waddR](https://doi.org/10.1093/bioinformatics/btab226).
 
-Thresholds are calibrated independently for each series. Both expanding and
-jackknife calibration require at least two reference periods per series. A
-period is classified as drift only when its metric is strictly greater than the
-upper threshold.
+## Score interpretation
 
-Categorical scoring aligns the union of reference and current categories, so a
-previously unseen category contributes to the distance instead of being
-discarded. Prediction currently requires every series ID to have appeared in
-the reference data; unknown IDs raise a clear error rather than borrowing an
-unrelated threshold.
+Both detectors return unit-independent scores, but their ranges are different.
+The permutation p-value, rather than an arbitrary score cutoff, determines the
+drift decision.
 
----
+### Continuous score
 
-## Time Series Grouping & Frequency
+`ConDrift` uses Wasserstein distance divided by the reference standard
+deviation:
 
-All detectors support pandas frequency strings for temporal aggregation:
+```text
+0 ------------------------------------------------------------> ∞
+identical distributions                     increasing change
+```
+
+Examples:
+
+- `0.0`: the empirical distributions are identical;
+- `0.5`: the Wasserstein distance is half the reference standard deviation;
+- `1.0`: the Wasserstein distance equals one reference standard deviation;
+- `2.0`: the Wasserstein distance equals two reference standard deviations.
+
+The score is not bounded above. During permutation inference, the standard
+deviation is recomputed from every permuted reference group.
+
+### Categorical score
+
+`CatDrift` uses Jensen–Shannon distance with logarithm base 2:
+
+```text
+0 ------------------------------------------------------------> 1
+identical distributions                  disjoint distributions
+```
+
+Examples:
+
+- `0.0`: the categorical distributions are identical;
+- values near `0.0`: category proportions are similar;
+- values near `1.0`: the distributions have little overlap;
+- `1.0`: their supports are completely disjoint.
+
+SciPy's `jensenshannon` returns the square root of the Jensen–Shannon
+divergence. Using `base=2` bounds that distance to `[0, 1]`. Reference and
+current categories are aligned over their union, so previously unseen
+categories contribute to the score. Missing values are rejected.
+
+## Panel analyzers
+
+The analyzers coordinate one independently fitted detector per ID. The input
+only needs identifier and target columns; the caller decides which rows make
+up the reference and current populations.
 
 ```python
-# Common frequency patterns
-CatDrift(freq="D")     # Daily aggregation
-CatDrift(freq="W")     # Weekly aggregation  
-CatDrift(freq="M")     # Monthly aggregation
-CatDrift(freq="H")     # Hourly aggregation
-CatDrift(freq="15T")   # 15-minute intervals
-CatDrift(freq="QS")    # Quarter start
+from tinyshift.drift import ConDrift, ContinuousDriftAnalyzer
+
+analyzer = ContinuousDriftAnalyzer(ConDrift(n_resamples=999, random_state=42))
+analyzer.fit(reference_df, id_col="unique_id", target_col="y")
+
+result = analyzer.predict(current_df)
 ```
 
-**Required DataFrame Structure:**
-```python
-# Expected column structure
-reference_df = pd.DataFrame({
-    'unique_id': ['entity_1', 'entity_1', 'entity_2', ...],
-    'ds': ['2024-01-01', '2024-01-02', '2024-01-03', ...],  # datetime
-    'y': ['category_A', 'category_B', 'category_A', ...]     # target feature
-})
+The result has one row per current ID:
+
+| unique_id | score | threshold | p_value | drift | reference_size | current_size |
+|---|---:|---:|---:|---|---:|---:|
+| A | 0.18 | 0.31 | 0.431 | false | 120 | 30 |
+| B | 0.72 | 0.28 | 0.002 | true | 100 | 28 |
+
+`CategoricalDriftAnalyzer` provides the same lifecycle for `CatDrift`. Current
+IDs without a fitted reference raise an error. Reference IDs absent from a
+current batch are omitted from that result.
+
 ```
-
----
-
-## Detector Comparison Matrix
-
-| Feature | CatDrift | ConDrift |
-|---------|----------|----------|
-| **Data Type** | Categorical/discrete | Numerical/continuous |
-| **Distance Metrics** | Chebyshev, Jensen-Shannon, PSI | Wasserstein |
-| **Interpretation** | Probability distribution shifts | Shape/location/scale changes |
-| **Sensitivity** | High (especially PSI) | Moderate, robust |
-| **Computational Cost** | Low (histogram-based) | Moderate (optimal transport) |
-| **Outlier Robustness** | Medium | Low to medium; extreme values affect Wasserstein distance |
-| **Best Use Cases** | Categorical features, fraud detection | Numerical features, sensor data |
-
----
-
-## Statistical Foundations
-
-### **Distance Metric Properties**
-
-| Metric | Symmetry | Bounded | Triangle Inequality | Interpretability |
-|--------|----------|---------|-------------------|------------------|
-| **Chebyshev** | ✅ | ✅ [0,1] | ❌ | Maximum single-category change |
-| **Jensen-Shannon** | ✅ | ✅ [0,1] | ✅ | Square root of an information-theoretic divergence |
-| **PSI** | ❌ | ❌ [0,∞) | ❌ | Banking industry standard |
-| **Wasserstein** | ✅ | ❌ [0,∞) | ✅ | Transportation cost |
+                   BaseDrift
+                       │
+                permutation test
+                       │
+          ┌────────────┴────────────┐
+          │                         │
+       ConDrift                  CatDrift
+          │                         │
+   Wasserstein               Jensen-Shannon
+          │                         │
+          └────────────┬────────────┘
+                       │
+               observed score
+                       │
+                Monte Carlo H0
+                       │
+                    p-value
+                       │
+                p <= alpha ?
+                  /          \
+                yes           no
+              drift        no drift
+```
