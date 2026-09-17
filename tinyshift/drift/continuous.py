@@ -19,7 +19,6 @@ class ConDrift(BaseDrift):
     def __init__(
         self,
         metric: str = "wasserstein",
-        threshold: float | str | None = "permutation",
         normalize: bool = True,
         alpha: float = 0.05,
         n_resamples: int = 500,
@@ -30,7 +29,6 @@ class ConDrift(BaseDrift):
         self.metric = metric
         self.normalize = normalize
         super().__init__(
-            threshold,
             alpha,
             n_resamples,
             random_state,

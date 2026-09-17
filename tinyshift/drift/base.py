@@ -6,7 +6,6 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from numbers import Real
 from typing import Any
 
 import numpy as np
@@ -31,14 +30,12 @@ class BaseDrift(BaseEstimator, ABC):
 
     def __init__(
         self,
-        threshold: float | str | None,
         alpha: float,
         n_resamples: int,
         random_state: int | None,
         min_reference_size: int,
         min_current_size: int,
     ) -> None:
-        self.threshold = threshold
         self.alpha = alpha
         self.n_resamples = n_resamples
         self.random_state = random_state
@@ -46,15 +43,6 @@ class BaseDrift(BaseEstimator, ABC):
         self.min_current_size = min_current_size
 
     def _validate_params(self) -> None:
-        methods = {"bootstrap", "permutation", "cross_conformal"}
-        if self.threshold not in methods and self.threshold is not None:
-            if not isinstance(self.threshold, Real) or not np.isfinite(self.threshold):
-                raise ValueError(
-                    "threshold must be finite, 'bootstrap', 'permutation', "
-                    "'cross_conformal', or None."
-                )
-            if self.threshold < 0:
-                raise ValueError("threshold must be non-negative.")
         if not 0 < self.alpha < 1:
             raise ValueError("alpha must be between 0 and 1.")
         if not isinstance(self.n_resamples, int) or self.n_resamples < 1:
@@ -84,47 +72,11 @@ class BaseDrift(BaseEstimator, ABC):
             )
         self.reference_ = values.copy()
         self.reference_size_ = int(values.size)
-        self.thresholds_: dict[int, float] = {}
-        self.calibration_scores_: dict[int, np.ndarray] = {}
         return self
 
     def _inference_distance(self, reference: np.ndarray, current: np.ndarray) -> float:
         """Statistic recomputed under a resampled reference/current assignment."""
         return self._distance(reference, current)
-
-    def _bootstrap_scores(self, current_size: int) -> np.ndarray:
-        cached = self.calibration_scores_.get(current_size)
-        if cached is not None:
-            return cached
-        rng = np.random.default_rng(self.random_state)
-        scores = np.empty(self.n_resamples, dtype=float)
-        for index in range(self.n_resamples):
-            reference = rng.choice(
-                self.reference_, size=self.reference_size_, replace=True
-            )
-            current = rng.choice(self.reference_, size=current_size, replace=True)
-            scores[index] = self._inference_distance(reference, current)
-        self.calibration_scores_[current_size] = scores
-        return scores
-
-    def _cross_conformal_scores(self, current_size: int) -> np.ndarray:
-        cached = self.calibration_scores_.get(current_size)
-        if cached is not None:
-            return cached
-        if current_size >= self.reference_size_:
-            raise ValueError(
-                "cross_conformal requires current_size to be smaller than "
-                "reference_size."
-            )
-        rng = np.random.default_rng(self.random_state)
-        scores = np.empty(self.n_resamples, dtype=float)
-        for index in range(self.n_resamples):
-            indices = rng.permutation(self.reference_size_)
-            pseudo_current = self.reference_[indices[:current_size]]
-            pseudo_reference = self.reference_[indices[current_size:]]
-            scores[index] = self._inference_distance(pseudo_reference, pseudo_current)
-        self.calibration_scores_[current_size] = scores
-        return scores
 
     def _permutation_scores(self, current: np.ndarray) -> np.ndarray:
         pooled = np.concatenate((self.reference_, current))
@@ -139,27 +91,12 @@ class BaseDrift(BaseEstimator, ABC):
 
     def _calibrate(
         self, current: np.ndarray, score: float
-    ) -> tuple[float | None, float | None, bool | None]:
-        if self.threshold is None:
-            return None, None, None
-        if isinstance(self.threshold, Real):
-            threshold = float(self.threshold)
-            return threshold, None, score > threshold
-
-        current_size = int(current.size)
-        if self.threshold == "permutation":
-            null_scores = self._permutation_scores(current)
-        elif self.threshold == "cross_conformal":
-            null_scores = self._cross_conformal_scores(current_size)
-        else:
-            null_scores = self._bootstrap_scores(current_size)
-
+    ) -> tuple[float, float, bool]:
+        null_scores = self._permutation_scores(current)
         threshold = float(np.quantile(null_scores, 1 - self.alpha, method="higher"))
         p_value = float(
             (1 + np.count_nonzero(null_scores >= score)) / (self.n_resamples + 1)
         )
-        if self.threshold != "permutation":
-            self.thresholds_[current_size] = threshold
         return threshold, p_value, p_value <= self.alpha
 
     def score(self, current: Any) -> float:
