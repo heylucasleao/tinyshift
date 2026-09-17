@@ -47,6 +47,41 @@ class TestConDrift:
         detector = ConDrift(random_state=4)
         assert clone(detector).get_params() == detector.get_params()
 
+    @pytest.mark.parametrize(
+        ("parameter", "value", "message"),
+        [
+            ("alpha", 0, "alpha"),
+            ("alpha", 1, "alpha"),
+            ("alpha", "0.05", "alpha"),
+            ("n_resamples", 0, "n_resamples"),
+            ("n_resamples", True, "n_resamples"),
+            ("min_reference_size", 0, "min_reference_size"),
+            ("min_current_size", 1.5, "min_current_size"),
+        ],
+    )
+    def test_invalid_parameters_are_rejected(self, parameter, value, message):
+        detector = ConDrift(**{parameter: value})
+        with pytest.raises(ValueError, match=message):
+            detector.fit([1.0, 2.0])
+
+    def test_seed_makes_permutation_inference_reproducible(self):
+        reference = np.linspace(0, 1, 20)
+        current = np.linspace(0.25, 1.25, 10)
+        first = ConDrift(n_resamples=31, random_state=12).fit(reference).predict(current)
+        second = ConDrift(n_resamples=31, random_state=12).fit(reference).predict(current)
+        assert first == second
+
+    def test_identical_samples_have_no_drift(self):
+        sample = np.arange(10, dtype=float)
+        result = ConDrift(n_resamples=19, random_state=2).fit(sample).predict(sample)
+        assert result.score == pytest.approx(0.0)
+        assert result.p_value == pytest.approx(1.0)
+        assert result.drift is False
+
+    def test_multidimensional_samples_are_rejected(self):
+        with pytest.raises(ValueError, match="one-dimensional"):
+            ConDrift().fit([[1.0, 2.0], [3.0, 4.0]])
+
 
 class TestCatDrift:
     def test_jensen_shannon_distance(self):
@@ -70,6 +105,19 @@ class TestCatDrift:
         assert 0 < result.p_value <= 1
         assert isinstance(result.drift, bool)
 
+    def test_identical_samples_have_zero_distance_and_no_drift(self):
+        sample = ["a", "a", "b", "c"]
+        result = CatDrift(n_resamples=19, random_state=2).fit(sample).predict(sample)
+        assert result.score == pytest.approx(0.0)
+        assert result.p_value == pytest.approx(1.0)
+        assert result.drift is False
+
+    def test_unhashable_categories_are_rejected(self):
+        values = np.empty(2, dtype=object)
+        values[:] = [{"category": "a"}, {"category": "b"}]
+        with pytest.raises(ValueError, match="hashable"):
+            CatDrift().fit(values)
+
 
 def _panel(a_values, b_values):
     return pd.DataFrame(
@@ -81,6 +129,33 @@ def _panel(a_values, b_values):
 
 
 class TestDriftAnalyzers:
+    def test_analyzer_rejects_wrong_detector_type(self):
+        with pytest.raises(TypeError, match="ConDrift"):
+            ContinuousDriftAnalyzer(CatDrift())
+
+    def test_summary_requires_prediction(self):
+        analyzer = ContinuousDriftAnalyzer().fit(
+            _panel([1.0, 2.0], [3.0, 4.0]), "entity", "value"
+        )
+        with pytest.raises(NotFittedError):
+            analyzer.summary()
+
+    @pytest.mark.parametrize(
+        "frame, error, message",
+        [
+            ([], TypeError, "DataFrame"),
+            (pd.DataFrame(), ValueError, "missing required columns"),
+            (
+                pd.DataFrame({"entity": [None, None], "value": [1.0, 2.0]}),
+                ValueError,
+                "must not be missing",
+            ),
+        ],
+    )
+    def test_reference_frame_is_validated(self, frame, error, message):
+        with pytest.raises(error, match=message):
+            ContinuousDriftAnalyzer().fit(frame, "entity", "value")
+
     def test_continuous_analyzer_fits_independent_detectors(self):
         reference = _panel(np.linspace(0, 1, 40), np.linspace(100, 101, 40))
         current = _panel(np.linspace(10, 11, 20), np.linspace(100, 101, 20))

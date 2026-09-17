@@ -6,6 +6,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
@@ -95,15 +96,28 @@ class BaseDrift(BaseEstimator, ABC):
         self.min_current_size = min_current_size
 
     def _validate_params(self) -> None:
-        if not 0 < self.alpha < 1:
+        if (
+            isinstance(self.alpha, (bool, np.bool_))
+            or not isinstance(self.alpha, Real)
+            or not np.isfinite(self.alpha)
+            or not 0 < self.alpha < 1
+        ):
             raise ValueError("alpha must be between 0 and 1.")
-        if not isinstance(self.n_resamples, int) or self.n_resamples < 1:
+        if (
+            isinstance(self.n_resamples, (bool, np.bool_))
+            or not isinstance(self.n_resamples, Integral)
+            or self.n_resamples < 1
+        ):
             raise ValueError("n_resamples must be a positive integer.")
         for name, value in (
             ("min_reference_size", self.min_reference_size),
             ("min_current_size", self.min_current_size),
         ):
-            if not isinstance(value, int) or value < 1:
+            if (
+                isinstance(value, (bool, np.bool_))
+                or not isinstance(value, Integral)
+                or value < 1
+            ):
                 raise ValueError(f"{name} must be a positive integer.")
 
     @abstractmethod

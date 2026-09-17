@@ -108,11 +108,12 @@ detector = CatDrift(
 ).fit(reference_values)
 
 result = detector.predict(current_values)
-print(result.score, result.p_value, result.drift)
+print(result.p_value, result.drift)
 ```
 
 `CatDrift` uses Jensen–Shannon distance with logarithm base 2, producing a
-score in `[0, 1]`, and a two-sample permutation test.
+distance in `[0, 1]`, and a two-sample permutation test. Use `p_value` and
+`drift` for monitoring decisions.
 
 ### 2. Continuous Data Drift Detection
 
@@ -131,6 +132,9 @@ result = detector.predict(current_values)
 
 `ConDrift` uses normalized Wasserstein distance and the same permutation
 inference. Monitoring decisions are exposed through `p_value` and `drift`.
+For panel data, `CategoricalDriftAnalyzer` and `ContinuousDriftAnalyzer` apply
+the corresponding detector independently to each ID. See the
+[drift guide](tinyshift/drift/README.md) for detector and analyzer examples.
 
 ### 3. Outlier Detection
 
