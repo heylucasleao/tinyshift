@@ -766,7 +766,9 @@ def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
             "Q(0.95)": [1.5, 1.5, 1.5],
         }
     )
-    result = TwoStageForecasterEvaluator.evaluate(df, quantiles=[0.05, 0.95])
+    result = TwoStageForecasterEvaluator.evaluate_interval(
+        df, quantiles=[0.05, 0.95]
+    )
 
     assert result.loc[0, "level"] == pytest.approx(0.9)
     assert result.loc[0, "coverage_rate"] == 0.5
@@ -777,7 +779,7 @@ def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
 def test_tsf_evaluator_rejects_invalid_quantile():
     df = pd.DataFrame({"y": [1.0], "Q(1)": [1.0]})
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
-        TwoStageForecasterEvaluator.evaluate(df, quantiles=[1.0])
+        TwoStageForecasterEvaluator.evaluate_interval(df, quantiles=[1.0])
 
 
 def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
@@ -1129,9 +1131,11 @@ def test_calibration_table_handles_constant_predictions():
 
 def test_two_stage_evaluator_requires_target_and_skips_missing_quantiles():
     with pytest.raises(KeyError, match="Target column"):
-        TwoStageForecasterEvaluator.evaluate(pd.DataFrame({"Q(0.5)": [1.0]}))
+        TwoStageForecasterEvaluator.evaluate_interval(
+            pd.DataFrame({"Q(0.5)": [1.0]})
+        )
 
-    result = TwoStageForecasterEvaluator.evaluate(
+    result = TwoStageForecasterEvaluator.evaluate_interval(
         pd.DataFrame({"y": [1.0]}), quantiles=(0.5, 0.95)
     )
     assert result.empty
@@ -1317,7 +1321,7 @@ def test_distributions_remain_finite_at_extreme_parameters(means, dispersions):
 
 
 def test_two_stage_evaluator_handles_all_nan_pairs():
-    result = TwoStageForecasterEvaluator.evaluate(
+    result = TwoStageForecasterEvaluator.evaluate_interval(
         pd.DataFrame({"y": [np.nan], "Q(0.05)": [np.nan], "Q(0.95)": [np.nan]}),
         quantiles=(0.05, 0.95),
     )

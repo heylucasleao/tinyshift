@@ -54,7 +54,9 @@ masses = forecast.pmf([0, 1, 2])  # P(Y=0), P(Y=1), and P(Y=2)
 # Consumes the Q(0.05) and Q(0.95) columns produced by ppf.
 evaluation_frame = forecast.ppf([0.05, 0.5, 0.95])
 evaluation_frame["y"] = observed_values
-probabilistic_metrics = TwoStageForecasterEvaluator.evaluate(evaluation_frame)
+probabilistic_metrics = TwoStageForecasterEvaluator.evaluate_interval(
+    evaluation_frame
+)
 ```
 
 The default family is Negative Binomial, so the returned forecast is discrete.

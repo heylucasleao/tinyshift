@@ -372,7 +372,7 @@ class TwoStageForecasterEvaluator:
         )
 
     @classmethod
-    def evaluate(
+    def evaluate_interval(
         cls,
         df_res: pd.DataFrame,
         target_col: str = "y",
