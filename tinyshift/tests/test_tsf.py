@@ -24,6 +24,7 @@ from tinyshift.forecasting.probabilistic.distribution import (
     WeibullPredictiveDistribution,
 )
 from tinyshift.forecasting.probabilistic.family import DistributionFamily
+from tinyshift.forecasting.probabilistic.forecast import PanelPredictiveForecast
 
 
 def _predict(wrapper, h, X_df=None, quantiles=(0.05, 0.50, 0.95)):
@@ -765,7 +766,9 @@ def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
             "Q(0.95)": [1.5, 1.5, 1.5],
         }
     )
-    result = TwoStageForecasterEvaluator.evaluate(df, quantiles=[0.05, 0.95])
+    result = TwoStageForecasterEvaluator.evaluate_interval(
+        df, quantiles=[0.05, 0.95]
+    )
 
     assert result.loc[0, "level"] == pytest.approx(0.9)
     assert result.loc[0, "coverage_rate"] == 0.5
@@ -776,7 +779,76 @@ def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
 def test_tsf_evaluator_rejects_invalid_quantile():
     df = pd.DataFrame({"y": [1.0], "Q(1)": [1.0]})
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
-        TwoStageForecasterEvaluator.evaluate(df, quantiles=[1.0])
+        TwoStageForecasterEvaluator.evaluate_interval(df, quantiles=[1.0])
+
+
+def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
+    frame = pd.DataFrame(
+        {
+            "unique_id": ["A", "C"],
+            "ds": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+            "lambda_t": [2.0, 4.0],
+        }
+    )
+    forecast = PanelPredictiveForecast(
+        frame,
+        gamma_distribution,
+        model="lambda_t",
+        id_col="unique_id",
+        time_col="ds",
+    )
+    evaluation = frame[["unique_id", "ds"]].copy()
+    evaluation["y"] = [2.0, 5.0]
+    train = pd.DataFrame(
+        {
+            "unique_id": ["A", "A", "B", "B"],
+            "y": [1.0, 3.0, 2.0, 2.0],
+        }
+    )
+
+    result = TwoStageForecasterEvaluator.evaluate_distribution(
+        forecast, evaluation, train
+    )
+
+    assert list(result.columns) == [
+        "unique_id",
+        "crps",
+        "target_std",
+        "ncrps",
+        "n_obs",
+    ]
+    assert result.loc[0, "unique_id"] == "A"
+    assert result.loc[0, "crps"] >= 0.0
+    assert result.loc[0, "target_std"] == pytest.approx(np.sqrt(2.0))
+    assert result.loc[0, "ncrps"] == pytest.approx(
+        result.loc[0, "crps"] / np.sqrt(2.0)
+    )
+    assert result.loc[0, "n_obs"] == 1
+    assert result.loc[1, "unique_id"] == "C"
+    assert np.isnan(result.loc[1, "target_std"])
+    assert np.isnan(result.loc[1, "ncrps"])
+
+
+def test_tsf_distribution_evaluator_requires_forecast_alignment(gamma_distribution):
+    frame = pd.DataFrame(
+        {"unique_id": ["A", "B"], "ds": [1, 1], "lambda_t": [2.0, 4.0]}
+    )
+    forecast = PanelPredictiveForecast(
+        frame,
+        gamma_distribution,
+        model="lambda_t",
+        id_col="unique_id",
+        time_col="ds",
+    )
+    evaluation = pd.DataFrame(
+        {"unique_id": ["B", "A"], "ds": [1, 1], "y": [2.0, 4.0]}
+    )
+    train = pd.DataFrame({"unique_id": ["A", "A"], "y": [1.0, 2.0]})
+
+    with pytest.raises(ValueError, match="aligned with forecast"):
+        TwoStageForecasterEvaluator.evaluate_distribution(
+            forecast, evaluation, train
+        )
 
 
 @pytest.mark.parametrize("family", [NegativeBinomialFamily(), GammaFamily()])
@@ -1059,9 +1131,11 @@ def test_calibration_table_handles_constant_predictions():
 
 def test_two_stage_evaluator_requires_target_and_skips_missing_quantiles():
     with pytest.raises(KeyError, match="Target column"):
-        TwoStageForecasterEvaluator.evaluate(pd.DataFrame({"Q(0.5)": [1.0]}))
+        TwoStageForecasterEvaluator.evaluate_interval(
+            pd.DataFrame({"Q(0.5)": [1.0]})
+        )
 
-    result = TwoStageForecasterEvaluator.evaluate(
+    result = TwoStageForecasterEvaluator.evaluate_interval(
         pd.DataFrame({"y": [1.0]}), quantiles=(0.5, 0.95)
     )
     assert result.empty
@@ -1247,7 +1321,7 @@ def test_distributions_remain_finite_at_extreme_parameters(means, dispersions):
 
 
 def test_two_stage_evaluator_handles_all_nan_pairs():
-    result = TwoStageForecasterEvaluator.evaluate(
+    result = TwoStageForecasterEvaluator.evaluate_interval(
         pd.DataFrame({"y": [np.nan], "Q(0.05)": [np.nan], "Q(0.95)": [np.nan]}),
         quantiles=(0.05, 0.95),
     )
