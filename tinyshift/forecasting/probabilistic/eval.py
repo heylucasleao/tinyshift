@@ -4,6 +4,16 @@
 
 import numpy as np
 import pandas as pd
+from numpy.polynomial.legendre import leggauss
+
+
+def _require_columns(
+    frame: pd.DataFrame, columns: list | tuple, frame_name: str
+) -> None:
+    """Raise a consistent error when required dataframe columns are absent."""
+    missing = [column for column in columns if column not in frame.columns]
+    if missing:
+        raise KeyError(f"Columns not found in {frame_name}: {missing}")
 
 
 class FirstStageForecasterEvaluator:
@@ -45,9 +55,7 @@ class FirstStageForecasterEvaluator:
         evaluator does not reorder them.
         """
         required = [target_col, lambda_col, id_col, time_col]
-        missing = [col for col in required if col not in df_res.columns]
-        if missing:
-            raise KeyError(f"Columns not found in the input DataFrame: {missing}")
+        _require_columns(df_res, required, "the input DataFrame")
 
         valid = df_res[required].dropna().copy()
         if valid.empty:
@@ -142,9 +150,9 @@ class FirstStageForecasterEvaluator:
         """Compare observed and predicted means across quantile-based bins."""
         if not isinstance(n_bins, int) or n_bins < 2:
             raise ValueError("n_bins must be an integer greater than or equal to 2.")
-        missing = [c for c in (target_col, lambda_col) if c not in df_res.columns]
-        if missing:
-            raise KeyError(f"Columns not found in the input DataFrame: {missing}")
+        _require_columns(
+            df_res, (target_col, lambda_col), "the input DataFrame"
+        )
 
         valid = df_res[[target_col, lambda_col]].dropna().copy()
         if valid.empty:
@@ -174,13 +182,14 @@ class FirstStageForecasterEvaluator:
 
 
 class TwoStageForecasterEvaluator:
-    r"""Evaluator utility for probabilistic central prediction intervals.
+    r"""Evaluator utility for complete probabilistic forecasts.
 
     A pair of symmetric forecast quantiles, such as ``Q(0.05)`` and
     ``Q(0.95)``,
     defines a central interval with coverage $1 - \alpha$. Evaluation reports
     its empirical coverage, mean width, and mean Winkler interval score
     (MWIS). Lower MWIS values indicate sharper, better-calibrated intervals.
+    Full predictive distributions can also be evaluated with CRPS and nCRPS.
     """
 
     @staticmethod
@@ -209,8 +218,161 @@ class TwoStageForecasterEvaluator:
         )
         return f"Q({label})"
 
+    @staticmethod
+    def _crps(distribution, y_true: np.ndarray) -> np.ndarray:
+        """Approximate row-wise CRPS from the predictive quantile function."""
+        nodes, weights = leggauss(100)
+        probabilities = 0.5 * (nodes + 1.0)
+        weights = 0.5 * weights
+        quantiles = np.asarray(distribution.ppf(probabilities), dtype=float)
+        expected_shape = (len(y_true), len(probabilities))
+        if quantiles.shape != expected_shape:
+            raise ValueError(
+                "The predictive distribution is not aligned with evaluation_df."
+            )
+
+        errors = y_true[:, None] - quantiles
+        quantile_loss = np.where(
+            errors >= 0.0,
+            probabilities * errors,
+            (probabilities - 1.0) * errors,
+        )
+        return 2.0 * np.sum(quantile_loss * weights, axis=1)
+
+    @staticmethod
+    def _numeric_target(
+        frame: pd.DataFrame,
+        target_col: str,
+        frame_name: str,
+        require_finite: bool = False,
+    ) -> np.ndarray:
+        """Extract a numeric target and optionally require finite values."""
+        try:
+            target = frame[target_col].to_numpy(dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Target values in {frame_name} must be numeric.") from exc
+        if require_finite and not np.all(np.isfinite(target)):
+            raise ValueError(f"Target values in {frame_name} must be finite.")
+        return target
+
+    @staticmethod
+    def _validate_distribution_alignment(
+        forecast_frame: pd.DataFrame,
+        evaluation_df: pd.DataFrame,
+        id_col: str,
+        time_col: str,
+    ) -> None:
+        """Require the evaluation rows to match the forecast panel exactly."""
+        if len(evaluation_df) != len(forecast_frame):
+            raise ValueError(
+                "evaluation_df and forecast must contain the same number of rows."
+            )
+
+        forecast_keys = forecast_frame[[id_col, time_col]].reset_index(drop=True)
+        evaluation_keys = evaluation_df[[id_col, time_col]].reset_index(drop=True)
+        if not forecast_keys.equals(evaluation_keys):
+            raise ValueError(
+                "evaluation_df series and timestamps must be aligned with forecast."
+            )
+
     @classmethod
-    def evaluate(
+    def _target_scales(
+        cls,
+        train_df: pd.DataFrame,
+        target_col: str,
+        id_col: str,
+    ) -> pd.Series:
+        """Calculate the sample target standard deviation for each series."""
+        targets = cls._numeric_target(train_df, target_col, "train_df")
+        scale_frame = pd.DataFrame(
+            {id_col: train_df[id_col].to_numpy(), target_col: targets}
+        )
+        return scale_frame.groupby(id_col, observed=True)[target_col].std()
+
+    @staticmethod
+    def _aggregate_distribution_scores(
+        series_ids,
+        row_crps: np.ndarray,
+        train_scales: pd.Series,
+        id_col: str,
+    ) -> pd.DataFrame:
+        """Aggregate row CRPS and normalize each series by its training scale."""
+        row_scores = pd.DataFrame(
+            {id_col: np.asarray(series_ids), "crps": row_crps}
+        )
+        per_series = (
+            row_scores.groupby(id_col, observed=True, sort=False)["crps"]
+            .agg(crps="mean", n_obs="size")
+            .reset_index()
+        )
+        per_series["target_std"] = per_series[id_col].map(train_scales)
+        valid_scale = np.isfinite(per_series["target_std"]) & (
+            per_series["target_std"] > 0.0
+        )
+        per_series["ncrps"] = np.where(
+            valid_scale,
+            per_series["crps"] / per_series["target_std"],
+            np.nan,
+        )
+        return per_series[[id_col, "crps", "target_std", "ncrps", "n_obs"]]
+
+    @classmethod
+    def evaluate_distribution(
+        cls,
+        forecast,
+        evaluation_df: pd.DataFrame,
+        train_df: pd.DataFrame,
+        target_col: str = "y",
+        id_col: str = "unique_id",
+        time_col: str = "ds",
+    ) -> pd.DataFrame:
+        """Evaluate a predictive distribution with CRPS and per-series nCRPS.
+
+        Parameters
+        ----------
+        forecast : PanelPredictiveForecast
+            Row-aligned predictive forecast to evaluate.
+        evaluation_df : pandas.DataFrame
+            Realized targets. Its series and timestamps must have the same row
+            order as the forecast.
+        train_df : pandas.DataFrame
+            Training observations used to calculate each series' target
+            standard deviation without using evaluation data.
+        target_col : str, default='y'
+            Target column present in both dataframes.
+        id_col : str, default='unique_id'
+            Series identifier column.
+        time_col : str, default='ds'
+            Timestamp column used to validate positional alignment.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per evaluated series with mean CRPS, training-target
+            standard deviation, nCRPS, and number of evaluated observations.
+            nCRPS is undefined when the series is absent from training or its
+            training standard deviation is zero or non-finite.
+        """
+        _require_columns(
+            evaluation_df, (id_col, time_col, target_col), "evaluation_df"
+        )
+        _require_columns(train_df, (id_col, target_col), "train_df")
+        forecast_frame = forecast.to_frame()
+        _require_columns(forecast_frame, (id_col, time_col), "forecast")
+        cls._validate_distribution_alignment(
+            forecast_frame, evaluation_df, id_col, time_col
+        )
+        y_true = cls._numeric_target(
+            evaluation_df, target_col, "evaluation_df", require_finite=True
+        )
+        row_crps = cls._crps(forecast.distribution, y_true)
+        train_scales = cls._target_scales(train_df, target_col, id_col)
+        return cls._aggregate_distribution_scores(
+            evaluation_df[id_col], row_crps, train_scales, id_col
+        )
+
+    @classmethod
+    def evaluate_interval(
         cls,
         df_res: pd.DataFrame,
         target_col: str = "y",

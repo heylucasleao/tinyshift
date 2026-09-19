@@ -532,7 +532,7 @@ mean_metrics = FirstStageForecasterEvaluator.evaluate(backtest_df)
 calibration = FirstStageForecasterEvaluator.calibration_table(
     backtest_df, n_bins=10
 )
-probabilistic_metrics = TwoStageForecasterEvaluator.evaluate(
+probabilistic_metrics = TwoStageForecasterEvaluator.evaluate_interval(
     backtest_df, quantiles=(0.05, 0.50, 0.95)
 )
 ```
