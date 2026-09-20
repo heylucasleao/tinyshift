@@ -525,7 +525,8 @@ continuous_model = TwoStageForecasterWrapper(fcst, distribution=GammaFamily())
 Evaluate only held-out or rolling-origin predictions after joining their actual
 targets. The first-stage evaluator covers conditional-mean diagnostics and its
 calibration table; the two-stage evaluator evaluates symmetric quantile pairs
-as central intervals using MWIS, empirical coverage, and interval width:
+derived from a panel predictive distribution using MWIS, empirical coverage,
+and interval width:
 
 ```python
 mean_metrics = FirstStageForecasterEvaluator.evaluate(backtest_df)
@@ -533,7 +534,9 @@ calibration = FirstStageForecasterEvaluator.calibration_table(
     backtest_df, n_bins=10
 )
 probabilistic_metrics = TwoStageForecasterEvaluator.evaluate_interval(
-    backtest_df, quantiles=(0.05, 0.50, 0.95)
+    backtest_df,
+    forecast,
+    coverages=(0.8, 0.9, 0.95),
 )
 ```
 

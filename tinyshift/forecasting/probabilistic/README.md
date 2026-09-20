@@ -51,11 +51,13 @@ probabilities = forecast.cdf(values)
 exceedance_risk = forecast.sf(values)
 masses = forecast.pmf([0, 1, 2])  # P(Y=0), P(Y=1), and P(Y=2)
 
-# Consumes the Q(0.05) and Q(0.95) columns produced by ppf.
-evaluation_frame = forecast.ppf([0.05, 0.5, 0.95])
+# Targets are aligned to the forecast by unique_id and ds.
+evaluation_frame = forecast.to_frame()[["unique_id", "ds"]]
 evaluation_frame["y"] = observed_values
 probabilistic_metrics = TwoStageForecasterEvaluator.evaluate_interval(
-    evaluation_frame
+    evaluation_frame,
+    forecast,
+    coverages=(0.8, 0.9, 0.95),
 )
 
 # Full-distribution scoring and calibration preserve panel identity.

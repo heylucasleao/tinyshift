@@ -758,48 +758,47 @@ def test_first_stage_evaluator_rejects_non_positive_mean():
         FirstStageForecasterEvaluator.evaluate(df)
 
 
-def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
-    df = pd.DataFrame(
+def test_tsf_evaluator_reports_distribution_derived_intervals(gamma_distribution):
+    frame = pd.DataFrame(
         {
-            "y": [1.0, 2.0, np.nan],
-            "Q(0.05)": [0.0, 0.0, 0.0],
-            "Q(0.95)": [1.5, 1.5, 1.5],
+            "unique_id": ["A", "B"],
+            "ds": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+            "lambda_t": [2.0, 4.0],
         }
     )
+    forecast = PanelPredictiveForecast(
+        frame,
+        gamma_distribution,
+        model="lambda_t",
+        id_col="unique_id",
+        time_col="ds",
+    )
+    y_true = frame[["unique_id", "ds"]].iloc[::-1].copy()
+    y_true["y"] = [4.0, 2.0]
+
     result = TwoStageForecasterEvaluator.evaluate_interval(
-        df, quantiles=[0.05, 0.95]
+        y_true, forecast, coverages=[0.9]
     )
 
-    assert result.loc[0, "level"] == pytest.approx(0.9)
-    assert result.loc[0, "coverage_rate"] == 0.5
-    assert result.loc[0, "interval_width_mean"] == pytest.approx(1.5)
-    assert result.loc[0, "mwis"] == pytest.approx(6.5)
+    assert result.loc[0, "model"] == "lambda_t"
+    assert result.loc[0, "coverage"] == pytest.approx(0.9)
+    assert result.loc[0, "coverage_rate"] == 1.0
+    assert result.loc[0, "interval_width_mean"] > 0.0
+    assert result.loc[0, "mwis"] > 0.0
     assert result.loc[0, "n_observations"] == 2
 
 
-def test_tsf_evaluator_reports_intervals_independently_by_series():
+def test_tsf_evaluator_rejects_invalid_coverage(gamma_distribution):
     frame = pd.DataFrame(
-        {
-            "unique_id": ["A", "A", "B", "B"],
-            "y": [1.0, 3.0, -1.0, 1.0],
-            "Q(0.05)": [0.0, 0.0, 0.0, 0.0],
-            "Q(0.95)": [2.0, 2.0, 2.0, 2.0],
-        }
+        {"unique_id": ["A", "B"], "ds": [1, 1], "lambda_t": [2.0, 4.0]}
     )
+    forecast = PanelPredictiveForecast(
+        frame, gamma_distribution, "lambda_t", "unique_id", "ds"
+    )
+    y_true = frame[["unique_id", "ds"]].assign(y=[2.0, 4.0])
 
-    result = TwoStageForecasterEvaluator.evaluate_interval(
-        frame, quantiles=[0.05, 0.95]
-    ).set_index("unique_id")
-
-    assert result.loc["A", "coverage_rate"] == 0.5
-    assert result.loc["B", "coverage_rate"] == 0.5
-    assert result["n_observations"].tolist() == [2, 2]
-
-
-def test_tsf_evaluator_rejects_invalid_quantile():
-    df = pd.DataFrame({"y": [1.0], "Q(1)": [1.0]})
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
-        TwoStageForecasterEvaluator.evaluate_interval(df, quantiles=[1.0])
+        TwoStageForecasterEvaluator.evaluate_interval(y_true, forecast, coverages=[1.0])
 
 
 def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
@@ -840,9 +839,7 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
     assert result.loc[0, "unique_id"] == "A"
     assert result.loc[0, "crps"] >= 0.0
     assert result.loc[0, "target_std"] == pytest.approx(np.sqrt(2.0))
-    assert result.loc[0, "ncrps"] == pytest.approx(
-        result.loc[0, "crps"] / np.sqrt(2.0)
-    )
+    assert result.loc[0, "ncrps"] == pytest.approx(result.loc[0, "crps"] / np.sqrt(2.0))
     assert result.loc[0, "n_observations"] == 1
     assert result.loc[1, "unique_id"] == "C"
     assert np.isnan(result.loc[1, "target_std"])
@@ -860,15 +857,11 @@ def test_tsf_distribution_evaluator_requires_forecast_alignment(gamma_distributi
         id_col="unique_id",
         time_col="ds",
     )
-    evaluation = pd.DataFrame(
-        {"unique_id": ["B", "A"], "ds": [1, 1], "y": [2.0, 4.0]}
-    )
+    evaluation = pd.DataFrame({"unique_id": ["B", "A"], "ds": [1, 1], "y": [2.0, 4.0]})
     train = pd.DataFrame({"unique_id": ["A", "A"], "y": [1.0, 2.0]})
 
     with pytest.raises(ValueError, match="aligned with forecast"):
-        TwoStageForecasterEvaluator.evaluate_distribution(
-            forecast, evaluation, train
-        )
+        TwoStageForecasterEvaluator.evaluate_distribution(forecast, evaluation, train)
 
 
 @pytest.mark.parametrize("family", [NegativeBinomialFamily(), GammaFamily()])
@@ -1149,16 +1142,18 @@ def test_calibration_table_handles_constant_predictions():
     assert result.loc[0, "calibration_bin"] == "all"
 
 
-def test_two_stage_evaluator_requires_target_and_skips_missing_quantiles():
-    with pytest.raises(KeyError, match="Target column"):
-        TwoStageForecasterEvaluator.evaluate_interval(
-            pd.DataFrame({"Q(0.5)": [1.0]})
-        )
-
-    result = TwoStageForecasterEvaluator.evaluate_interval(
-        pd.DataFrame({"y": [1.0]}), quantiles=(0.5, 0.95)
+def test_two_stage_interval_evaluator_requires_panel_target(gamma_distribution):
+    frame = pd.DataFrame(
+        {"unique_id": ["A", "B"], "ds": [1, 1], "lambda_t": [2.0, 4.0]}
     )
-    assert result.empty
+    forecast = PanelPredictiveForecast(
+        frame, gamma_distribution, "lambda_t", "unique_id", "ds"
+    )
+
+    with pytest.raises(KeyError, match="Columns not found in y_true"):
+        TwoStageForecasterEvaluator.evaluate_interval(
+            frame[["unique_id", "ds"]], forecast
+        )
 
 
 def test_wrapper_joblib_round_trip(sample_train_data, tmp_path):
@@ -1340,15 +1335,17 @@ def test_distributions_remain_finite_at_extreme_parameters(means, dispersions):
     assert np.all(np.isfinite(median))
 
 
-def test_two_stage_evaluator_handles_all_nan_pairs():
-    result = TwoStageForecasterEvaluator.evaluate_interval(
-        pd.DataFrame({"y": [np.nan], "Q(0.05)": [np.nan], "Q(0.95)": [np.nan]}),
-        quantiles=(0.05, 0.95),
+def test_two_stage_interval_evaluator_rejects_missing_targets(gamma_distribution):
+    frame = pd.DataFrame(
+        {"unique_id": ["A", "B"], "ds": [1, 1], "lambda_t": [2.0, 4.0]}
     )
+    forecast = PanelPredictiveForecast(
+        frame, gamma_distribution, "lambda_t", "unique_id", "ds"
+    )
+    y_true = frame[["unique_id", "ds"]].assign(y=[np.nan, 4.0])
 
-    assert np.isnan(result.loc[0, "mwis"])
-    assert np.isnan(result.loc[0, "coverage_rate"])
-    assert result.loc[0, "n_observations"] == 0
+    with pytest.raises(ValueError, match="target for every forecast row"):
+        TwoStageForecasterEvaluator.evaluate_interval(y_true, forecast)
 
 
 def test_wrapper_supports_custom_column_names():
