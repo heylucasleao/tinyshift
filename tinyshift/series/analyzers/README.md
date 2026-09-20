@@ -40,8 +40,10 @@ or inspection. The exact result structure is analyzer-specific.
 ### `IntermittencyAnalyzer`
 
 Classifies demand profiles as smooth, intermittent, erratic, or lumpy. The
-summary includes average demand interval, positive-demand variability, zero
-proportion, and interval irregularity.
+summary includes the total and positive observation counts (`n_observations`, `n_pos`),
+mean positive demand (`mean_pos`), average demand interval, positive-demand
+variability, zero proportion, and interval irregularity. Classification is
+undefined when fewer than two positive-demand observations are available.
 
 ```python
 from tinyshift.series import IntermittencyAnalyzer

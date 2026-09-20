@@ -526,6 +526,21 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         pandas.DataFrame
             Sequential fold evidence for every fitted series.
 
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **start_time** : ``object``
+            Inclusive time label at the beginning of the evaluated fold.
+        **end_time** : ``object``
+            Inclusive time label at the end of the evaluated fold.
+        **reference_size** : ``int``
+            Number of observations supporting the current reference regime.
+        **distance_ratio** : ``float``
+            Wasserstein distance divided by its calibrated threshold.
+        **status** : ``str``
+            Fold state: ``"stable"``, ``"candidate"``, or ``"confirmed"``.
+
         Raises
         ------
         RuntimeError
@@ -553,6 +568,24 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         -------
         pandas.DataFrame
             Confirmed changes ordered within each fitted series.
+
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **change** : ``int``
+            One-based change sequence number within the series.
+        **estimated_change_time** : ``object``
+            Estimated first time label of the new regime.
+        **detected_at** : ``object``
+            Time label at which persistence confirmed the change.
+        **distance_ratio** : ``float``
+            Detection distance divided by its calibrated threshold.
+        **diff_mean** : ``float``
+            New-regime mean minus previous-regime mean.
+        **scale_ratio** : ``float``
+            New-regime standard deviation divided by previous-regime standard
+            deviation, with a numerical floor for degenerate scales.
 
         Raises
         ------
@@ -584,6 +617,23 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         -------
         pandas.DataFrame
             Ordered regime segments for every fitted series.
+
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **regime** : ``int``
+            One-based regime sequence number within the series.
+        **start_time** : ``object``
+            Inclusive first time label of the regime.
+        **end_time** : ``object``
+            Inclusive final time label of the regime.
+        **n_observations** : ``int``
+            Number of observations in the regime.
+        **mean** : ``float``
+            Population mean of the regime.
+        **std** : ``float``
+            Population standard deviation of the regime using ``ddof=0``.
 
         Raises
         ------

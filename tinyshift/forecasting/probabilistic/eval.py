@@ -47,6 +47,28 @@ class FirstStageForecasterEvaluator:
     ) -> pd.DataFrame:
         """Evaluate the operational quality of out-of-sample mean forecasts.
 
+        Returns
+        -------
+        pandas.DataFrame
+            One-row operational evaluation summary.
+
+        Columns
+        -------
+        **wape** : ``float``
+            Total absolute error divided by total observed demand.
+        **pbias** : ``float``
+            Aggregate predicted volume minus observed volume, divided by
+            observed volume.
+        **score** : ``float``
+            Composite operational loss computed as ``wape + abs(pbias)``.
+        **forecast_instability** : ``float``
+            Relative revisions between adjacent forecasts within each series.
+        **false_demand_on_zero_days_avg_pred** : ``float``
+            Mean prediction on observations whose target is zero.
+        **peak_demand_deviation** : ``float``
+            Relative difference between mean predicted and observed demand on
+            positive-target observations.
+
         Notes
         -----
         Input predictions should come from temporal cross-validation or a held-
@@ -147,12 +169,30 @@ class FirstStageForecasterEvaluator:
         lambda_col: str = "lambda_t",
         n_bins: int = 10,
     ) -> pd.DataFrame:
-        """Compare observed and predicted means across quantile-based bins."""
+        """Compare observed and predicted means across quantile-based bins.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Calibration summary with one row per realized prediction bin.
+
+        Columns
+        -------
+        **calibration_bin** : ``object``
+            Quantile interval of the predictions, or ``"all"`` when every
+            prediction is identical.
+        **count** : ``int``
+            Number of valid target-prediction pairs in the bin.
+        **mean_prediction** : ``float``
+            Mean conditional prediction in the bin.
+        **mean_observed** : ``float``
+            Mean observed target in the bin.
+        **mean_residual** : ``float``
+            Mean observed target minus mean prediction.
+        """
         if not isinstance(n_bins, int) or n_bins < 2:
             raise ValueError("n_bins must be an integer greater than or equal to 2.")
-        _require_columns(
-            df_res, (target_col, lambda_col), "the input DataFrame"
-        )
+        _require_columns(df_res, (target_col, lambda_col), "the input DataFrame")
 
         valid = df_res[[target_col, lambda_col]].dropna().copy()
         if valid.empty:
@@ -211,12 +251,60 @@ class TwoStageForecasterEvaluator:
         return float(np.mean(width + penalty_lower + penalty_upper))
 
     @staticmethod
-    def _quantile_column(quantile: float) -> str:
-        """Return the column name emitted by ``PanelPredictiveForecast.ppf``."""
-        label = np.format_float_positional(
-            float(quantile), precision=12, trim="-"
+    def _align_targets(
+        y_true: pd.DataFrame,
+        forecast_frame: pd.DataFrame,
+        id_col: str,
+        time_col: str,
+        target_col: str,
+    ) -> pd.DataFrame:
+        """Align observed targets to forecast order using panel keys."""
+        if not isinstance(y_true, pd.DataFrame):
+            raise TypeError("y_true must be a pandas DataFrame.")
+
+        keys = [id_col, time_col]
+        required_true = [*keys, target_col]
+        for frame, required, name in (
+            (y_true, required_true, "y_true"),
+            (forecast_frame, keys, "forecast"),
+        ):
+            missing = [column for column in required if column not in frame.columns]
+            if missing:
+                raise KeyError(f"Columns not found in {name}: {missing}")
+            if frame.duplicated(keys).any():
+                raise ValueError(f"{name} contains duplicate identifier/time rows.")
+
+        aligned = forecast_frame.merge(
+            y_true[required_true], on=keys, how="left", validate="one_to_one"
         )
-        return f"Q({label})"
+        if aligned[target_col].isna().any():
+            raise ValueError("y_true must contain a target for every forecast row.")
+        try:
+            observed = aligned[target_col].to_numpy(dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("y_true must contain numeric target values.") from exc
+        if not np.all(np.isfinite(observed)):
+            raise ValueError("y_true must contain only finite target values.")
+        return aligned
+
+    @classmethod
+    def _evaluate_interval_bounds(
+        cls,
+        observed: np.ndarray,
+        bounds: np.ndarray,
+        coverage: float,
+    ) -> dict:
+        """Calculate summary metrics for one central prediction interval."""
+        lower, upper = bounds[:, 0], bounds[:, 1]
+        return {
+            "coverage": coverage,
+            "coverage_rate": round(
+                float(((observed >= lower) & (observed <= upper)).mean()), 4
+            ),
+            "interval_width_mean": round(float(np.mean(upper - lower)), 4),
+            "mwis": round(cls.mwis(observed, lower, upper, 1.0 - coverage), 4),
+            "n_observations": len(observed),
+        }
 
     @staticmethod
     def _crps(distribution, y_true: np.ndarray) -> np.ndarray:
@@ -297,12 +385,10 @@ class TwoStageForecasterEvaluator:
         id_col: str,
     ) -> pd.DataFrame:
         """Aggregate row CRPS and normalize each series by its training scale."""
-        row_scores = pd.DataFrame(
-            {id_col: np.asarray(series_ids), "crps": row_crps}
-        )
+        row_scores = pd.DataFrame({id_col: np.asarray(series_ids), "crps": row_crps})
         per_series = (
             row_scores.groupby(id_col, observed=True, sort=False)["crps"]
-            .agg(crps="mean", n_obs="size")
+            .agg(crps="mean", n_observations="size")
             .reset_index()
         )
         per_series["target_std"] = per_series[id_col].map(train_scales)
@@ -314,7 +400,7 @@ class TwoStageForecasterEvaluator:
             per_series["crps"] / per_series["target_std"],
             np.nan,
         )
-        return per_series[[id_col, "crps", "target_std", "ncrps", "n_obs"]]
+        return per_series[[id_col, "crps", "target_std", "ncrps", "n_observations"]]
 
     @classmethod
     def evaluate_distribution(
@@ -344,7 +430,6 @@ class TwoStageForecasterEvaluator:
             Series identifier column.
         time_col : str, default='ds'
             Timestamp column used to validate positional alignment.
-
         Returns
         -------
         pandas.DataFrame
@@ -352,10 +437,22 @@ class TwoStageForecasterEvaluator:
             standard deviation, nCRPS, and number of evaluated observations.
             nCRPS is undefined when the series is absent from training or its
             training standard deviation is zero or non-finite.
+
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the resolved ``id_col`` name.
+        **crps** : ``float``
+            Mean Continuous Ranked Probability Score; lower is better.
+        **target_std** : ``float``
+            Sample standard deviation of the series in ``train_df``.
+        **ncrps** : ``float``
+            CRPS divided by ``target_std``; undefined for a non-positive or
+            non-finite scale.
+        **n_observations** : ``int``
+            Number of evaluated forecast-target pairs for the series.
         """
-        _require_columns(
-            evaluation_df, (id_col, time_col, target_col), "evaluation_df"
-        )
+        _require_columns(evaluation_df, (id_col, time_col, target_col), "evaluation_df")
         _require_columns(train_df, (id_col, target_col), "train_df")
         forecast_frame = forecast.to_frame()
         _require_columns(forecast_frame, (id_col, time_col), "forecast")
@@ -374,93 +471,90 @@ class TwoStageForecasterEvaluator:
     @classmethod
     def evaluate_interval(
         cls,
-        df_res: pd.DataFrame,
+        y_true: pd.DataFrame,
+        forecast,
+        coverages=(0.5, 0.8, 0.9, 0.95),
+        id_col: str = "unique_id",
+        time_col: str = "ds",
         target_col: str = "y",
-        quantiles: tuple = (0.05, 0.50, 0.95),
     ) -> pd.DataFrame:
-        """Evaluate central intervals over out-of-sample backtest predictions.
+        """Evaluate distribution-derived central intervals over a panel.
+
+        Results are calculated independently per series when ``id_col`` is
+        present. If it is absent, a single panel-wide result is returned for
+        backward compatibility.
 
         Parameters
         ----------
-        df_res : pandas.DataFrame
-            DataFrame containing real ground truth targets and forecasted
-            quantile columns named as ``Q(<probability>)``.
-        target_col : str, default='y'
-            Name of the column containing real observed values.
-        quantiles : list of float, default=[0.05, 0.50, 0.95]
-            Quantile levels used to construct symmetric central intervals.
+        y_true : pandas.DataFrame
+            Observed panel containing identifier, time, and target columns.
+        forecast : PanelPredictiveForecast
+            Panel forecast exposing ``distribution`` and ``to_frame``.
+        coverages : iterable of float, default=(0.5, 0.8, 0.9, 0.95)
+            Nominal coverage levels used to derive central intervals.
+        id_col : str, default="unique_id"
+            Series identifier column.
+        time_col : str, default="ds"
+            Time column.
+        target_col : str, default="y"
+            Target column in ``y_true``.
 
         Returns
         -------
         pandas.DataFrame
-            Summary dataframe containing level, empirical coverage, mean
-            interval width, and MWIS for each available interval.
+            One evaluation row per requested coverage.
+
+        Columns
+        -------
+        **model** : ``object``
+            Identifier carried by the predictive forecast.
+        **coverage** : ``float``
+            Requested nominal interval coverage.
+        **coverage_rate** : ``float``
+            Fraction of aligned targets inside their interval bounds.
+        **interval_width_mean** : ``float``
+            Mean upper-minus-lower interval width.
+        **mwis** : ``float``
+            Mean Winkler interval score; lower values are better.
+        **n_observations** : ``int``
+            Number of aligned panel observations.
+
+        Notes
+        -----
+        Targets are aligned to forecast order by ``id_col`` and ``time_col``;
+        both inputs must contain unique panel keys. Every forecast row must
+        have one finite numeric target. Central equal-tailed bounds are derived
+        directly from ``forecast.distribution``, so precomputed interval
+        columns and interval specifications are not accepted.
+
+        Coverage includes targets equal to either boundary. Metrics are pooled
+        over all aligned panel rows and rounded to four decimal places.
         """
-        results = []
+        if not hasattr(forecast, "distribution") or not hasattr(forecast, "to_frame"):
+            raise TypeError("forecast must be a panel predictive forecast.")
 
-        if target_col not in df_res.columns:
-            raise KeyError(
-                f"Target column '{target_col}' not found in the input DataFrame."
+        aligned = cls._align_targets(
+            y_true, forecast.to_frame(), id_col, time_col, target_col
+        )
+        observed = aligned[target_col].to_numpy(dtype=float)
+        if len(forecast.distribution) != len(observed):
+            raise ValueError(
+                "y_true and the predictive distribution must have equal length."
             )
 
-        quantiles = tuple(sorted(quantiles))
-        for q in quantiles:
-            if not np.isfinite(q) or not 0 < q < 1:
-                raise ValueError(
-                    "Quantiles must be finite and strictly between 0 and 1."
-                )
-
-        for lower_quantile in quantiles:
-            if lower_quantile >= 0.5:
-                continue
-            upper_quantile = next(
-                (
-                    quantile
-                    for quantile in quantiles
-                    if np.isclose(quantile, 1.0 - lower_quantile)
-                ),
-                None,
-            )
-            if upper_quantile is None:
-                continue
-
-            lower_col = cls._quantile_column(lower_quantile)
-            upper_col = cls._quantile_column(upper_quantile)
-            if lower_col not in df_res.columns or upper_col not in df_res.columns:
-                continue
-
-            valid = df_res[[target_col, lower_col, upper_col]].dropna()
-            alpha = 2.0 * lower_quantile
-            target_coverage = 1.0 - alpha
-            if valid.empty:
-                empirical_coverage = np.nan
-                interval_width = np.nan
-            else:
-                empirical_coverage = float(
-                    (
-                        (valid[target_col] >= valid[lower_col])
-                        & (valid[target_col] <= valid[upper_col])
-                    ).mean()
-                )
-                interval_width = float((valid[upper_col] - valid[lower_col]).mean())
-
-            results.append(
-                {
-                    "level": target_coverage,
-                    "coverage_rate": round(empirical_coverage, 4),
-                    "interval_width_mean": round(interval_width, 4),
-                    "mwis": round(
-                        cls.mwis(
-                            df_res[target_col].values,
-                            df_res[lower_col].values,
-                            df_res[upper_col].values,
-                            alpha,
-                        ),
-                        4,
-                    ),
-                }
-            )
-
-        return pd.DataFrame(
-            results, columns=["level", "coverage_rate", "interval_width_mean", "mwis"]
+        records = []
+        for coverage in coverages:
+            bounds = np.asarray(forecast.distribution.interval(coverage), dtype=float)
+            metrics = cls._evaluate_interval_bounds(observed, bounds, coverage)
+            records.append({"model": forecast.model, **metrics})
+        return pd.DataFrame.from_records(
+            records,
+            columns=[
+                "model",
+                "coverage",
+                "coverage_rate",
+                "interval_width_mean",
+                "mwis",
+                "n_observations",
+            ],
         )
