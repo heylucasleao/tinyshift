@@ -133,7 +133,7 @@ class BaseDrift(BaseEstimator, ABC):
 
         Parameters
         ----------
-        reference : array-like of shape (n_observations,)
+        reference : array-like of shape (n_obs,)
             Baseline observations. Accepted values and dtypes are defined by
             the concrete detector.
 
@@ -213,7 +213,7 @@ class BaseDrift(BaseEstimator, ABC):
 
         Parameters
         ----------
-        X : array-like of shape (n_observations,)
+        X : array-like of shape (n_obs,)
             Current observations compared with the fitted reference. Accepted
             values and dtypes are defined by the concrete detector.
 

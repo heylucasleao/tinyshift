@@ -99,7 +99,7 @@ class ConDrift(BaseDrift):
 
         Parameters
         ----------
-        reference : array-like of shape (n_observations,)
+        reference : array-like of shape (n_obs,)
             Finite numeric baseline observations.
 
         Returns

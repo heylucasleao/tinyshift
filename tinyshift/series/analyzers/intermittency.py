@@ -98,7 +98,7 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
     IntermittencyAnalyzer(...)
 
     >>> analyzer.summary()
-      unique_id  n_observations  n_pos  mean_pos  adi   cv2  ... classification
+      unique_id  n_obs  n_pos  mean_pos  adi   cv2  ... classification
     0     item_a     ...    ...       ...  ...   ...  ...            ...
     1     item_b     ...    ...       ...  ...   ...  ...            ...
     """
@@ -294,7 +294,7 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
 
         positive_demand = demand[demand > 0]
 
-        n_observations = int(demand.size)
+        n_obs = int(demand.size)
 
         n_pos = int(positive_demand.size)
 
@@ -318,7 +318,7 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
         )
 
         return {
-            "n_observations": n_observations,
+            "n_obs": n_obs,
             "n_pos": n_pos,
             "mean_pos": mean_pos,
             "adi": adi,
@@ -344,14 +344,14 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
         -------
         **id_col** : ``object``
             Series identifier using the column name supplied to :meth:`fit`.
-        **n_observations** : ``int``
+        **n_obs** : ``int``
             Total number of observations in the series.
         **n_pos** : ``int``
             Number of strictly positive-demand observations.
         **mean_pos** : ``float``
             Mean strictly positive demand, or NaN when no positive demand exists.
         **adi** : ``float``
-            Average demand interval, ``n_observations / n_pos``.
+            Average demand interval, ``n_obs / n_pos``.
         **cv2** : ``float``
             Squared coefficient of variation of positive demand.
         **zero_proportion** : ``float``
@@ -379,7 +379,7 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
             )
 
         columns = [
-            "n_observations",
+            "n_obs",
             "n_pos",
             "mean_pos",
             "adi",
