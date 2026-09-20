@@ -6,8 +6,6 @@ import numpy as np
 import pandas as pd
 from numpy.polynomial.legendre import leggauss
 
-_DEFAULT_QUANTILE_LEVELS = tuple(level / 20 for level in range(1, 20))
-
 
 def _require_columns(
     frame: pd.DataFrame, columns: list | tuple, frame_name: str
@@ -152,9 +150,7 @@ class FirstStageForecasterEvaluator:
         """Compare observed and predicted means across quantile-based bins."""
         if not isinstance(n_bins, int) or n_bins < 2:
             raise ValueError("n_bins must be an integer greater than or equal to 2.")
-        _require_columns(
-            df_res, (target_col, lambda_col), "the input DataFrame"
-        )
+        _require_columns(df_res, (target_col, lambda_col), "the input DataFrame")
 
         valid = df_res[[target_col, lambda_col]].dropna().copy()
         if valid.empty:
@@ -215,9 +211,7 @@ class TwoStageForecasterEvaluator:
     @staticmethod
     def _quantile_column(quantile: float) -> str:
         """Return the column name emitted by ``PanelPredictiveForecast.ppf``."""
-        label = np.format_float_positional(
-            float(quantile), precision=12, trim="-"
-        )
+        label = np.format_float_positional(float(quantile), precision=12, trim="-")
         return f"Q({label})"
 
     @staticmethod
@@ -277,59 +271,22 @@ class TwoStageForecasterEvaluator:
                 "evaluation_df series and timestamps must be aligned with forecast."
             )
 
-    @classmethod
-    def evaluate_quantiles(
-        cls,
-        forecast,
-        evaluation_df: pd.DataFrame,
-        target_col: str = "y",
-        id_col: str = "unique_id",
-        time_col: str = "ds",
-        levels: tuple = _DEFAULT_QUANTILE_LEVELS,
-    ) -> pd.DataFrame:
-        """Evaluate marginal quantile calibration independently per series.
-
-        ``coverage_rate`` is the observed frequency with which the realization
-        is at or below the forecast quantile. For continuous distributions,
-        ``absolute_error`` compares that rate with the requested level. For
-        discrete distributions, it compares against the attainable coverage
-        ``F(Q(level))`` averaged over the series, avoiding an artificial error
-        when probability masses make the nominal level unattainable.
-        """
-        levels = np.asarray(levels, dtype=float)
-        if (
-            levels.ndim != 1
-            or levels.size == 0
-            or not np.all(np.isfinite(levels))
-            or np.any((levels <= 0.0) | (levels >= 1.0))
+    @staticmethod
+    def _quantile_coverage(distribution, n_observations: int) -> tuple[np.ndarray, np.ndarray]:
+        """Return validated forecast quantiles and their attainable coverage."""
+        levels = np.arange(1, 20, dtype=float) / 20.0
+        forecast_quantiles = np.asarray(distribution.ppf(levels), dtype=float)
+        expected_shape = (n_observations, len(levels))
+        if forecast_quantiles.shape != expected_shape or not np.all(
+            np.isfinite(forecast_quantiles)
         ):
-            raise ValueError(
-                "levels must be a non-empty one-dimensional sequence "
-                "strictly between 0 and 1."
-            )
-        if np.unique(levels).size != levels.size:
-            raise ValueError("levels must not contain duplicates.")
-        levels = np.sort(levels)
-
-        _require_columns(
-            evaluation_df, (id_col, time_col, target_col), "evaluation_df"
-        )
-        forecast_frame = forecast.to_frame()
-        _require_columns(forecast_frame, (id_col, time_col), "forecast")
-        cls._validate_distribution_alignment(
-            forecast_frame, evaluation_df, id_col, time_col
-        )
-        y_true = cls._numeric_target(
-            evaluation_df, target_col, "evaluation_df", require_finite=True
-        )
-        distribution = forecast.distribution
-        quantiles = np.asarray(distribution.ppf(levels), dtype=float)
-        expected_shape = (len(y_true), len(levels))
-        if quantiles.shape != expected_shape or not np.all(np.isfinite(quantiles)):
             raise ValueError(
                 "The predictive distribution returned invalid or misaligned quantiles."
             )
-        attainable_coverage = np.asarray(distribution.cdf(quantiles), dtype=float)
+
+        attainable_coverage = np.asarray(
+            distribution.cdf(forecast_quantiles), dtype=float
+        )
         if (
             attainable_coverage.shape != expected_shape
             or not np.all(np.isfinite(attainable_coverage))
@@ -338,39 +295,27 @@ class TwoStageForecasterEvaluator:
             raise ValueError(
                 "The predictive distribution returned invalid quantile coverage."
             )
+        return forecast_quantiles, attainable_coverage
 
-        row_data = pd.DataFrame(
-            {id_col: evaluation_df[id_col].to_numpy(), "_row": np.arange(len(y_true))}
-        )
-        rows = []
-        for unique_id, group in row_data.groupby(id_col, observed=True, sort=False):
-            positions = group["_row"].to_numpy()
-            observed = np.mean(
-                y_true[positions, None] <= quantiles[positions], axis=0
+    @staticmethod
+    def _calibration_errors(
+        y_true: np.ndarray,
+        series_ids: np.ndarray,
+        forecast_quantiles: np.ndarray,
+        attainable_coverage: np.ndarray,
+    ) -> dict:
+        """Calculate mean absolute quantile-calibration error per series."""
+        errors = {}
+        for unique_id in pd.unique(series_ids):
+            positions = np.flatnonzero(series_ids == unique_id)
+            observed_coverage = np.mean(
+                y_true[positions, None] <= forecast_quantiles[positions], axis=0
             )
-            expected = np.mean(attainable_coverage[positions], axis=0)
-            rows.extend(
-                {
-                    id_col: unique_id,
-                    "level": level,
-                    "coverage_rate": coverage_rate,
-                    "absolute_error": abs(coverage_rate - expected_coverage),
-                    "n_observations": len(positions),
-                }
-                for level, coverage_rate, expected_coverage in zip(
-                    levels, observed, expected
-                )
+            expected_coverage = np.mean(attainable_coverage[positions], axis=0)
+            errors[unique_id] = float(
+                np.mean(np.abs(observed_coverage - expected_coverage))
             )
-        return pd.DataFrame(
-            rows,
-            columns=[
-                id_col,
-                "level",
-                "coverage_rate",
-                "absolute_error",
-                "n_observations",
-            ],
-        )
+        return errors
 
     @classmethod
     def _target_scales(
@@ -394,9 +339,7 @@ class TwoStageForecasterEvaluator:
         id_col: str,
     ) -> pd.DataFrame:
         """Aggregate row CRPS and normalize each series by its training scale."""
-        row_scores = pd.DataFrame(
-            {id_col: np.asarray(series_ids), "crps": row_crps}
-        )
+        row_scores = pd.DataFrame({id_col: np.asarray(series_ids), "crps": row_crps})
         per_series = (
             row_scores.groupby(id_col, observed=True, sort=False)["crps"]
             .agg(crps="mean", n_observations="size")
@@ -411,9 +354,7 @@ class TwoStageForecasterEvaluator:
             per_series["crps"] / per_series["target_std"],
             np.nan,
         )
-        return per_series[
-            [id_col, "crps", "target_std", "ncrps", "n_observations"]
-        ]
+        return per_series[[id_col, "crps", "target_std", "ncrps", "n_observations"]]
 
     @classmethod
     def evaluate_distribution(
@@ -424,7 +365,6 @@ class TwoStageForecasterEvaluator:
         target_col: str = "y",
         id_col: str = "unique_id",
         time_col: str = "ds",
-        quantile_levels: tuple = _DEFAULT_QUANTILE_LEVELS,
     ) -> pd.DataFrame:
         """Evaluate a predictive distribution with CRPS and per-series nCRPS.
 
@@ -444,9 +384,6 @@ class TwoStageForecasterEvaluator:
             Series identifier column.
         time_col : str, default='ds'
             Timestamp column used to validate positional alignment.
-        quantile_levels : tuple of float, optional
-            Quantile levels used to calculate mean absolute calibration error.
-
         Returns
         -------
         pandas.DataFrame
@@ -456,9 +393,7 @@ class TwoStageForecasterEvaluator:
             nCRPS is undefined when the series is absent from training or its
             training standard deviation is zero or non-finite.
         """
-        _require_columns(
-            evaluation_df, (id_col, time_col, target_col), "evaluation_df"
-        )
+        _require_columns(evaluation_df, (id_col, time_col, target_col), "evaluation_df")
         _require_columns(train_df, (id_col, target_col), "train_df")
         forecast_frame = forecast.to_frame()
         _require_columns(forecast_frame, (id_col, time_col), "forecast")
@@ -473,20 +408,19 @@ class TwoStageForecasterEvaluator:
         scores = cls._aggregate_distribution_scores(
             evaluation_df[id_col], row_crps, train_scales, id_col
         )
-        calibration = cls.evaluate_quantiles(
-            forecast=forecast,
-            evaluation_df=evaluation_df,
-            target_col=target_col,
-            id_col=id_col,
-            time_col=time_col,
-            levels=quantile_levels,
+
+        distribution = forecast.distribution
+        forecast_quantiles, attainable_coverage = cls._quantile_coverage(
+            distribution, len(y_true)
         )
-        calibration_error = (
-            calibration.groupby(id_col, observed=True, sort=False)["absolute_error"]
-            .mean()
-            .rename("calibration_error")
+        series_ids = evaluation_df[id_col].to_numpy()
+        calibration_errors = cls._calibration_errors(
+            y_true,
+            series_ids,
+            forecast_quantiles,
+            attainable_coverage,
         )
-        scores["calibration_error"] = scores[id_col].map(calibration_error)
+        scores["calibration_error"] = scores[id_col].map(calibration_errors)
         return scores[
             [
                 id_col,
@@ -586,9 +520,7 @@ class TwoStageForecasterEvaluator:
                     empirical_coverage = float((~lower_misses & ~upper_misses).mean())
                     lower_miss_rate = float(lower_misses.mean())
                     upper_miss_rate = float(upper_misses.mean())
-                    interval_width = float(
-                        (valid[upper_col] - valid[lower_col]).mean()
-                    )
+                    interval_width = float((valid[upper_col] - valid[lower_col]).mean())
 
                 result = {
                     "level": target_coverage,
