@@ -66,17 +66,18 @@ distribution_metrics = TwoStageForecasterEvaluator.evaluate_distribution(
     evaluation_df,
     train_df,
 )
-calibration = TwoStageForecasterEvaluator.evaluate_calibration(
+quantile_calibration = TwoStageForecasterEvaluator.evaluate_quantiles(
     forecast,
     evaluation_df,
 )
 ```
 
-`evaluate_calibration()` returns a per-series calibration curve with nominal
-probability, observed probability, absolute error, and `n_observations`. It
-uses the ordinary PIT for continuous distributions and a reproducible
-randomized PIT for discrete distributions. `evaluate_distribution()` reports
-the curve's mean absolute deviation as `calibration_error`. Interval summaries
+`evaluate_quantiles()` returns per-series quantile levels, observed coverage,
+absolute error, and `n_observations`. For discrete distributions, calibration
+error uses the attainable coverage of each forecast quantile rather than
+penalizing probability levels that discrete masses cannot attain.
+`evaluate_distribution()` reports the curve's mean absolute deviation as
+`calibration_error`. Interval summaries
 also report the number of valid target-bound triples used at each level. When `unique_id` is present,
 interval coverage, lower and upper miss rates, width, and MWIS are reported
 independently for every series.

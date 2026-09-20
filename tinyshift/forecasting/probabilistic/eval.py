@@ -6,9 +6,7 @@ import numpy as np
 import pandas as pd
 from numpy.polynomial.legendre import leggauss
 
-from .distribution import DiscretePredictiveDistribution
-
-_DEFAULT_CALIBRATION_PROBABILITIES = tuple(level / 20 for level in range(1, 20))
+_DEFAULT_QUANTILE_LEVELS = tuple(level / 20 for level in range(1, 20))
 
 
 def _require_columns(
@@ -280,42 +278,39 @@ class TwoStageForecasterEvaluator:
             )
 
     @classmethod
-    def _pit_values(
+    def evaluate_quantiles(
         cls,
         forecast,
         evaluation_df: pd.DataFrame,
         target_col: str = "y",
         id_col: str = "unique_id",
         time_col: str = "ds",
-        random_state=0,
+        levels: tuple = _DEFAULT_QUANTILE_LEVELS,
     ) -> pd.DataFrame:
-        """Return internal row-aligned probability integral transform values.
+        """Evaluate marginal quantile calibration independently per series.
 
-        Continuous forecasts use ``F(y)``. Discrete forecasts use the
-        randomized PIT ``F(y - 1) + U * (F(y) - F(y - 1))`` so that calibrated
-        integer-valued forecasts have a uniform PIT despite probability mass
-        ties. ``random_state`` makes that randomization reproducible.
-
-        Parameters
-        ----------
-        forecast : PanelPredictiveForecast
-            Row-aligned predictive forecast to evaluate.
-        evaluation_df : pandas.DataFrame
-            Realized targets aligned exactly with the forecast panel.
-        target_col : str, default="y"
-            Observed target column.
-        id_col : str, default="unique_id"
-            Series identifier column.
-        time_col : str, default="ds"
-            Timestamp column used to validate positional alignment.
-        random_state : int, numpy.random.Generator, or None, default=0
-            Random source used only for discrete PIT values.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Series identifiers, timestamps, and one ``pit`` value per row.
+        ``coverage_rate`` is the observed frequency with which the realization
+        is at or below the forecast quantile. For continuous distributions,
+        ``absolute_error`` compares that rate with the requested level. For
+        discrete distributions, it compares against the attainable coverage
+        ``F(Q(level))`` averaged over the series, avoiding an artificial error
+        when probability masses make the nominal level unattainable.
         """
+        levels = np.asarray(levels, dtype=float)
+        if (
+            levels.ndim != 1
+            or levels.size == 0
+            or not np.all(np.isfinite(levels))
+            or np.any((levels <= 0.0) | (levels >= 1.0))
+        ):
+            raise ValueError(
+                "levels must be a non-empty one-dimensional sequence "
+                "strictly between 0 and 1."
+            )
+        if np.unique(levels).size != levels.size:
+            raise ValueError("levels must not contain duplicates.")
+        levels = np.sort(levels)
+
         _require_columns(
             evaluation_df, (id_col, time_col, target_col), "evaluation_df"
         )
@@ -328,99 +323,50 @@ class TwoStageForecasterEvaluator:
             evaluation_df, target_col, "evaluation_df", require_finite=True
         )
         distribution = forecast.distribution
-
-        if isinstance(distribution, DiscretePredictiveDistribution):
-            if np.any(y_true != np.floor(y_true)):
-                raise ValueError(
-                    "Targets must be integers for randomized discrete PIT."
-                )
-            rng = (
-                random_state
-                if isinstance(random_state, np.random.Generator)
-                else np.random.default_rng(random_state)
-            )
-            lower = np.asarray(distribution.cdf((y_true - 1.0)[:, None]), dtype=float)
-            upper = np.asarray(distribution.cdf(y_true[:, None]), dtype=float)
-            pit = lower + rng.random(len(y_true)) * (upper - lower)
-        else:
-            pit = np.asarray(distribution.cdf(y_true[:, None]), dtype=float)
-
-        if pit.shape != y_true.shape or not np.all(np.isfinite(pit)):
+        quantiles = np.asarray(distribution.ppf(levels), dtype=float)
+        expected_shape = (len(y_true), len(levels))
+        if quantiles.shape != expected_shape or not np.all(np.isfinite(quantiles)):
             raise ValueError(
-                "The predictive distribution returned invalid or misaligned PIT values."
+                "The predictive distribution returned invalid or misaligned quantiles."
             )
-        if np.any((pit < 0.0) | (pit > 1.0)):
-            raise ValueError("PIT values must lie in [0, 1].")
-
-        result = evaluation_df[[id_col, time_col]].reset_index(drop=True).copy()
-        result["pit"] = pit
-        return result
-
-    @classmethod
-    def evaluate_calibration(
-        cls,
-        forecast,
-        evaluation_df: pd.DataFrame,
-        target_col: str = "y",
-        id_col: str = "unique_id",
-        time_col: str = "ds",
-        probabilities: tuple = _DEFAULT_CALIBRATION_PROBABILITIES,
-        random_state=0,
-    ) -> pd.DataFrame:
-        """Return a marginal calibration curve independently per series.
-
-        At each requested probability, the empirical CDF of the PIT values is
-        compared with the uniform calibration target. ``absolute_error`` is
-        therefore expressed as a probability difference: for example, ``0.03``
-        means a three-percentage-point calibration deviation at that level.
-        Discrete forecasts use randomized PIT values with reproducibility
-        controlled by ``random_state``.
-        """
-        probabilities = np.asarray(probabilities, dtype=float)
+        attainable_coverage = np.asarray(distribution.cdf(quantiles), dtype=float)
         if (
-            probabilities.ndim != 1
-            or probabilities.size == 0
-            or not np.all(np.isfinite(probabilities))
-            or np.any((probabilities <= 0.0) | (probabilities >= 1.0))
+            attainable_coverage.shape != expected_shape
+            or not np.all(np.isfinite(attainable_coverage))
+            or np.any((attainable_coverage < 0.0) | (attainable_coverage > 1.0))
         ):
             raise ValueError(
-                "probabilities must be a non-empty one-dimensional sequence "
-                "strictly between 0 and 1."
+                "The predictive distribution returned invalid quantile coverage."
             )
-        if np.unique(probabilities).size != probabilities.size:
-            raise ValueError("probabilities must not contain duplicates.")
-        probabilities = np.sort(probabilities)
 
-        pit = cls._pit_values(
-            forecast=forecast,
-            evaluation_df=evaluation_df,
-            target_col=target_col,
-            id_col=id_col,
-            time_col=time_col,
-            random_state=random_state,
+        row_data = pd.DataFrame(
+            {id_col: evaluation_df[id_col].to_numpy(), "_row": np.arange(len(y_true))}
         )
         rows = []
-        for unique_id, group in pit.groupby(id_col, observed=True, sort=False):
-            values = group["pit"].to_numpy()
-            observed = np.mean(values[:, None] <= probabilities[None, :], axis=0)
+        for unique_id, group in row_data.groupby(id_col, observed=True, sort=False):
+            positions = group["_row"].to_numpy()
+            observed = np.mean(
+                y_true[positions, None] <= quantiles[positions], axis=0
+            )
+            expected = np.mean(attainable_coverage[positions], axis=0)
             rows.extend(
                 {
                     id_col: unique_id,
-                    "probability": probability,
-                    "observed_probability": observed_probability,
-                    "absolute_error": abs(observed_probability - probability),
-                    "n_observations": len(values),
+                    "level": level,
+                    "coverage_rate": coverage_rate,
+                    "absolute_error": abs(coverage_rate - expected_coverage),
+                    "n_observations": len(positions),
                 }
-                for probability, observed_probability in zip(
-                    probabilities, observed
+                for level, coverage_rate, expected_coverage in zip(
+                    levels, observed, expected
                 )
             )
         return pd.DataFrame(
             rows,
             columns=[
                 id_col,
-                "probability",
-                "observed_probability",
+                "level",
+                "coverage_rate",
                 "absolute_error",
                 "n_observations",
             ],
@@ -478,8 +424,7 @@ class TwoStageForecasterEvaluator:
         target_col: str = "y",
         id_col: str = "unique_id",
         time_col: str = "ds",
-        calibration_probabilities: tuple = _DEFAULT_CALIBRATION_PROBABILITIES,
-        random_state=0,
+        quantile_levels: tuple = _DEFAULT_QUANTILE_LEVELS,
     ) -> pd.DataFrame:
         """Evaluate a predictive distribution with CRPS and per-series nCRPS.
 
@@ -499,10 +444,8 @@ class TwoStageForecasterEvaluator:
             Series identifier column.
         time_col : str, default='ds'
             Timestamp column used to validate positional alignment.
-        calibration_probabilities : tuple of float, optional
-            Probability grid used to calculate mean absolute calibration error.
-        random_state : int, numpy.random.Generator, or None, default=0
-            Random source used for discrete-distribution calibration.
+        quantile_levels : tuple of float, optional
+            Quantile levels used to calculate mean absolute calibration error.
 
         Returns
         -------
@@ -530,14 +473,13 @@ class TwoStageForecasterEvaluator:
         scores = cls._aggregate_distribution_scores(
             evaluation_df[id_col], row_crps, train_scales, id_col
         )
-        calibration = cls.evaluate_calibration(
+        calibration = cls.evaluate_quantiles(
             forecast=forecast,
             evaluation_df=evaluation_df,
             target_col=target_col,
             id_col=id_col,
             time_col=time_col,
-            probabilities=calibration_probabilities,
-            random_state=random_state,
+            levels=quantile_levels,
         )
         calibration_error = (
             calibration.groupby(id_col, observed=True, sort=False)["absolute_error"]

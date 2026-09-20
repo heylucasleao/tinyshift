@@ -857,7 +857,7 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
     assert np.isnan(result.loc[1, "ncrps"])
 
 
-def test_tsf_evaluator_reports_continuous_calibration_curve(gamma_distribution):
+def test_tsf_evaluator_reports_continuous_quantile_calibration(gamma_distribution):
     frame = pd.DataFrame(
         {
             "unique_id": ["A", "A"],
@@ -875,28 +875,31 @@ def test_tsf_evaluator_reports_continuous_calibration_curve(gamma_distribution):
     evaluation = frame[["unique_id", "ds"]].copy()
     evaluation["y"] = [2.0, 5.0]
 
-    summary = TwoStageForecasterEvaluator.evaluate_calibration(
-        forecast, evaluation, probabilities=(0.25, 0.5, 0.75)
+    levels = np.array([0.25, 0.5, 0.75])
+    summary = TwoStageForecasterEvaluator.evaluate_quantiles(
+        forecast, evaluation, levels=tuple(levels)
     )
 
-    pit = gamma_distribution.cdf(np.array([[2.0], [5.0]]))
-    expected_observed = np.mean(pit[:, None] <= np.array([0.25, 0.5, 0.75]), axis=0)
+    quantiles = gamma_distribution.ppf(levels)
+    expected_observed = np.mean(
+        evaluation["y"].to_numpy()[:, None] <= quantiles, axis=0
+    )
     assert summary.columns.tolist() == [
         "unique_id",
-        "probability",
-        "observed_probability",
+        "level",
+        "coverage_rate",
         "absolute_error",
         "n_observations",
     ]
-    np.testing.assert_allclose(summary["observed_probability"], expected_observed)
+    np.testing.assert_allclose(summary["coverage_rate"], expected_observed)
     np.testing.assert_allclose(
         summary["absolute_error"],
-        np.abs(expected_observed - np.array([0.25, 0.5, 0.75])),
+        np.abs(expected_observed - levels),
     )
     assert summary["n_observations"].tolist() == [2, 2, 2]
 
 
-def test_tsf_evaluator_randomizes_discrete_calibration_reproducibly(
+def test_tsf_evaluator_uses_attainable_discrete_quantile_coverage(
     count_distribution,
 ):
     frame = pd.DataFrame(
@@ -916,39 +919,21 @@ def test_tsf_evaluator_randomizes_discrete_calibration_reproducibly(
     evaluation = frame[["unique_id", "ds"]].copy()
     evaluation["y"] = [0, 3]
 
-    first = TwoStageForecasterEvaluator.evaluate_calibration(
-        forecast, evaluation, probabilities=(0.25, 0.5, 0.75), random_state=42
-    )
-    second = TwoStageForecasterEvaluator.evaluate_calibration(
-        forecast, evaluation, probabilities=(0.25, 0.5, 0.75), random_state=42
+    levels = np.array([0.25, 0.5, 0.75])
+    result = TwoStageForecasterEvaluator.evaluate_quantiles(
+        forecast, evaluation, levels=tuple(levels)
     )
 
-    pd.testing.assert_frame_equal(first, second)
-    assert first["observed_probability"].between(0.0, 1.0).all()
-    assert first["absolute_error"].between(0.0, 1.0).all()
+    quantiles = count_distribution.ppf(levels)
+    attainable = count_distribution.cdf(quantiles)
+    observed = evaluation["y"].to_numpy()[:, None] <= quantiles
+    expected_error = np.abs(observed.astype(float) - attainable)
+
+    np.testing.assert_allclose(result["coverage_rate"], observed.ravel())
+    np.testing.assert_allclose(result["absolute_error"], expected_error.ravel())
 
 
-def test_tsf_evaluator_rejects_non_integer_target_for_discrete_pit(
-    count_distribution,
-):
-    frame = pd.DataFrame(
-        {"unique_id": ["A", "B"], "ds": [1, 1], "lambda_t": [2.0, 4.0]}
-    )
-    forecast = PanelPredictiveForecast(
-        frame,
-        count_distribution,
-        model="lambda_t",
-        id_col="unique_id",
-        time_col="ds",
-    )
-    evaluation = frame[["unique_id", "ds"]].copy()
-    evaluation["y"] = [0.5, 3.0]
-
-    with pytest.raises(ValueError, match="integers"):
-        TwoStageForecasterEvaluator.evaluate_calibration(forecast, evaluation)
-
-
-def test_tsf_evaluator_rejects_invalid_calibration_probabilities(
+def test_tsf_evaluator_rejects_invalid_quantile_levels(
     gamma_distribution,
 ):
     frame = pd.DataFrame(
@@ -965,12 +950,12 @@ def test_tsf_evaluator_rejects_invalid_calibration_probabilities(
     evaluation["y"] = [2.0, 4.0]
 
     with pytest.raises(ValueError, match="strictly between"):
-        TwoStageForecasterEvaluator.evaluate_calibration(
-            forecast, evaluation, probabilities=(0.0, 0.5)
+        TwoStageForecasterEvaluator.evaluate_quantiles(
+            forecast, evaluation, levels=(0.0, 0.5)
         )
     with pytest.raises(ValueError, match="duplicates"):
-        TwoStageForecasterEvaluator.evaluate_calibration(
-            forecast, evaluation, probabilities=(0.5, 0.5)
+        TwoStageForecasterEvaluator.evaluate_quantiles(
+            forecast, evaluation, levels=(0.5, 0.5)
         )
 
 
