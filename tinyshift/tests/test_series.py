@@ -460,6 +460,9 @@ class TestIntermittencyAnalyzer:
 
         assert result.columns.tolist() == [
             "unique_id",
+            "n_observations",
+            "n_pos",
+            "mean_pos",
             "adi",
             "cv2",
             "zero_proportion",
@@ -469,6 +472,42 @@ class TestIntermittencyAnalyzer:
         np.testing.assert_array_equal(
             IntermittencyAnalyzer().fit(frame).results_["a"]["intervals"], [1]
         )
+        assert result.loc[0, "n_observations"] == 4
+        assert result.loc[0, "n_pos"] == 2
+        assert result.loc[0, "mean_pos"] == pytest.approx(1.0)
+
+    def test_single_positive_event_is_not_classified(self):
+        frame = pd.DataFrame(
+            {"unique_id": "a", "ds": np.arange(4), "y": [0.0, 5.0, 0.0, 0.0]}
+        )
+
+        result = IntermittencyAnalyzer().fit(frame).summary().iloc[0]
+
+        assert result["n_observations"] == 4
+        assert result["n_pos"] == 1
+        assert result["mean_pos"] == pytest.approx(5.0)
+        assert np.isnan(result["cv2"])
+        assert result["classification"] is None
+
+    def test_all_zero_series_has_no_positive_mean(self):
+        frame = pd.DataFrame(
+            {"unique_id": "a", "ds": np.arange(4), "y": np.zeros(4)}
+        )
+
+        result = IntermittencyAnalyzer().fit(frame).summary().iloc[0]
+
+        assert result["n_observations"] == 4
+        assert result["n_pos"] == 0
+        assert np.isnan(result["mean_pos"])
+        assert np.isnan(result["cv2"])
+        assert result["classification"] is None
+
+    def test_thresholds_are_inclusive(self):
+        analyzer = IntermittencyAnalyzer()
+
+        assert analyzer._classify(adi=1.32, cv2=0.49) == "smooth"
+        assert analyzer._classify(adi=1.33, cv2=0.49) == "intermittent"
+        assert analyzer._classify(adi=1.32, cv2=0.50) == "erratic"
 
     def test_column_names_are_fit_parameters(self):
         frame = pd.DataFrame({"item": ["a", "a"], "date": [1, 2], "demand": [0.0, 1.0]})
@@ -593,6 +632,9 @@ class TestAnalyzerComposition:
 
         assert result.columns.tolist() == [
             "unique_id",
+            "n_observations",
+            "n_pos",
+            "mean_pos",
             "adi",
             "cv2",
             "zero_proportion",

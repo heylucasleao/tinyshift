@@ -6,6 +6,10 @@ import numpy as np
 import pandas as pd
 from numpy.polynomial.legendre import leggauss
 
+from .distribution import DiscretePredictiveDistribution
+
+_DEFAULT_CALIBRATION_PROBABILITIES = tuple(level / 20 for level in range(1, 20))
+
 
 def _require_columns(
     frame: pd.DataFrame, columns: list | tuple, frame_name: str
@@ -276,6 +280,153 @@ class TwoStageForecasterEvaluator:
             )
 
     @classmethod
+    def _pit_values(
+        cls,
+        forecast,
+        evaluation_df: pd.DataFrame,
+        target_col: str = "y",
+        id_col: str = "unique_id",
+        time_col: str = "ds",
+        random_state=0,
+    ) -> pd.DataFrame:
+        """Return internal row-aligned probability integral transform values.
+
+        Continuous forecasts use ``F(y)``. Discrete forecasts use the
+        randomized PIT ``F(y - 1) + U * (F(y) - F(y - 1))`` so that calibrated
+        integer-valued forecasts have a uniform PIT despite probability mass
+        ties. ``random_state`` makes that randomization reproducible.
+
+        Parameters
+        ----------
+        forecast : PanelPredictiveForecast
+            Row-aligned predictive forecast to evaluate.
+        evaluation_df : pandas.DataFrame
+            Realized targets aligned exactly with the forecast panel.
+        target_col : str, default="y"
+            Observed target column.
+        id_col : str, default="unique_id"
+            Series identifier column.
+        time_col : str, default="ds"
+            Timestamp column used to validate positional alignment.
+        random_state : int, numpy.random.Generator, or None, default=0
+            Random source used only for discrete PIT values.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Series identifiers, timestamps, and one ``pit`` value per row.
+        """
+        _require_columns(
+            evaluation_df, (id_col, time_col, target_col), "evaluation_df"
+        )
+        forecast_frame = forecast.to_frame()
+        _require_columns(forecast_frame, (id_col, time_col), "forecast")
+        cls._validate_distribution_alignment(
+            forecast_frame, evaluation_df, id_col, time_col
+        )
+        y_true = cls._numeric_target(
+            evaluation_df, target_col, "evaluation_df", require_finite=True
+        )
+        distribution = forecast.distribution
+
+        if isinstance(distribution, DiscretePredictiveDistribution):
+            if np.any(y_true != np.floor(y_true)):
+                raise ValueError(
+                    "Targets must be integers for randomized discrete PIT."
+                )
+            rng = (
+                random_state
+                if isinstance(random_state, np.random.Generator)
+                else np.random.default_rng(random_state)
+            )
+            lower = np.asarray(distribution.cdf((y_true - 1.0)[:, None]), dtype=float)
+            upper = np.asarray(distribution.cdf(y_true[:, None]), dtype=float)
+            pit = lower + rng.random(len(y_true)) * (upper - lower)
+        else:
+            pit = np.asarray(distribution.cdf(y_true[:, None]), dtype=float)
+
+        if pit.shape != y_true.shape or not np.all(np.isfinite(pit)):
+            raise ValueError(
+                "The predictive distribution returned invalid or misaligned PIT values."
+            )
+        if np.any((pit < 0.0) | (pit > 1.0)):
+            raise ValueError("PIT values must lie in [0, 1].")
+
+        result = evaluation_df[[id_col, time_col]].reset_index(drop=True).copy()
+        result["pit"] = pit
+        return result
+
+    @classmethod
+    def evaluate_calibration(
+        cls,
+        forecast,
+        evaluation_df: pd.DataFrame,
+        target_col: str = "y",
+        id_col: str = "unique_id",
+        time_col: str = "ds",
+        probabilities: tuple = _DEFAULT_CALIBRATION_PROBABILITIES,
+        random_state=0,
+    ) -> pd.DataFrame:
+        """Return a marginal calibration curve independently per series.
+
+        At each requested probability, the empirical CDF of the PIT values is
+        compared with the uniform calibration target. ``absolute_error`` is
+        therefore expressed as a probability difference: for example, ``0.03``
+        means a three-percentage-point calibration deviation at that level.
+        Discrete forecasts use randomized PIT values with reproducibility
+        controlled by ``random_state``.
+        """
+        probabilities = np.asarray(probabilities, dtype=float)
+        if (
+            probabilities.ndim != 1
+            or probabilities.size == 0
+            or not np.all(np.isfinite(probabilities))
+            or np.any((probabilities <= 0.0) | (probabilities >= 1.0))
+        ):
+            raise ValueError(
+                "probabilities must be a non-empty one-dimensional sequence "
+                "strictly between 0 and 1."
+            )
+        if np.unique(probabilities).size != probabilities.size:
+            raise ValueError("probabilities must not contain duplicates.")
+        probabilities = np.sort(probabilities)
+
+        pit = cls._pit_values(
+            forecast=forecast,
+            evaluation_df=evaluation_df,
+            target_col=target_col,
+            id_col=id_col,
+            time_col=time_col,
+            random_state=random_state,
+        )
+        rows = []
+        for unique_id, group in pit.groupby(id_col, observed=True, sort=False):
+            values = group["pit"].to_numpy()
+            observed = np.mean(values[:, None] <= probabilities[None, :], axis=0)
+            rows.extend(
+                {
+                    id_col: unique_id,
+                    "probability": probability,
+                    "observed_probability": observed_probability,
+                    "absolute_error": abs(observed_probability - probability),
+                    "n_observations": len(values),
+                }
+                for probability, observed_probability in zip(
+                    probabilities, observed
+                )
+            )
+        return pd.DataFrame(
+            rows,
+            columns=[
+                id_col,
+                "probability",
+                "observed_probability",
+                "absolute_error",
+                "n_observations",
+            ],
+        )
+
+    @classmethod
     def _target_scales(
         cls,
         train_df: pd.DataFrame,
@@ -302,7 +453,7 @@ class TwoStageForecasterEvaluator:
         )
         per_series = (
             row_scores.groupby(id_col, observed=True, sort=False)["crps"]
-            .agg(crps="mean", n_obs="size")
+            .agg(crps="mean", n_observations="size")
             .reset_index()
         )
         per_series["target_std"] = per_series[id_col].map(train_scales)
@@ -314,7 +465,9 @@ class TwoStageForecasterEvaluator:
             per_series["crps"] / per_series["target_std"],
             np.nan,
         )
-        return per_series[[id_col, "crps", "target_std", "ncrps", "n_obs"]]
+        return per_series[
+            [id_col, "crps", "target_std", "ncrps", "n_observations"]
+        ]
 
     @classmethod
     def evaluate_distribution(
@@ -325,6 +478,8 @@ class TwoStageForecasterEvaluator:
         target_col: str = "y",
         id_col: str = "unique_id",
         time_col: str = "ds",
+        calibration_probabilities: tuple = _DEFAULT_CALIBRATION_PROBABILITIES,
+        random_state=0,
     ) -> pd.DataFrame:
         """Evaluate a predictive distribution with CRPS and per-series nCRPS.
 
@@ -344,12 +499,17 @@ class TwoStageForecasterEvaluator:
             Series identifier column.
         time_col : str, default='ds'
             Timestamp column used to validate positional alignment.
+        calibration_probabilities : tuple of float, optional
+            Probability grid used to calculate mean absolute calibration error.
+        random_state : int, numpy.random.Generator, or None, default=0
+            Random source used for discrete-distribution calibration.
 
         Returns
         -------
         pandas.DataFrame
             One row per evaluated series with mean CRPS, training-target
-            standard deviation, nCRPS, and number of evaluated observations.
+            standard deviation, nCRPS, mean absolute calibration error, and
+            number of evaluated observations.
             nCRPS is undefined when the series is absent from training or its
             training standard deviation is zero or non-finite.
         """
@@ -367,9 +527,34 @@ class TwoStageForecasterEvaluator:
         )
         row_crps = cls._crps(forecast.distribution, y_true)
         train_scales = cls._target_scales(train_df, target_col, id_col)
-        return cls._aggregate_distribution_scores(
+        scores = cls._aggregate_distribution_scores(
             evaluation_df[id_col], row_crps, train_scales, id_col
         )
+        calibration = cls.evaluate_calibration(
+            forecast=forecast,
+            evaluation_df=evaluation_df,
+            target_col=target_col,
+            id_col=id_col,
+            time_col=time_col,
+            probabilities=calibration_probabilities,
+            random_state=random_state,
+        )
+        calibration_error = (
+            calibration.groupby(id_col, observed=True, sort=False)["absolute_error"]
+            .mean()
+            .rename("calibration_error")
+        )
+        scores["calibration_error"] = scores[id_col].map(calibration_error)
+        return scores[
+            [
+                id_col,
+                "crps",
+                "target_std",
+                "ncrps",
+                "calibration_error",
+                "n_observations",
+            ]
+        ]
 
     @classmethod
     def evaluate_interval(
@@ -377,8 +562,13 @@ class TwoStageForecasterEvaluator:
         df_res: pd.DataFrame,
         target_col: str = "y",
         quantiles: tuple = (0.05, 0.50, 0.95),
+        id_col: str = "unique_id",
     ) -> pd.DataFrame:
         """Evaluate central intervals over out-of-sample backtest predictions.
+
+        Results are calculated independently per series when ``id_col`` is
+        present. If it is absent, a single panel-wide result is returned for
+        backward compatibility.
 
         Parameters
         ----------
@@ -389,12 +579,16 @@ class TwoStageForecasterEvaluator:
             Name of the column containing real observed values.
         quantiles : list of float, default=[0.05, 0.50, 0.95]
             Quantile levels used to construct symmetric central intervals.
+        id_col : str, default="unique_id"
+            Series identifier. Evaluation is panel-wide when this column is
+            absent from ``df_res``.
 
         Returns
         -------
         pandas.DataFrame
-            Summary dataframe containing level, empirical coverage, mean
-            interval width, and MWIS for each available interval.
+            Summary containing empirical coverage, lower and upper miss rates,
+            mean interval width, MWIS, and observation count for every
+            available interval, independently per series when possible.
         """
         results = []
 
@@ -429,38 +623,61 @@ class TwoStageForecasterEvaluator:
             if lower_col not in df_res.columns or upper_col not in df_res.columns:
                 continue
 
-            valid = df_res[[target_col, lower_col, upper_col]].dropna()
             alpha = 2.0 * lower_quantile
             target_coverage = 1.0 - alpha
-            if valid.empty:
-                empirical_coverage = np.nan
-                interval_width = np.nan
-            else:
-                empirical_coverage = float(
-                    (
-                        (valid[target_col] >= valid[lower_col])
-                        & (valid[target_col] <= valid[upper_col])
-                    ).mean()
-                )
-                interval_width = float((valid[upper_col] - valid[lower_col]).mean())
 
-            results.append(
-                {
+            if id_col in df_res.columns:
+                groups = df_res.groupby(id_col, observed=True, sort=False)
+            else:
+                groups = [(None, df_res)]
+
+            for unique_id, group in groups:
+                valid = group[[target_col, lower_col, upper_col]].dropna()
+                if valid.empty:
+                    empirical_coverage = np.nan
+                    lower_miss_rate = np.nan
+                    upper_miss_rate = np.nan
+                    interval_width = np.nan
+                else:
+                    lower_misses = valid[target_col] < valid[lower_col]
+                    upper_misses = valid[target_col] > valid[upper_col]
+                    empirical_coverage = float((~lower_misses & ~upper_misses).mean())
+                    lower_miss_rate = float(lower_misses.mean())
+                    upper_miss_rate = float(upper_misses.mean())
+                    interval_width = float(
+                        (valid[upper_col] - valid[lower_col]).mean()
+                    )
+
+                result = {
                     "level": target_coverage,
                     "coverage_rate": round(empirical_coverage, 4),
+                    "lower_miss_rate": round(lower_miss_rate, 4),
+                    "upper_miss_rate": round(upper_miss_rate, 4),
                     "interval_width_mean": round(interval_width, 4),
                     "mwis": round(
                         cls.mwis(
-                            df_res[target_col].values,
-                            df_res[lower_col].values,
-                            df_res[upper_col].values,
+                            group[target_col].values,
+                            group[lower_col].values,
+                            group[upper_col].values,
                             alpha,
                         ),
                         4,
                     ),
+                    "n_observations": len(valid),
                 }
-            )
+                if unique_id is not None:
+                    result = {id_col: unique_id, **result}
+                results.append(result)
 
-        return pd.DataFrame(
-            results, columns=["level", "coverage_rate", "interval_width_mean", "mwis"]
-        )
+        columns = [
+            "level",
+            "coverage_rate",
+            "lower_miss_rate",
+            "upper_miss_rate",
+            "interval_width_mean",
+            "mwis",
+            "n_observations",
+        ]
+        if id_col in df_res.columns:
+            columns.insert(0, id_col)
+        return pd.DataFrame(results, columns=columns)

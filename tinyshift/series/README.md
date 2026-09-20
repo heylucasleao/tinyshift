@@ -160,7 +160,7 @@ for section in summaries[1:]:
     summary = summary.merge(section, on="unique_id", validate="one_to_one")
 ```
 
-The result contains `adi`, `cv2`, `zero_proportion`, `interval_cv`, `classification`, `foreca`,
+The result contains `n_observations`, `n_pos`, `mean_pos`, `adi`, `cv2`, `zero_proportion`, `interval_cv`, `classification`, `foreca`,
 `limit`, `spectral_concentration`, the linear-trend diagnostics, and candidate
 and significant seasonal periods. Variance-ratio analysis remains available
 independently through `VarianceRatioAnalyzer`. Temporal-stability windows also

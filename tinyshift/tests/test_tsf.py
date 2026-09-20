@@ -772,8 +772,34 @@ def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
 
     assert result.loc[0, "level"] == pytest.approx(0.9)
     assert result.loc[0, "coverage_rate"] == 0.5
+    assert result.loc[0, "lower_miss_rate"] == 0.0
+    assert result.loc[0, "upper_miss_rate"] == 0.5
     assert result.loc[0, "interval_width_mean"] == pytest.approx(1.5)
     assert result.loc[0, "mwis"] == pytest.approx(6.5)
+    assert result.loc[0, "n_observations"] == 2
+
+
+def test_tsf_evaluator_reports_intervals_independently_by_series():
+    frame = pd.DataFrame(
+        {
+            "unique_id": ["A", "A", "B", "B"],
+            "y": [1.0, 3.0, -1.0, 1.0],
+            "Q(0.05)": [0.0, 0.0, 0.0, 0.0],
+            "Q(0.95)": [2.0, 2.0, 2.0, 2.0],
+        }
+    )
+
+    result = TwoStageForecasterEvaluator.evaluate_interval(
+        frame, quantiles=[0.05, 0.95]
+    ).set_index("unique_id")
+
+    assert result.loc["A", "coverage_rate"] == 0.5
+    assert result.loc["A", "lower_miss_rate"] == 0.0
+    assert result.loc["A", "upper_miss_rate"] == 0.5
+    assert result.loc["B", "coverage_rate"] == 0.5
+    assert result.loc["B", "lower_miss_rate"] == 0.5
+    assert result.loc["B", "upper_miss_rate"] == 0.0
+    assert result["n_observations"].tolist() == [2, 2]
 
 
 def test_tsf_evaluator_rejects_invalid_quantile():
@@ -815,7 +841,8 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
         "crps",
         "target_std",
         "ncrps",
-        "n_obs",
+        "calibration_error",
+        "n_observations",
     ]
     assert result.loc[0, "unique_id"] == "A"
     assert result.loc[0, "crps"] >= 0.0
@@ -823,10 +850,128 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
     assert result.loc[0, "ncrps"] == pytest.approx(
         result.loc[0, "crps"] / np.sqrt(2.0)
     )
-    assert result.loc[0, "n_obs"] == 1
+    assert result.loc[0, "n_observations"] == 1
+    assert 0.0 <= result.loc[0, "calibration_error"] <= 1.0
     assert result.loc[1, "unique_id"] == "C"
     assert np.isnan(result.loc[1, "target_std"])
     assert np.isnan(result.loc[1, "ncrps"])
+
+
+def test_tsf_evaluator_reports_continuous_calibration_curve(gamma_distribution):
+    frame = pd.DataFrame(
+        {
+            "unique_id": ["A", "A"],
+            "ds": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+            "lambda_t": [2.0, 4.0],
+        }
+    )
+    forecast = PanelPredictiveForecast(
+        frame,
+        gamma_distribution,
+        model="lambda_t",
+        id_col="unique_id",
+        time_col="ds",
+    )
+    evaluation = frame[["unique_id", "ds"]].copy()
+    evaluation["y"] = [2.0, 5.0]
+
+    summary = TwoStageForecasterEvaluator.evaluate_calibration(
+        forecast, evaluation, probabilities=(0.25, 0.5, 0.75)
+    )
+
+    pit = gamma_distribution.cdf(np.array([[2.0], [5.0]]))
+    expected_observed = np.mean(pit[:, None] <= np.array([0.25, 0.5, 0.75]), axis=0)
+    assert summary.columns.tolist() == [
+        "unique_id",
+        "probability",
+        "observed_probability",
+        "absolute_error",
+        "n_observations",
+    ]
+    np.testing.assert_allclose(summary["observed_probability"], expected_observed)
+    np.testing.assert_allclose(
+        summary["absolute_error"],
+        np.abs(expected_observed - np.array([0.25, 0.5, 0.75])),
+    )
+    assert summary["n_observations"].tolist() == [2, 2, 2]
+
+
+def test_tsf_evaluator_randomizes_discrete_calibration_reproducibly(
+    count_distribution,
+):
+    frame = pd.DataFrame(
+        {
+            "unique_id": ["A", "B"],
+            "ds": [1, 1],
+            "lambda_t": [2.0, 4.0],
+        }
+    )
+    forecast = PanelPredictiveForecast(
+        frame,
+        count_distribution,
+        model="lambda_t",
+        id_col="unique_id",
+        time_col="ds",
+    )
+    evaluation = frame[["unique_id", "ds"]].copy()
+    evaluation["y"] = [0, 3]
+
+    first = TwoStageForecasterEvaluator.evaluate_calibration(
+        forecast, evaluation, probabilities=(0.25, 0.5, 0.75), random_state=42
+    )
+    second = TwoStageForecasterEvaluator.evaluate_calibration(
+        forecast, evaluation, probabilities=(0.25, 0.5, 0.75), random_state=42
+    )
+
+    pd.testing.assert_frame_equal(first, second)
+    assert first["observed_probability"].between(0.0, 1.0).all()
+    assert first["absolute_error"].between(0.0, 1.0).all()
+
+
+def test_tsf_evaluator_rejects_non_integer_target_for_discrete_pit(
+    count_distribution,
+):
+    frame = pd.DataFrame(
+        {"unique_id": ["A", "B"], "ds": [1, 1], "lambda_t": [2.0, 4.0]}
+    )
+    forecast = PanelPredictiveForecast(
+        frame,
+        count_distribution,
+        model="lambda_t",
+        id_col="unique_id",
+        time_col="ds",
+    )
+    evaluation = frame[["unique_id", "ds"]].copy()
+    evaluation["y"] = [0.5, 3.0]
+
+    with pytest.raises(ValueError, match="integers"):
+        TwoStageForecasterEvaluator.evaluate_calibration(forecast, evaluation)
+
+
+def test_tsf_evaluator_rejects_invalid_calibration_probabilities(
+    gamma_distribution,
+):
+    frame = pd.DataFrame(
+        {"unique_id": ["A", "B"], "ds": [1, 1], "lambda_t": [2.0, 4.0]}
+    )
+    forecast = PanelPredictiveForecast(
+        frame,
+        gamma_distribution,
+        model="lambda_t",
+        id_col="unique_id",
+        time_col="ds",
+    )
+    evaluation = frame[["unique_id", "ds"]].copy()
+    evaluation["y"] = [2.0, 4.0]
+
+    with pytest.raises(ValueError, match="strictly between"):
+        TwoStageForecasterEvaluator.evaluate_calibration(
+            forecast, evaluation, probabilities=(0.0, 0.5)
+        )
+    with pytest.raises(ValueError, match="duplicates"):
+        TwoStageForecasterEvaluator.evaluate_calibration(
+            forecast, evaluation, probabilities=(0.5, 0.5)
+        )
 
 
 def test_tsf_distribution_evaluator_requires_forecast_alignment(gamma_distribution):
@@ -1328,6 +1473,9 @@ def test_two_stage_evaluator_handles_all_nan_pairs():
 
     assert np.isnan(result.loc[0, "mwis"])
     assert np.isnan(result.loc[0, "coverage_rate"])
+    assert np.isnan(result.loc[0, "lower_miss_rate"])
+    assert np.isnan(result.loc[0, "upper_miss_rate"])
+    assert result.loc[0, "n_observations"] == 0
 
 
 def test_wrapper_supports_custom_column_names():

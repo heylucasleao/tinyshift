@@ -57,7 +57,29 @@ evaluation_frame["y"] = observed_values
 probabilistic_metrics = TwoStageForecasterEvaluator.evaluate_interval(
     evaluation_frame
 )
+
+# Full-distribution scoring and calibration preserve panel identity.
+evaluation_df = forecast.to_frame()[["unique_id", "ds"]]
+evaluation_df["y"] = observed_values
+distribution_metrics = TwoStageForecasterEvaluator.evaluate_distribution(
+    forecast,
+    evaluation_df,
+    train_df,
+)
+calibration = TwoStageForecasterEvaluator.evaluate_calibration(
+    forecast,
+    evaluation_df,
+)
 ```
+
+`evaluate_calibration()` returns a per-series calibration curve with nominal
+probability, observed probability, absolute error, and `n_observations`. It
+uses the ordinary PIT for continuous distributions and a reproducible
+randomized PIT for discrete distributions. `evaluate_distribution()` reports
+the curve's mean absolute deviation as `calibration_error`. Interval summaries
+also report the number of valid target-bound triples used at each level. When `unique_id` is present,
+interval coverage, lower and upper miss rates, width, and MWIS are reported
+independently for every series.
 
 The default family is Negative Binomial, so the returned forecast is discrete.
 Pass `distribution=GammaFamily()`, `LogNormalFamily()`, or `WeibullFamily()`

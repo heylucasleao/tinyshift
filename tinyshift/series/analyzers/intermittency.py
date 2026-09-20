@@ -24,7 +24,9 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
 
     The analyzer summarizes intermittent demand using complementary diagnostics
     related to demand occurrence, demand magnitude, zero frequency, and the
-    regularity of spacing between positive-demand observations.
+    regularity of spacing between positive-demand observations. Observation
+    counts and the mean positive demand are included to make the derived
+    diagnostics auditable.
 
     Input follows the panel convention: one identifier column, one time column,
     and one numeric target column. Each series is analyzed independently.
@@ -51,7 +53,7 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
         - ``"lumpy"``
 
         ``None`` is used when the classification is undefined, such as when
-        the series contains no positive demand.
+        the series contains fewer than two positive-demand observations.
 
     Notes
     -----
@@ -96,9 +98,9 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
     IntermittencyAnalyzer(...)
 
     >>> analyzer.summary()
-      unique_id  adi   cv2  zero_proportion  interval_cv classification
-    0     item_a  ...   ...              ...          ...            ...
-    1     item_b  ...   ...              ...          ...            ...
+      unique_id  n_observations  n_pos  mean_pos  adi   cv2  ... classification
+    0     item_a     ...    ...       ...  ...   ...  ...            ...
+    1     item_b     ...    ...       ...  ...   ...  ...            ...
     """
 
     def __init__(
@@ -207,7 +209,7 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
         """
         positive_demand = X[X > 0]
 
-        if positive_demand.size == 0:
+        if positive_demand.size < 2:
             return float("nan")
 
         mean_demand = np.mean(positive_demand)
@@ -268,13 +270,13 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
         if not np.isfinite(adi) or np.isnan(cv2):
             return None
 
-        if adi < self.adi_threshold:
-            if cv2 < self.cv2_threshold:
+        if adi <= self.adi_threshold:
+            if cv2 <= self.cv2_threshold:
                 return "smooth"
 
             return "erratic"
 
-        if cv2 < self.cv2_threshold:
+        if cv2 <= self.cv2_threshold:
             return "intermittent"
 
         return "lumpy"
@@ -290,6 +292,18 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
 
         intervals = self._inter_demand_intervals(demand)
 
+        positive_demand = demand[demand > 0]
+
+        n_observations = int(demand.size)
+
+        n_pos = int(positive_demand.size)
+
+        mean_pos = (
+            float(np.mean(positive_demand))
+            if positive_demand.size > 0
+            else float("nan")
+        )
+
         adi = self._average_demand_interval(demand)
 
         cv2 = self._squared_coefficient_of_variation(demand)
@@ -304,6 +318,9 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
         )
 
         return {
+            "n_observations": n_observations,
+            "n_pos": n_pos,
+            "mean_pos": mean_pos,
             "adi": adi,
             "cv2": cv2,
             "zero_proportion": zero_proportion,
@@ -340,6 +357,9 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
             )
 
         columns = [
+            "n_observations",
+            "n_pos",
+            "mean_pos",
             "adi",
             "cv2",
             "zero_proportion",
