@@ -772,8 +772,6 @@ def test_tsf_evaluator_reports_mwis_for_symmetric_quantile_intervals():
 
     assert result.loc[0, "level"] == pytest.approx(0.9)
     assert result.loc[0, "coverage_rate"] == 0.5
-    assert result.loc[0, "lower_miss_rate"] == 0.0
-    assert result.loc[0, "upper_miss_rate"] == 0.5
     assert result.loc[0, "interval_width_mean"] == pytest.approx(1.5)
     assert result.loc[0, "mwis"] == pytest.approx(6.5)
     assert result.loc[0, "n_observations"] == 2
@@ -794,11 +792,7 @@ def test_tsf_evaluator_reports_intervals_independently_by_series():
     ).set_index("unique_id")
 
     assert result.loc["A", "coverage_rate"] == 0.5
-    assert result.loc["A", "lower_miss_rate"] == 0.0
-    assert result.loc["A", "upper_miss_rate"] == 0.5
     assert result.loc["B", "coverage_rate"] == 0.5
-    assert result.loc["B", "lower_miss_rate"] == 0.5
-    assert result.loc["B", "upper_miss_rate"] == 0.0
     assert result["n_observations"].tolist() == [2, 2]
 
 
@@ -1354,8 +1348,6 @@ def test_two_stage_evaluator_handles_all_nan_pairs():
 
     assert np.isnan(result.loc[0, "mwis"])
     assert np.isnan(result.loc[0, "coverage_rate"])
-    assert np.isnan(result.loc[0, "lower_miss_rate"])
-    assert np.isnan(result.loc[0, "upper_miss_rate"])
     assert result.loc[0, "n_observations"] == 0
 
 

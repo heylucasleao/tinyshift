@@ -448,9 +448,9 @@ class TwoStageForecasterEvaluator:
         Returns
         -------
         pandas.DataFrame
-            Summary containing empirical coverage, lower and upper miss rates,
-            mean interval width, MWIS, and observation count for every
-            available interval, independently per series when possible.
+            Summary containing empirical coverage, mean interval width, MWIS,
+            and observation count for every available interval, independently
+            per series when possible.
 
         Columns
         -------
@@ -462,10 +462,6 @@ class TwoStageForecasterEvaluator:
         **coverage_rate** : ``float``
             Fraction of valid observations inside the interval, including its
             boundaries.
-        **lower_miss_rate** : ``float``
-            Fraction of valid observations below the lower interval bound.
-        **upper_miss_rate** : ``float``
-            Fraction of valid observations above the upper interval bound.
         **interval_width_mean** : ``float``
             Mean upper bound minus lower bound.
         **mwis** : ``float``
@@ -518,22 +514,19 @@ class TwoStageForecasterEvaluator:
                 valid = group[[target_col, lower_col, upper_col]].dropna()
                 if valid.empty:
                     empirical_coverage = np.nan
-                    lower_miss_rate = np.nan
-                    upper_miss_rate = np.nan
                     interval_width = np.nan
                 else:
-                    lower_misses = valid[target_col] < valid[lower_col]
-                    upper_misses = valid[target_col] > valid[upper_col]
-                    empirical_coverage = float((~lower_misses & ~upper_misses).mean())
-                    lower_miss_rate = float(lower_misses.mean())
-                    upper_miss_rate = float(upper_misses.mean())
+                    empirical_coverage = float(
+                        (
+                            (valid[target_col] >= valid[lower_col])
+                            & (valid[target_col] <= valid[upper_col])
+                        ).mean()
+                    )
                     interval_width = float((valid[upper_col] - valid[lower_col]).mean())
 
                 result = {
                     "level": target_coverage,
                     "coverage_rate": round(empirical_coverage, 4),
-                    "lower_miss_rate": round(lower_miss_rate, 4),
-                    "upper_miss_rate": round(upper_miss_rate, 4),
                     "interval_width_mean": round(interval_width, 4),
                     "mwis": round(
                         cls.mwis(
@@ -553,8 +546,6 @@ class TwoStageForecasterEvaluator:
         columns = [
             "level",
             "coverage_rate",
-            "lower_miss_rate",
-            "upper_miss_rate",
             "interval_width_mean",
             "mwis",
             "n_observations",

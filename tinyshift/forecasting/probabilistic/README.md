@@ -70,8 +70,7 @@ distribution_metrics = TwoStageForecasterEvaluator.evaluate_distribution(
 
 Interval summaries report the number of valid target-bound triples used at
 each level. When `unique_id` is present,
-interval coverage, lower and upper miss rates, width, and MWIS are reported
-independently for every series.
+interval coverage, width, and MWIS are reported independently for every series.
 
 The default family is Negative Binomial, so the returned forecast is discrete.
 Pass `distribution=GammaFamily()`, `LogNormalFamily()`, or `WeibullFamily()`
