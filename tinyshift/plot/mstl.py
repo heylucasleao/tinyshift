@@ -158,15 +158,15 @@ class MSTLDiagnostics:
             raise ValueError("periods must not contain duplicate values.")
         return normalized
 
-    def _validate_periods_for_series(self, n_observations: int) -> None:
+    def _validate_periods_for_series(self, n_obs: int) -> None:
         """Ensure statsmodels will retain every requested seasonal period."""
         invalid_periods = [
-            period for period in self.periods_ if period >= n_observations / 2
+            period for period in self.periods_ if period >= n_obs / 2
         ]
         if invalid_periods:
             raise ValueError(
                 "Each period must be less than half the number of observations "
-                f"({n_observations}); invalid periods: {invalid_periods}."
+                f"({n_obs}); invalid periods: {invalid_periods}."
             )
 
     def _fit_mstl(self, X: pd.Series):

@@ -328,7 +328,7 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
         frequencies: np.ndarray,
         power: np.ndarray,
         peaks: np.ndarray,
-        n_observations: int,
+        n_obs: int,
     ) -> List[int]:
         """
         Extract candidate seasonal periods from spectral peaks.
@@ -354,7 +354,7 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
             Spectral power values.
         peaks : np.ndarray
             Indices of the detected spectral peaks.
-        n_observations : int
+        n_obs : int
             Number of observations in the input series.
 
         Returns
@@ -376,7 +376,7 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
             if period is None:
                 continue
 
-            if period > n_observations // 2:
+            if period > n_obs // 2:
                 continue
 
             if period in periods:
@@ -408,7 +408,7 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
                 .to_numpy()
             )
 
-        frequencies, power, n_observations = _prepare_spectrum(
+        frequencies, power, n_obs = _prepare_spectrum(
             values,
             detrend=self.detrend,
             method="fft",
@@ -427,7 +427,7 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
             frequencies=frequencies,
             power=power,
             peaks=peaks,
-            n_observations=n_observations,
+            n_obs=n_obs,
         )
 
         if not periods:

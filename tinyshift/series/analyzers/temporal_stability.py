@@ -33,7 +33,7 @@ class TemporalRegime:
 
     start_time: Any
     end_time: Any
-    n_observations: int
+    n_obs: int
     mean: float
     std: float
 
@@ -221,12 +221,12 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         threshold = self._resolve_threshold(reference)
         return distance, threshold
 
-    def _fold_starts(self, n_observations: int) -> list[int]:
+    def _fold_starts(self, n_obs: int) -> list[int]:
         """Return eligible fold starts under the configured temporal geometry."""
         starts = list(
             range(
                 self.min_reference_size_,
-                n_observations - self.horizon + 1,
+                n_obs - self.horizon + 1,
                 self.step_size_,
             )
         )
@@ -246,7 +246,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         return TemporalRegime(
             start_time=times[start],
             end_time=times[end - 1],
-            n_observations=len(segment),
+            n_obs=len(segment),
             mean=float(np.mean(segment)),
             std=float(np.std(segment, ddof=0)),
         )
@@ -609,7 +609,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
         """Return descriptive statistics for every detected regime.
 
         Regimes are the complete segments delimited by confirmed changes.
-        Their bounds are inclusive time labels; ``n_observations`` is the
+        Their bounds are inclusive time labels; ``n_obs`` is the
         number of rows in the segment, and ``mean`` and ``std`` are population
         statistics computed with ``ddof=0``.
 
@@ -628,7 +628,7 @@ class TemporalStabilityAnalyzer(BaseSeriesAnalyzer):
             Inclusive first time label of the regime.
         **end_time** : ``object``
             Inclusive final time label of the regime.
-        **n_observations** : ``int``
+        **n_obs** : ``int``
             Number of observations in the regime.
         **mean** : ``float``
             Population mean of the regime.

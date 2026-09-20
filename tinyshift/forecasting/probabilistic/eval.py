@@ -303,7 +303,7 @@ class TwoStageForecasterEvaluator:
             ),
             "interval_width_mean": round(float(np.mean(upper - lower)), 4),
             "mwis": round(cls.mwis(observed, lower, upper, 1.0 - coverage), 4),
-            "n_observations": len(observed),
+            "n_obs": len(observed),
         }
 
     @staticmethod
@@ -388,7 +388,7 @@ class TwoStageForecasterEvaluator:
         row_scores = pd.DataFrame({id_col: np.asarray(series_ids), "crps": row_crps})
         per_series = (
             row_scores.groupby(id_col, observed=True, sort=False)["crps"]
-            .agg(crps="mean", n_observations="size")
+            .agg(crps="mean", n_obs="size")
             .reset_index()
         )
         per_series["target_std"] = per_series[id_col].map(train_scales)
@@ -400,7 +400,7 @@ class TwoStageForecasterEvaluator:
             per_series["crps"] / per_series["target_std"],
             np.nan,
         )
-        return per_series[[id_col, "crps", "target_std", "ncrps", "n_observations"]]
+        return per_series[[id_col, "crps", "target_std", "ncrps", "n_obs"]]
 
     @classmethod
     def evaluate_distribution(
@@ -449,7 +449,7 @@ class TwoStageForecasterEvaluator:
         **ncrps** : ``float``
             CRPS divided by ``target_std``; undefined for a non-positive or
             non-finite scale.
-        **n_observations** : ``int``
+        **n_obs** : ``int``
             Number of evaluated forecast-target pairs for the series.
         """
         _require_columns(evaluation_df, (id_col, time_col, target_col), "evaluation_df")
@@ -516,7 +516,7 @@ class TwoStageForecasterEvaluator:
             Mean upper-minus-lower interval width.
         **mwis** : ``float``
             Mean Winkler interval score; lower values are better.
-        **n_observations** : ``int``
+        **n_obs** : ``int``
             Number of aligned panel observations.
 
         Notes
@@ -555,6 +555,6 @@ class TwoStageForecasterEvaluator:
                 "coverage_rate",
                 "interval_width_mean",
                 "mwis",
-                "n_observations",
+                "n_obs",
             ],
         )
