@@ -167,6 +167,17 @@ class VarianceRatioAnalyzer(BaseSeriesAnalyzer):
             pair, the variance-ratio estimate, and its significance flag. The
             z-statistic and p-value remain available in ``results_``.
 
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **horizon** : ``int``
+            Aggregation horizon used by the variance-ratio test.
+        **variance_ratio** : ``float``
+            Variance ratio at the evaluated horizon.
+        **significant_dependence** : ``bool``
+            Whether the null of no serial dependence is rejected.
+
         Raises
         ------
         RuntimeError

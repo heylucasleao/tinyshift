@@ -464,6 +464,15 @@ class SeasonalityAnalyzer(BaseSeriesAnalyzer):
         pandas.DataFrame
             ID column and detected candidate periods.
 
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **candidate_periods** : ``list[int]``
+            Dominant spectral periods retained as seasonality candidates.
+        **significant_periods** : ``list[int]``
+            Candidate periods that pass harmonic significance testing.
+
         Raises
         ------
         RuntimeError

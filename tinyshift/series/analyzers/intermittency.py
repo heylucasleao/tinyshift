@@ -340,6 +340,28 @@ class IntermittencyAnalyzer(BaseSeriesAnalyzer):
         pandas.DataFrame
             One row per series, with the ID and scalar intermittency diagnostics.
 
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **n_observations** : ``int``
+            Total number of observations in the series.
+        **n_pos** : ``int``
+            Number of strictly positive-demand observations.
+        **mean_pos** : ``float``
+            Mean strictly positive demand, or NaN when no positive demand exists.
+        **adi** : ``float``
+            Average demand interval, ``n_observations / n_pos``.
+        **cv2** : ``float``
+            Squared coefficient of variation of positive demand.
+        **zero_proportion** : ``float``
+            Fraction of observations equal to zero.
+        **interval_cv** : ``float``
+            Coefficient of variation of inter-demand intervals.
+        **classification** : ``str`` or ``None``
+            Smooth, intermittent, erratic, or lumpy demand regime; undefined
+            when fewer than two positive observations are available.
+
         Raises
         ------
         RuntimeError

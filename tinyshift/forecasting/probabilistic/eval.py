@@ -47,6 +47,28 @@ class FirstStageForecasterEvaluator:
     ) -> pd.DataFrame:
         """Evaluate the operational quality of out-of-sample mean forecasts.
 
+        Returns
+        -------
+        pandas.DataFrame
+            One-row operational evaluation summary.
+
+        Columns
+        -------
+        **wape** : ``float``
+            Total absolute error divided by total observed demand.
+        **pbias** : ``float``
+            Aggregate predicted volume minus observed volume, divided by
+            observed volume.
+        **score** : ``float``
+            Composite operational loss computed as ``wape + abs(pbias)``.
+        **forecast_instability** : ``float``
+            Relative revisions between adjacent forecasts within each series.
+        **false_demand_on_zero_days_avg_pred** : ``float``
+            Mean prediction on observations whose target is zero.
+        **peak_demand_deviation** : ``float``
+            Relative difference between mean predicted and observed demand on
+            positive-target observations.
+
         Notes
         -----
         Input predictions should come from temporal cross-validation or a held-
@@ -147,7 +169,27 @@ class FirstStageForecasterEvaluator:
         lambda_col: str = "lambda_t",
         n_bins: int = 10,
     ) -> pd.DataFrame:
-        """Compare observed and predicted means across quantile-based bins."""
+        """Compare observed and predicted means across quantile-based bins.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Calibration summary with one row per realized prediction bin.
+
+        Columns
+        -------
+        **calibration_bin** : ``object``
+            Quantile interval of the predictions, or ``"all"`` when every
+            prediction is identical.
+        **count** : ``int``
+            Number of valid target-prediction pairs in the bin.
+        **mean_prediction** : ``float``
+            Mean conditional prediction in the bin.
+        **mean_observed** : ``float``
+            Mean observed target in the bin.
+        **mean_residual** : ``float``
+            Mean observed target minus mean prediction.
+        """
         if not isinstance(n_bins, int) or n_bins < 2:
             raise ValueError("n_bins must be an integer greater than or equal to 2.")
         _require_columns(df_res, (target_col, lambda_col), "the input DataFrame")
@@ -392,6 +434,23 @@ class TwoStageForecasterEvaluator:
             number of evaluated observations.
             nCRPS is undefined when the series is absent from training or its
             training standard deviation is zero or non-finite.
+
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the resolved ``id_col`` name.
+        **crps** : ``float``
+            Mean Continuous Ranked Probability Score; lower is better.
+        **target_std** : ``float``
+            Sample standard deviation of the series in ``train_df``.
+        **ncrps** : ``float``
+            CRPS divided by ``target_std``; undefined for a non-positive or
+            non-finite scale.
+        **calibration_error** : ``float``
+            Mean absolute difference between observed and attainable quantile
+            coverage over the internal 5%-to-95% grid.
+        **n_observations** : ``int``
+            Number of evaluated forecast-target pairs for the series.
         """
         _require_columns(evaluation_df, (id_col, time_col, target_col), "evaluation_df")
         _require_columns(train_df, (id_col, target_col), "train_df")
@@ -465,6 +524,27 @@ class TwoStageForecasterEvaluator:
             Summary containing empirical coverage, lower and upper miss rates,
             mean interval width, MWIS, and observation count for every
             available interval, independently per series when possible.
+
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier when ``id_col`` is present in ``df_res``; omitted
+            for a panel-wide evaluation.
+        **level** : ``float``
+            Nominal central interval coverage.
+        **coverage_rate** : ``float``
+            Fraction of valid observations inside the interval, including its
+            boundaries.
+        **lower_miss_rate** : ``float``
+            Fraction of valid observations below the lower interval bound.
+        **upper_miss_rate** : ``float``
+            Fraction of valid observations above the upper interval bound.
+        **interval_width_mean** : ``float``
+            Mean upper bound minus lower bound.
+        **mwis** : ``float``
+            Mean Winkler interval score at the reported level; lower is better.
+        **n_observations** : ``int``
+            Number of valid target-lower-upper triples used in the row.
         """
         results = []
 

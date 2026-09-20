@@ -114,6 +114,17 @@ class RegularityAnalyzer(BaseSeriesAnalyzer):
         pandas.DataFrame
             ID, ``foreca``, ``limit``, and ``spectral_concentration`` columns.
 
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **foreca** : ``float``
+            ForeCA forecastability score derived from spectral entropy.
+        **limit** : ``float``
+            Regularity index derived from permutation entropy.
+        **spectral_concentration** : ``float``
+            Fraction of spectral power concentrated in dominant frequencies.
+
         Raises
         ------
         RuntimeError

@@ -229,6 +229,13 @@ class PAMIAnalyzer(BaseSeriesAnalyzer):
             A two-column table with the series identifier and the local minima
             discovered in its PAMI curve.
 
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **local_minima** : ``list[int]``
+            Lags corresponding to local minima of the PAMI curve.
+
         Raises
         ------
         RuntimeError

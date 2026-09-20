@@ -224,6 +224,23 @@ class BaseDriftAnalyzer(BaseEstimator, Generic[DetectorT]):
         pandas.DataFrame
             Same columns and row order returned by the latest :meth:`predict`.
 
+        Columns
+        -------
+        **id_col** : ``object``
+            Identifier of the independently tested population.
+        **score** : ``float``
+            Observed distribution distance for the ID.
+        **threshold** : ``float``
+            Empirical critical value from the permutation null distribution.
+        **p_value** : ``float``
+            Monte Carlo permutation p-value.
+        **drift** : ``bool``
+            Whether ``p_value`` is less than or equal to ``alpha``.
+        **reference_size** : ``int``
+            Number of fitted reference observations.
+        **current_size** : ``int``
+            Number of tested current observations.
+
         Raises
         ------
         sklearn.exceptions.NotFittedError

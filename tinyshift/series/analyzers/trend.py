@@ -88,6 +88,19 @@ class TrendAnalyzer(BaseSeriesAnalyzer):
         pandas.DataFrame
             ID plus slope, R², p-value, and significance flag columns.
 
+        Columns
+        -------
+        **id_col** : ``object``
+            Series identifier using the column name supplied to :meth:`fit`.
+        **trend_slope** : ``float``
+            Estimated linear change per observation.
+        **trend_r2** : ``float``
+            Coefficient of determination of the linear trend.
+        **trend_pvalue** : ``float``
+            Two-sided p-value for a zero trend slope.
+        **significant_trend** : ``bool``
+            Whether the slope is significant at the configured level.
+
         Raises
         ------
         RuntimeError
