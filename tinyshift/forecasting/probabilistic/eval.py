@@ -313,52 +313,6 @@ class TwoStageForecasterEvaluator:
                 "evaluation_df series and timestamps must be aligned with forecast."
             )
 
-    @staticmethod
-    def _quantile_coverage(distribution, n_observations: int) -> tuple[np.ndarray, np.ndarray]:
-        """Return validated forecast quantiles and their attainable coverage."""
-        levels = np.arange(1, 20, dtype=float) / 20.0
-        forecast_quantiles = np.asarray(distribution.ppf(levels), dtype=float)
-        expected_shape = (n_observations, len(levels))
-        if forecast_quantiles.shape != expected_shape or not np.all(
-            np.isfinite(forecast_quantiles)
-        ):
-            raise ValueError(
-                "The predictive distribution returned invalid or misaligned quantiles."
-            )
-
-        attainable_coverage = np.asarray(
-            distribution.cdf(forecast_quantiles), dtype=float
-        )
-        if (
-            attainable_coverage.shape != expected_shape
-            or not np.all(np.isfinite(attainable_coverage))
-            or np.any((attainable_coverage < 0.0) | (attainable_coverage > 1.0))
-        ):
-            raise ValueError(
-                "The predictive distribution returned invalid quantile coverage."
-            )
-        return forecast_quantiles, attainable_coverage
-
-    @staticmethod
-    def _calibration_errors(
-        y_true: np.ndarray,
-        series_ids: np.ndarray,
-        forecast_quantiles: np.ndarray,
-        attainable_coverage: np.ndarray,
-    ) -> dict:
-        """Calculate mean absolute quantile-calibration error per series."""
-        errors = {}
-        for unique_id in pd.unique(series_ids):
-            positions = np.flatnonzero(series_ids == unique_id)
-            observed_coverage = np.mean(
-                y_true[positions, None] <= forecast_quantiles[positions], axis=0
-            )
-            expected_coverage = np.mean(attainable_coverage[positions], axis=0)
-            errors[unique_id] = float(
-                np.mean(np.abs(observed_coverage - expected_coverage))
-            )
-        return errors
-
     @classmethod
     def _target_scales(
         cls,
@@ -430,8 +384,7 @@ class TwoStageForecasterEvaluator:
         -------
         pandas.DataFrame
             One row per evaluated series with mean CRPS, training-target
-            standard deviation, nCRPS, mean absolute calibration error, and
-            number of evaluated observations.
+            standard deviation, nCRPS, and number of evaluated observations.
             nCRPS is undefined when the series is absent from training or its
             training standard deviation is zero or non-finite.
 
@@ -446,9 +399,6 @@ class TwoStageForecasterEvaluator:
         **ncrps** : ``float``
             CRPS divided by ``target_std``; undefined for a non-positive or
             non-finite scale.
-        **calibration_error** : ``float``
-            Mean absolute difference between observed and attainable quantile
-            coverage over the internal 5%-to-95% grid.
         **n_observations** : ``int``
             Number of evaluated forecast-target pairs for the series.
         """
@@ -464,32 +414,9 @@ class TwoStageForecasterEvaluator:
         )
         row_crps = cls._crps(forecast.distribution, y_true)
         train_scales = cls._target_scales(train_df, target_col, id_col)
-        scores = cls._aggregate_distribution_scores(
+        return cls._aggregate_distribution_scores(
             evaluation_df[id_col], row_crps, train_scales, id_col
         )
-
-        distribution = forecast.distribution
-        forecast_quantiles, attainable_coverage = cls._quantile_coverage(
-            distribution, len(y_true)
-        )
-        series_ids = evaluation_df[id_col].to_numpy()
-        calibration_errors = cls._calibration_errors(
-            y_true,
-            series_ids,
-            forecast_quantiles,
-            attainable_coverage,
-        )
-        scores["calibration_error"] = scores[id_col].map(calibration_errors)
-        return scores[
-            [
-                id_col,
-                "crps",
-                "target_std",
-                "ncrps",
-                "calibration_error",
-                "n_observations",
-            ]
-        ]
 
     @classmethod
     def evaluate_interval(

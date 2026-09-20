@@ -841,7 +841,6 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
         "crps",
         "target_std",
         "ncrps",
-        "calibration_error",
         "n_observations",
     ]
     assert result.loc[0, "unique_id"] == "A"
@@ -851,7 +850,6 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
         result.loc[0, "crps"] / np.sqrt(2.0)
     )
     assert result.loc[0, "n_observations"] == 1
-    assert 0.0 <= result.loc[0, "calibration_error"] <= 1.0
     assert result.loc[1, "unique_id"] == "C"
     assert np.isnan(result.loc[1, "target_std"])
     assert np.isnan(result.loc[1, "ncrps"])

@@ -68,11 +68,8 @@ distribution_metrics = TwoStageForecasterEvaluator.evaluate_distribution(
 )
 ```
 
-`evaluate_distribution()` reports `calibration_error` from a fixed internal
-quantile grid. For discrete distributions, it uses the attainable coverage of
-each forecast quantile rather than penalizing probability levels that discrete
-masses cannot attain. Interval summaries
-also report the number of valid target-bound triples used at each level. When `unique_id` is present,
+Interval summaries report the number of valid target-bound triples used at
+each level. When `unique_id` is present,
 interval coverage, lower and upper miss rates, width, and MWIS are reported
 independently for every series.
 
