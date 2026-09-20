@@ -460,7 +460,7 @@ class TestIntermittencyAnalyzer:
 
         assert result.columns.tolist() == [
             "unique_id",
-            "n_observations",
+            "n_obs",
             "n_pos",
             "mean_pos",
             "adi",
@@ -472,7 +472,7 @@ class TestIntermittencyAnalyzer:
         np.testing.assert_array_equal(
             IntermittencyAnalyzer().fit(frame).results_["a"]["intervals"], [1]
         )
-        assert result.loc[0, "n_observations"] == 4
+        assert result.loc[0, "n_obs"] == 4
         assert result.loc[0, "n_pos"] == 2
         assert result.loc[0, "mean_pos"] == pytest.approx(1.0)
 
@@ -483,7 +483,7 @@ class TestIntermittencyAnalyzer:
 
         result = IntermittencyAnalyzer().fit(frame).summary().iloc[0]
 
-        assert result["n_observations"] == 4
+        assert result["n_obs"] == 4
         assert result["n_pos"] == 1
         assert result["mean_pos"] == pytest.approx(5.0)
         assert np.isnan(result["cv2"])
@@ -496,7 +496,7 @@ class TestIntermittencyAnalyzer:
 
         result = IntermittencyAnalyzer().fit(frame).summary().iloc[0]
 
-        assert result["n_observations"] == 4
+        assert result["n_obs"] == 4
         assert result["n_pos"] == 0
         assert np.isnan(result["mean_pos"])
         assert np.isnan(result["cv2"])
@@ -632,7 +632,7 @@ class TestAnalyzerComposition:
 
         assert result.columns.tolist() == [
             "unique_id",
-            "n_observations",
+            "n_obs",
             "n_pos",
             "mean_pos",
             "adi",
@@ -759,7 +759,7 @@ class TestTemporalStabilityAnalyzer:
 
         regimes = analyzer.regimes()
         assert regimes["regime"].tolist() == [1, 2, 3]
-        assert regimes["n_observations"].tolist() == [20, 20, 20]
+        assert regimes["n_obs"].tolist() == [20, 20, 20]
         assert "std" in regimes
         assert "variance" not in regimes
         assert "standard_deviation" not in regimes
@@ -788,7 +788,7 @@ class TestTemporalStabilityAnalyzer:
 
         assert result.changes == []
         assert len(result.regimes) == 1
-        assert result.regimes[0].n_observations == len(values)
+        assert result.regimes[0].n_obs == len(values)
 
     def test_summary_exposes_sequential_evidence(self):
         frame = pd.DataFrame(

@@ -785,7 +785,7 @@ def test_tsf_evaluator_reports_distribution_derived_intervals(gamma_distribution
     assert result.loc[0, "coverage_rate"] == 1.0
     assert result.loc[0, "interval_width_mean"] > 0.0
     assert result.loc[0, "mwis"] > 0.0
-    assert result.loc[0, "n_observations"] == 2
+    assert result.loc[0, "n_obs"] == 2
 
 
 def test_tsf_evaluator_rejects_invalid_coverage(gamma_distribution):
@@ -834,13 +834,13 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
         "crps",
         "target_std",
         "ncrps",
-        "n_observations",
+        "n_obs",
     ]
     assert result.loc[0, "unique_id"] == "A"
     assert result.loc[0, "crps"] >= 0.0
     assert result.loc[0, "target_std"] == pytest.approx(np.sqrt(2.0))
     assert result.loc[0, "ncrps"] == pytest.approx(result.loc[0, "crps"] / np.sqrt(2.0))
-    assert result.loc[0, "n_observations"] == 1
+    assert result.loc[0, "n_obs"] == 1
     assert result.loc[1, "unique_id"] == "C"
     assert np.isnan(result.loc[1, "target_std"])
     assert np.isnan(result.loc[1, "ncrps"])

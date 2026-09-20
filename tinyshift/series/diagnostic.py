@@ -228,15 +228,15 @@ def harmonic_significance(
         raise ValueError("'period' must be an integer greater than 1")
 
     # Build the harmonic regression.
-    n_observations = len(y_detrended)
-    time_index = np.arange(n_observations)
+    n_obs = len(y_detrended)
+    time_index = np.arange(n_obs)
 
     sine_component = np.sin(2 * np.pi * time_index / period)
     cosine_component = np.cos(2 * np.pi * time_index / period)
 
     design_matrix = np.column_stack(
         [
-            np.ones(n_observations),
+            np.ones(n_obs),
             sine_component,
             cosine_component,
         ]
@@ -260,7 +260,7 @@ def harmonic_significance(
 
     model_rank = np.linalg.matrix_rank(design_matrix)
     harmonic_degrees_freedom = model_rank - 1
-    residual_degrees_freedom = n_observations - model_rank
+    residual_degrees_freedom = n_obs - model_rank
 
     if (
         harmonic_degrees_freedom <= 0
