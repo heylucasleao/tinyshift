@@ -38,8 +38,8 @@ class BaseDriftAnalyzer(BaseEstimator, Generic[DetectorT]):
         Identifier column used during fitting.
     target_col_ : str
         Target column used during fitting.
-    results_ : pandas.DataFrame
-        Most recent prediction result. Created by :meth:`predict`.
+    results_ : dict
+        Most recent prediction results keyed by ID. Created by :meth:`predict`.
 
     Notes
     -----
@@ -109,12 +109,24 @@ class BaseDriftAnalyzer(BaseEstimator, Generic[DetectorT]):
         not modified.
         """
         self._validate_frame(df, id_col, target_col)
+        detectors = {
+            unique_id: self._fit_single(group[target_col])
+            for unique_id, group in df.groupby(id_col, sort=False, observed=True)
+        }
         self.id_col_ = id_col
         self.target_col_ = target_col
-        self.detectors_: dict[object, DetectorT] = {}
-        for unique_id, group in df.groupby(id_col, sort=False, observed=True):
-            self.detectors_[unique_id] = clone(self.detector).fit(group[target_col])
+        self.detectors_ = detectors
+        if hasattr(self, "results_"):
+            del self.results_
         return self
+
+    def _fit_single(self, values: pd.Series) -> DetectorT:
+        """Fit an independent detector for one reference ID."""
+        return clone(self.detector).fit(values)
+
+    def _predict_single(self, unique_id: object, values: pd.Series):
+        """Compare one current ID with its fitted reference detector."""
+        return self.detectors_[unique_id].predict(values)
 
     def predict(
         self, df: pd.DataFrame, id_col: str | None = None, target_col: str | None = None
@@ -199,22 +211,13 @@ class BaseDriftAnalyzer(BaseEstimator, Generic[DetectorT]):
         if unknown:
             raise ValueError(f"No reference distribution for IDs: {unknown!r}.")
 
-        rows = []
-        for unique_id, group in df.groupby(id_col, sort=False, observed=True):
-            result = self.detectors_[unique_id].predict(group[target_col])
-            rows.append(
-                {
-                    id_col: unique_id,
-                    "score": result.score,
-                    "threshold": result.threshold,
-                    "p_value": result.p_value,
-                    "drift": result.drift,
-                    "reference_size": result.reference_size,
-                    "current_size": result.current_size,
-                }
-            )
-        self.results_ = pd.DataFrame(rows)
-        return self.results_.copy()
+        results = {
+            unique_id: self._predict_single(unique_id, group[target_col])
+            for unique_id, group in df.groupby(id_col, sort=False, observed=True)
+        }
+        self.results_ = results
+        self.result_id_col_ = id_col
+        return self.summary()
 
     def summary(self) -> pd.DataFrame:
         """Return a copy of the most recent prediction result.
@@ -247,7 +250,19 @@ class BaseDriftAnalyzer(BaseEstimator, Generic[DetectorT]):
             If :meth:`predict` has not been called.
         """
         check_is_fitted(self, "results_")
-        return self.results_.copy()
+        rows = [
+            {
+                self.result_id_col_: unique_id,
+                "score": result.score,
+                "threshold": result.threshold,
+                "p_value": result.p_value,
+                "drift": result.drift,
+                "reference_size": result.reference_size,
+                "current_size": result.current_size,
+            }
+            for unique_id, result in self.results_.items()
+        ]
+        return pd.DataFrame(rows)
 
 
 class ContinuousDriftAnalyzer(BaseDriftAnalyzer[ConDrift]):
