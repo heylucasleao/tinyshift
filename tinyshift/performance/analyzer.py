@@ -4,8 +4,8 @@
 
 """Panel adapter for direct loss estimation."""
 
-import numpy as np
 import pandas as pd
+from dataclasses import asdict
 from sklearn.base import BaseEstimator, clone
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.utils.validation import check_is_fitted
@@ -16,28 +16,25 @@ from .dle import DirectLossEstimator
 class DirectLossAnalyzer(BaseEstimator):
     """Estimate model loss independently for each panel ID.
 
-    The analyzer clones one :class:`DirectLossEstimator` per reference ID. The
-    first ``1 - fraction`` of each ID fits its loss model; the remaining rows
-    form a held-out baseline. :meth:`predict` estimates loss for current rows
-    without observed targets.
+    The analyzer clones one :class:`DirectLossEstimator` per reference ID and
+    delegates its reference split, baseline, and current comparison to that
+    estimator. Current targets are not required.
 
     Parameters
     ----------
     estimator : DirectLossEstimator or None, default=None
         Estimator template cloned for each ID. By default, use a DLE with a
         random forest regressor as its learner.
-    fraction : float, default=0.25
-        Fraction of each reference ID reserved for the held-out baseline.
-        Must be strictly between zero and one.
+    fraction : float or None, default=None
+        Optional override for the estimator's held-out reference fraction.
+        If omitted, use the fraction configured on ``estimator``.
 
     Attributes
     ----------
     estimators_ : dict
         Fitted DLE for each reference ID.
-    baselines_ : dict
-        Held-out estimated loss, realized loss, and sample size for each ID.
     results_ : dict
-        Most recent prediction result keyed by ID. Created by :meth:`predict`.
+        Most recent :class:`DirectLossResult` for each ID.
 
     Notes
     -----
@@ -56,7 +53,7 @@ class DirectLossAnalyzer(BaseEstimator):
     def __init__(
         self,
         estimator: DirectLossEstimator | None = None,
-        fraction: float = 0.25,
+        fraction: float | None = None,
     ) -> None:
         if estimator is not None and not isinstance(estimator, DirectLossEstimator):
             raise TypeError("estimator must be a DirectLossEstimator.")
@@ -64,7 +61,8 @@ class DirectLossAnalyzer(BaseEstimator):
             DirectLossEstimator(
                 learner=RandomForestRegressor(
                     n_estimators=100, min_samples_leaf=3, random_state=42
-                )
+                ),
+                fraction=0.25,
             )
             if estimator is None
             else estimator
@@ -119,8 +117,6 @@ class DirectLossAnalyzer(BaseEstimator):
             If the panel, column choices, or ``fraction`` are invalid, or an ID
             lacks two training rows and one held-out row.
         """
-        if not 0 < self.fraction < 1:
-            raise ValueError("fraction must lie strictly between 0 and 1.")
         if not feature_cols or len(feature_cols) != len(set(feature_cols)):
             raise ValueError("feature_cols must contain distinct feature names.")
         if set(feature_cols) & {id_col, target_col, prediction_col}:
@@ -129,14 +125,12 @@ class DirectLossAnalyzer(BaseEstimator):
             reference, [id_col, target_col, prediction_col, *feature_cols], id_col
         )
         estimators = {}
-        baselines = {}
         for unique_id, group in reference.groupby(id_col, sort=False, observed=True):
-            estimators[unique_id], baselines[unique_id] = self._fit_single(
+            estimators[unique_id] = self._fit_single(
                 unique_id, group, feature_cols, target_col, prediction_col
             )
 
         self.estimators_ = estimators
-        self.baselines_ = baselines
         self.feature_cols_ = list(feature_cols)
         self.id_col_ = id_col
         self.target_col_ = target_col
@@ -146,41 +140,24 @@ class DirectLossAnalyzer(BaseEstimator):
         return self
 
     def _fit_single(self, unique_id, group, feature_cols, target_col, prediction_col):
-        """Fit one ID's loss model and calculate its held-out baseline."""
-        split = int(np.floor(len(group) * (1 - self.fraction)))
-        if split < 2 or split == len(group):
-            raise ValueError(
-                f"ID {unique_id!r} needs at least two fitting rows and one held-out row."
+        """Fit an independent DLE for one reference ID."""
+        fitted = clone(self.estimator)
+        if self.fraction is not None:
+            fitted.set_params(fraction=self.fraction)
+        try:
+            return fitted.fit(
+                group[feature_cols], group[target_col], group[prediction_col]
             )
-        train, holdout = group.iloc[:split], group.iloc[split:]
-        fitted = clone(self.estimator).fit(
-            train[feature_cols], train[target_col], train[prediction_col]
-        )
-        baseline = {
-            "reference_estimated": fitted.estimate(
-                holdout[feature_cols], holdout[prediction_col]
-            ),
-            "reference_realized": fitted.aggregate(
-                fitted.observed_loss(holdout[target_col], holdout[prediction_col])
-            ),
-            "reference_size": len(holdout),
-        }
-        return fitted, baseline
+        except ValueError as error:
+            if "Reference needs at least two fitting rows" in str(error):
+                raise ValueError(f"ID {unique_id!r}: {error}") from error
+            raise
 
     def _predict_single(self, unique_id, group, prediction_col):
-        """Estimate one current ID's loss relative to its reference baseline."""
-        baseline = self.baselines_[unique_id]
-        estimated = self.estimators_[unique_id].estimate(
+        """Delegate one current ID's comparison to its fitted DLE."""
+        return self.estimators_[unique_id].predict(
             group[self.feature_cols_], group[prediction_col]
         )
-        delta = estimated - baseline["reference_estimated"]
-        return {
-            **baseline,
-            "current_estimated": estimated,
-            "estimated_delta": delta,
-            "degradation": bool(delta > 0),
-            "current_size": len(group),
-        }
 
     def predict(
         self,
@@ -260,7 +237,7 @@ class DirectLossAnalyzer(BaseEstimator):
         """
         check_is_fitted(self, "results_")
         rows = [
-            {self.result_id_col_: unique_id, **result}
+            {self.result_id_col_: unique_id, **asdict(result)}
             for unique_id, result in self.results_.items()
         ]
         return pd.DataFrame(rows)

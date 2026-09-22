@@ -6,7 +6,7 @@ import pytest
 from sklearn.dummy import DummyRegressor
 from sklearn.exceptions import NotFittedError
 
-from tinyshift.performance import DirectLossAnalyzer, DirectLossEstimator
+from tinyshift.performance import DirectLossAnalyzer, DirectLossEstimator, DirectLossResult
 
 
 def test_direct_loss_estimator_models_mse_and_binary_brier():
@@ -23,6 +23,37 @@ def test_direct_loss_estimator_models_mse_and_binary_brier():
     np.testing.assert_allclose(estimator.estimate_loss(X[:3], y_pred[:3]), 0.5625)
     assert estimator.estimate(X[:3], y_pred[:3]) == pytest.approx(0.5625)
     assert estimator.aggregate([1.0, 9.0]) == 5.0
+    result = estimator.predict(X[:3], y_pred[:3])
+    assert isinstance(result, DirectLossResult)
+    assert result.reference_realized == pytest.approx(0.5625)
+    assert result.reference_estimated == pytest.approx(0.5625)
+    assert result.reference_size == 2
+    assert result.current_estimated == pytest.approx(0.5625)
+    assert result.estimated_delta == pytest.approx(0)
+    assert not result.degradation
+    assert result.current_size == 3
+
+
+def test_direct_loss_predict_uses_held_out_baseline():
+    X = np.arange(8.0).reshape(-1, 1)
+    estimator = DirectLossEstimator(
+        learner=DummyRegressor(strategy="mean"), fraction=0.25
+    ).fit(X, np.array([1.0] * 6 + [3.0] * 2), np.zeros(8))
+
+    result = estimator.predict(X[:2], np.zeros(2))
+    assert result.reference_realized == 9.0
+    assert result.reference_estimated == 1.0
+    assert result.current_estimated == 1.0
+    assert result.estimated_delta == 0.0
+    assert not result.degradation
+
+
+def test_direct_loss_predict_requires_fit_and_valid_split():
+    estimator = DirectLossEstimator(DummyRegressor())
+    with pytest.raises(NotFittedError):
+        estimator.predict([[0.0]], [0.0])
+    with pytest.raises(ValueError, match="two fitting rows"):
+        estimator.fit([[0.0], [1.0]], [0.0, 1.0], [0.0, 0.0])
 
 
 def test_analyzer_uses_held_out_reference_and_independent_ids():
@@ -49,7 +80,8 @@ def test_analyzer_uses_held_out_reference_and_independent_ids():
     assert result["reference_size"].tolist() == [2, 2]
     assert not result["degradation"].any()
     assert list(analyzer.results_) == ["B", "A"]
-    assert analyzer.results_["B"]["current_estimated"] == 9.0
+    assert isinstance(analyzer.results_["B"], DirectLossResult)
+    assert analyzer.results_["B"].current_estimated == 9.0
     result.loc[0, "current_estimated"] = -10
     assert analyzer.summary().loc[0, "current_estimated"] == 9.0
 
