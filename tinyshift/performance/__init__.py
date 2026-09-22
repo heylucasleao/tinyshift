@@ -1,12 +1,6 @@
-"""Estimate model performance before current targets are available."""
+"""Estimate squared loss before current targets are available."""
 
-from .analyzers import ConfidenceBasedPerformanceAnalyzer, DirectLossAnalyzer
-from .confidence import ConfidenceBasedPerformanceEstimator
+from .analyzers import DirectLossAnalyzer
 from .dle import DirectLossEstimator
 
-__all__ = [
-    "ConfidenceBasedPerformanceAnalyzer",
-    "ConfidenceBasedPerformanceEstimator",
-    "DirectLossAnalyzer",
-    "DirectLossEstimator",
-]
+__all__ = ["DirectLossAnalyzer", "DirectLossEstimator"]

@@ -2,7 +2,7 @@
 # tinyshift - A small toolbox for mlops
 # Licensed under the MIT License
 
-"""Direct loss estimation for regression models."""
+"""Direct estimation of squared loss for regression or binary probabilities."""
 
 import numpy as np
 from sklearn.base import BaseEstimator, clone
@@ -11,23 +11,21 @@ from sklearn.utils.validation import check_array, check_is_fitted
 
 
 class DirectLossEstimator(BaseEstimator):
-    """Learn per-observation regression loss from labeled reference data.
+    """Learn per-row squared error from labeled reference data.
 
-    The loss model receives the original numeric features and the monitored
-    model's prediction as its last feature. Current targets are never required.
+    For regression, this estimates MSE. For binary classification, pass the
+    probability of class 1 as ``y_pred`` and labels encoded as 0 and 1; the
+    resulting MSE is the binary Brier score. The loss model receives numeric
+    features and the monitored model's prediction as its last feature.
 
     Parameters
     ----------
-    metric : {"mae", "mse", "rmse"}, default="mae"
-        Metric to estimate. RMSE models squared error and takes the square root
-        only after averaging estimated losses.
     estimator : sklearn regressor or None, default=None
-        Template for the loss model. The default is a random forest regressor.
-        The template is cloned during fitting.
+        Template for the loss model, cloned during fitting. The default is a
+        random forest regressor.
     """
 
-    def __init__(self, metric: str = "mae", estimator=None) -> None:
-        self.metric = metric
+    def __init__(self, estimator=None) -> None:
         self.estimator = estimator
 
     @staticmethod
@@ -53,23 +51,17 @@ class DirectLossEstimator(BaseEstimator):
         return check_array(array.reshape(-1, 1), dtype=float).ravel()
 
     def observed_loss(self, y_true, y_pred):
-        """Calculate observed per-row loss for the configured metric."""
-        if self.metric not in {"mae", "mse", "rmse"}:
-            raise ValueError("metric must be one of 'mae', 'mse', or 'rmse'.")
+        """Return squared error for each observation."""
         predictions = self._vector(y_pred, "y_pred")
         target = self._target(y_true, len(predictions))
-        residual = target - predictions
-        return np.abs(residual) if self.metric == "mae" else residual**2
+        return (target - predictions) ** 2
 
     def aggregate(self, losses) -> float:
-        """Aggregate per-row losses into the configured metric."""
-        if self.metric not in {"mae", "mse", "rmse"}:
-            raise ValueError("metric must be one of 'mae', 'mse', or 'rmse'.")
+        """Return the mean squared error (binary Brier score for probabilities)."""
         values = self._vector(losses, "losses")
         if np.any(values < 0):
             raise ValueError("losses must be nonnegative.")
-        mean_loss = float(np.mean(values))
-        return float(np.sqrt(mean_loss)) if self.metric == "rmse" else mean_loss
+        return float(np.mean(values))
 
     def fit(self, X, y_true, y_pred):
         """Fit the loss model on labeled reference observations."""
@@ -86,7 +78,7 @@ class DirectLossEstimator(BaseEstimator):
         return self
 
     def estimate_loss(self, X, y_pred) -> np.ndarray:
-        """Predict nonnegative per-row losses without current targets."""
+        """Predict nonnegative per-row squared losses without current targets."""
         check_is_fitted(self, "loss_model_")
         features, predictions = self._inputs(X, y_pred)
         if features.shape[1] != self.n_features_in_:
@@ -102,5 +94,5 @@ class DirectLossEstimator(BaseEstimator):
         return np.maximum(losses, 0.0)
 
     def estimate(self, X, y_pred) -> float:
-        """Estimate the configured metric for a batch without targets."""
+        """Estimate MSE or binary Brier score for an unlabeled batch."""
         return self.aggregate(self.estimate_loss(X, y_pred))
