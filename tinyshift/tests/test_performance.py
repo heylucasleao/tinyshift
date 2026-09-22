@@ -62,6 +62,12 @@ def test_direct_loss_predict_requires_fit_and_valid_split():
         estimator.predict([[0.0]], [0.0])
     with pytest.raises(ValueError, match="two fitting rows"):
         estimator.fit([[0.0], [1.0]], [0.0, 1.0], [0.0, 0.0])
+    with pytest.raises(ValueError, match="two held-out rows"):
+        estimator.fit([[0.0], [1.0], [2.0], [3.0]], [0.0] * 4, [0.0] * 4)
+
+    fitted = estimator.fit(np.arange(8.0).reshape(-1, 1), [0.0] * 8, [0.0] * 8)
+    with pytest.raises(ValueError, match="two observations"):
+        fitted.predict([[0.0]], [0.0])
 
 
 def test_welch_permutation_tests_relative_degradation_margin():
@@ -70,9 +76,9 @@ def test_welch_permutation_tests_relative_degradation_margin():
         LinearRegression(), fraction=0.25, n_resamples=999, random_state=42
     ).fit(X, np.sqrt(X.ravel()), np.zeros(20))
 
-    small = estimator.predict([[18.0]], [0.0])
+    small = estimator.predict([[18.0], [18.0]], [0.0, 0.0])
     large = estimator.predict(np.full((1000, 1), 18.0), np.zeros(1000))
-    assert small.p_value == estimator.predict([[18.0]], [0.0]).p_value
+    assert small.p_value == estimator.predict([[18.0], [18.0]], [0.0, 0.0]).p_value
     assert small.reference_estimated == large.reference_estimated
     assert small.estimated_delta > 0
     assert small.relative_delta == pytest.approx(1 / 17)
@@ -94,7 +100,7 @@ def test_welch_permutation_tests_relative_degradation_margin():
     assert not improved.degradation
     assert improved.p_value > estimator.alpha
     with pytest.raises(ValueError, match="degradation_margin"):
-        estimator.predict([[20.0]], [0.0], degradation_margin=-0.1)
+        estimator.predict([[20.0], [20.0]], [0.0, 0.0], degradation_margin=-0.1)
 
 
 @pytest.mark.parametrize(
@@ -102,13 +108,20 @@ def test_welch_permutation_tests_relative_degradation_margin():
     [
         ({"alpha": 0.0}, "alpha"),
         ({"n_resamples": 0}, "n_resamples"),
+        ({"n_resamples": 18}, "n_resamples"),
     ],
 )
 def test_direct_loss_rejects_invalid_alert_settings(kwargs, message):
     with pytest.raises(ValueError, match=message):
         DirectLossEstimator(DummyRegressor(), **kwargs).fit(
-            [[0.0], [1.0], [2.0], [3.0]], [0.0] * 4, [0.0] * 4
+            np.arange(8.0).reshape(-1, 1), [0.0] * 8, [0.0] * 8
         )
+
+
+def test_direct_loss_accepts_minimum_resamples_for_alpha():
+    estimator = DirectLossEstimator(DummyRegressor(), n_resamples=19, alpha=0.05)
+    estimator.fit(np.arange(8.0).reshape(-1, 1), [1.0] * 8, [0.0] * 8)
+    assert estimator.predict([[0.0], [1.0]], [0.0, 0.0]).p_value >= 0.05
 
 
 def test_analyzer_uses_held_out_reference_and_independent_ids():
@@ -121,7 +134,11 @@ def test_analyzer_uses_held_out_reference_and_independent_ids():
         }
     )
     current = pd.DataFrame(
-        {"unique_id": ["B", "A"], "x": [20.0, 21.0], "y_pred": [0.0, 0.0]}
+        {
+            "unique_id": ["B", "A", "B", "A"],
+            "x": [20.0, 21.0, 22.0, 23.0],
+            "y_pred": [0.0] * 4,
+        }
     )
     analyzer = DirectLossAnalyzer(
         DirectLossEstimator(learner=DummyRegressor(strategy="mean")), fraction=0.25
@@ -171,12 +188,16 @@ def test_analyzer_requires_fitted_ids_and_current_predictions():
         }
     )
     analyzer.fit(reference, feature_cols=["x"])
+    with pytest.raises(ValueError, match="two observations"):
+        analyzer.predict(pd.DataFrame({"unique_id": ["A"], "x": [1], "y_pred": [0]}))
     with pytest.raises(ValueError, match="No reference performance"):
         analyzer.predict(pd.DataFrame({"unique_id": ["B"], "x": [1], "y_pred": [0]}))
     with pytest.raises(ValueError, match="missing required columns"):
         analyzer.predict(pd.DataFrame({"unique_id": ["A"], "x": [1]}))
 
-    renamed = pd.DataFrame({"series": ["A"], "x": [1], "probability": [0.0]})
+    renamed = pd.DataFrame(
+        {"series": ["A", "A"], "x": [1, 2], "probability": [0.0, 0.0]}
+    )
     result = analyzer.predict(renamed, id_col="series", prediction_col="probability")
     assert result["series"].tolist() == ["A"]
     assert analyzer.summary().equals(result)
@@ -191,7 +212,9 @@ def test_analyzer_estimates_binary_brier_without_current_labels():
             "y_pred": [0.2, 0.8] * 4,
         }
     )
-    current = pd.DataFrame({"unique_id": ["A"], "x": [10.0], "y_pred": [0.5]})
+    current = pd.DataFrame(
+        {"unique_id": ["A", "A"], "x": [10.0, 11.0], "y_pred": [0.5, 0.5]}
+    )
     analyzer = DirectLossAnalyzer(
         DirectLossEstimator(learner=DummyRegressor(strategy="mean"))
     ).fit(reference, feature_cols=["x"])

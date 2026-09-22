@@ -75,6 +75,7 @@ class DirectLossEstimator(BaseEstimator):
         increase beyond ``degradation_margin``. Must lie between zero and one.
     n_resamples : int, default=999
         Number of random permutations used to estimate the null distribution.
+        Must allow a Monte Carlo p-value at or below ``alpha``.
     random_state : int or None, default=None
         Seed for reproducible permutations.
 
@@ -91,7 +92,7 @@ class DirectLossEstimator(BaseEstimator):
         Number of held-out reference rows.
     reference_estimated_losses_ : numpy.ndarray
         Per-row losses predicted for the held-out reference. Used for
-        permutation inference and unusually high predicted loss flags.
+        permutation inference.
 
     Notes
     -----
@@ -150,6 +151,8 @@ class DirectLossEstimator(BaseEstimator):
             or self.n_resamples < 1
         ):
             raise ValueError("n_resamples must be a positive integer.")
+        if 1 / (self.n_resamples + 1) > self.alpha:
+            raise ValueError("n_resamples is too small for the requested alpha.")
 
     @staticmethod
     def _validate_margin(degradation_margin: float) -> None:
@@ -165,9 +168,9 @@ class DirectLossEstimator(BaseEstimator):
     def _reference_split(self, n_samples: int) -> int:
         """Return the fitting split after checking both reference partitions."""
         split = int(np.floor(n_samples * (1 - self.fraction)))
-        if split < 2 or split == n_samples:
+        if split < 2 or n_samples - split < 2:
             raise ValueError(
-                "Reference needs at least two fitting rows and one held-out row."
+                "Reference needs at least two fitting rows and two held-out rows."
             )
         return split
 
@@ -403,7 +406,8 @@ class DirectLossEstimator(BaseEstimator):
         sklearn.exceptions.NotFittedError
             If :meth:`fit` has not been called.
         ValueError
-            If ``degradation_margin`` is not finite and nonnegative.
+            If ``degradation_margin`` is not finite and nonnegative, or if
+            fewer than two current observations are supplied.
 
         Notes
         -----
@@ -421,6 +425,8 @@ class DirectLossEstimator(BaseEstimator):
         self._validate_margin(degradation_margin)
         current_losses = self.estimate_loss(X, y_pred)
         current_size = len(current_losses)
+        if current_size < 2:
+            raise ValueError("Current needs at least two observations.")
         current_estimated = self.aggregate(current_losses)
         delta = current_estimated - self.reference_estimated_
         relative_delta = self._relative_delta(current_estimated)

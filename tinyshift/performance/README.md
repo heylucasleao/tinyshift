@@ -45,7 +45,8 @@ print(result.relative_delta, result.p_value, result.degradation)
 
 Reference rows retain their input order. The first `1 - fraction` train the
 loss learner, while the last `fraction` establish a held-out baseline. At least
-two training rows and one held-out row are required. For time series, order
+two training rows and two held-out rows are required. Each current batch (per
+ID in the analyzer) must also contain at least two rows. For time series, order
 reference rows chronologically before fitting. Use reference predictions made
 out of sample by the monitored model when available, so the losses reflect its
 actual prediction behavior.
@@ -76,6 +77,9 @@ the null is that current mean estimated loss has increased by **at most** `m`
 relative to reference. DLE divides current per-row losses by `1 + m`, then
 compares their adjusted mean with the reference mean. Welch's t statistic
 divides the difference between means by its estimated standard error.
+Relative changes can be numerically large when the reference mean loss is
+close to zero, even if the absolute change is small. Inspect `estimated_delta`
+alongside `relative_delta` in that case.
 
 For each `predict` call, DLE pools the held-out and adjusted current
 **estimated** losses. It randomly permutes group assignments `n_resamples`
@@ -85,6 +89,9 @@ statistic. The one-sided p-value uses the plus-one correction:
 ```python
 (1 + number_of_permuted_statistics_at_least_observed) / (n_resamples + 1)
 ```
+
+The smallest possible p-value is `1 / (n_resamples + 1)`, so `fit` requires
+enough permutations for that value to be at or below `alpha`.
 
 The decision requires both a relative increase above the margin and
 `p_value <= alpha`. Set `random_state` to reproduce the permutation result.

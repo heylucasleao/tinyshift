@@ -117,7 +117,7 @@ class DirectLossAnalyzer(BaseEstimator):
             If ``reference`` is not a pandas DataFrame.
         ValueError
             If the panel, column choices, or ``fraction`` are invalid, or an ID
-            lacks two training rows and one held-out row.
+            lacks two training rows and two held-out rows.
         """
         if not feature_cols or len(feature_cols) != len(set(feature_cols)):
             raise ValueError("feature_cols must contain distinct feature names.")
@@ -197,7 +197,8 @@ class DirectLossAnalyzer(BaseEstimator):
         sklearn.exceptions.NotFittedError
             If :meth:`fit` has not been called.
         ValueError
-            If current data are invalid or contain an ID without a reference.
+            If current data are invalid, contain an ID without a reference,
+            or contain fewer than two observations for any current ID.
         """
         check_is_fitted(self, "estimators_")
         id_col = self.id_col_ if id_col is None else id_col
