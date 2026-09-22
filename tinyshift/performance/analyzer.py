@@ -40,8 +40,8 @@ class DirectLossAnalyzer(BaseEstimator):
     -----
     Reference rows retain their input order. For time series, order rows
     chronologically within each ID before fitting. ``degradation`` indicates
-    a positive change in estimated loss; it is not a significance test or
-    confirmation of realized degradation.
+    that estimated current loss exceeds a threshold simulated from reference
+    losses; it does not confirm realized degradation.
 
     Examples
     --------
@@ -63,6 +63,7 @@ class DirectLossAnalyzer(BaseEstimator):
                     n_estimators=100, min_samples_leaf=3, random_state=42
                 ),
                 fraction=0.25,
+                random_state=42,
             )
             if estimator is None
             else estimator
@@ -225,8 +226,10 @@ class DirectLossAnalyzer(BaseEstimator):
         **current_estimated**, **estimated_delta** : ``float``
             Estimated current loss and its difference from the estimated
             reference baseline.
+        **threshold** : ``float``
+            Upper reference threshold for the current mean estimated loss.
         **degradation** : ``bool``
-            Whether the estimated delta is positive.
+            Whether current estimated loss exceeds the threshold.
         **reference_size**, **current_size** : ``int``
             Number of held-out reference and current rows.
 
