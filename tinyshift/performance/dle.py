@@ -95,6 +95,9 @@ class DirectLossEstimator(BaseEstimator):
     squared error remaining valid on current data. Current labels are not
     needed for :meth:`estimate`.
 
+    Ordinary permutation inference assumes approximately independent/exchangeable observations.
+    For serially dependent losses, inference may be anticonservative.
+
     Examples
     --------
     >>> from sklearn.ensemble import RandomForestRegressor
