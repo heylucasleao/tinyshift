@@ -9,6 +9,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, clone
 from sklearn.utils.validation import check_is_fitted
 
+from .confidence import ConfidenceBasedPerformanceEstimator
 from .dle import DirectLossEstimator
 
 
@@ -126,6 +127,105 @@ class DirectLossAnalyzer(BaseEstimator):
                     "current_estimated": estimated,
                     "estimated_delta": delta,
                     "degradation": bool(delta > 0),
+                    "current_size": len(group),
+                }
+            )
+        self.results_ = pd.DataFrame(rows)
+        return self.results_.copy()
+
+    def summary(self) -> pd.DataFrame:
+        """Return a copy of the most recent prediction result."""
+        check_is_fitted(self, "results_")
+        return self.results_.copy()
+
+
+class ConfidenceBasedPerformanceAnalyzer(BaseEstimator):
+    """Estimate classification performance for each panel ID.
+
+    ``probability_cols`` maps each class label to its probability column. It
+    must include every class in the same order in reference and current data.
+    The reference must contain observed labels; the current batch need not.
+    Unlike regression DLE, this estimator does not train a loss model, so the
+    complete reference is used for its baseline.
+    """
+
+    def __init__(self, estimator: ConfidenceBasedPerformanceEstimator | None = None):
+        self.estimator = estimator
+
+    @staticmethod
+    def _validate_frame(df, required, id_col):
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("df must be a pandas DataFrame.")
+        if df.empty:
+            raise ValueError("Panel input cannot be empty.")
+        missing = [column for column in required if column not in df.columns]
+        if missing:
+            raise ValueError(f"DataFrame is missing required columns: {missing}.")
+        if df[id_col].isna().any():
+            raise ValueError("ID values must not be missing.")
+
+    def fit(
+        self,
+        reference: pd.DataFrame,
+        probability_cols: dict,
+        id_col: str = "unique_id",
+        target_col: str = "y",
+    ) -> "ConfidenceBasedPerformanceAnalyzer":
+        """Fit one probability-based estimator per reference ID."""
+        if not isinstance(probability_cols, dict) or len(probability_cols) < 2:
+            raise ValueError("probability_cols must map at least two classes to columns.")
+        columns = list(probability_cols.values())
+        if len(set(columns)) != len(columns) or set(columns) & {id_col, target_col}:
+            raise ValueError("Probability columns must be distinct from ID and target.")
+        self._validate_frame(reference, [id_col, target_col, *columns], id_col)
+        template = (
+            ConfidenceBasedPerformanceEstimator()
+            if self.estimator is None
+            else self.estimator
+        )
+        if not isinstance(template, ConfidenceBasedPerformanceEstimator):
+            raise TypeError("estimator must be a ConfidenceBasedPerformanceEstimator.")
+
+        estimators = {}
+        for unique_id, group in reference.groupby(id_col, sort=False, observed=True):
+            estimators[unique_id] = clone(template).fit(
+                group[target_col].to_numpy(), group[columns], list(probability_cols)
+            )
+        self.estimators_ = estimators
+        self.probability_cols_ = dict(probability_cols)
+        self.id_col_ = id_col
+        self.target_col_ = target_col
+        return self
+
+    def predict(self, current: pd.DataFrame) -> pd.DataFrame:
+        """Return estimated performance and change for each current ID."""
+        check_is_fitted(self, "estimators_")
+        columns = list(self.probability_cols_.values())
+        self._validate_frame(current, [self.id_col_, *columns], self.id_col_)
+        unknown = [
+            value for value in pd.unique(current[self.id_col_])
+            if value not in self.estimators_
+        ]
+        if unknown:
+            raise ValueError(f"No reference performance for IDs: {unknown!r}.")
+
+        rows = []
+        for unique_id, group in current.groupby(
+            self.id_col_, sort=False, observed=True
+        ):
+            fitted = self.estimators_[unique_id]
+            estimated = fitted.estimate(group[columns])
+            delta = estimated - fitted.reference_estimated_
+            rows.append(
+                {
+                    self.id_col_: unique_id,
+                    "metric": fitted.metric,
+                    "reference_realized": fitted.reference_realized_,
+                    "reference_estimated": fitted.reference_estimated_,
+                    "reference_size": fitted.reference_size_,
+                    "current_estimated": estimated,
+                    "estimated_delta": delta,
+                    "degradation": bool(delta < 0),
                     "current_size": len(group),
                 }
             )
