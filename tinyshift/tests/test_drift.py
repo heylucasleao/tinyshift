@@ -177,6 +177,16 @@ class TestDriftAnalyzers:
         assert not bool(result.loc[result["entity"] == "B", "drift"].iloc[0])
         pd.testing.assert_frame_equal(analyzer.summary(), result)
         assert analyzer.detectors_["A"] is not analyzer.detectors_["B"]
+        assert list(analyzer.results_) == ["A", "B"]
+        assert analyzer.results_["A"].score == pytest.approx(result.loc[0, "score"])
+
+    def test_refit_clears_previous_prediction(self):
+        reference = _panel(np.linspace(0, 1, 20), np.linspace(2, 3, 20))
+        analyzer = ContinuousDriftAnalyzer(ConDrift(n_resamples=19, random_state=7))
+        analyzer.fit(reference, "entity", "value").predict(reference)
+        analyzer.fit(reference, "entity", "value")
+        with pytest.raises(NotFittedError):
+            analyzer.summary()
 
     def test_categorical_analyzer_uses_one_result_per_id(self):
         analyzer = CategoricalDriftAnalyzer(

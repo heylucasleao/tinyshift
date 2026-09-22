@@ -10,6 +10,7 @@ For enterprise-grade solutions, consider [Nannyml](https://github.com/NannyML/na
 ## Features
 
 - **Data Drift Detection**: Categorical and continuous data drift monitoring with multiple distance metrics
+- **Performance Estimation**: DLE estimates regression MSE or binary Brier score before current targets arrive and flags material increases beyond reference chunk variability
 - **Outlier Detection**: **HBOS**, **PCA-based** and **SPAD** outlier detection algorithms  
 - **Classification Model Evaluation**: Calibration curves, confusion matrices, score distributions, and production confidence analysis
 - **Time Series Analysis**: Seasonality decomposition, trend analysis, forecasting diagnostics, and forecast stabilization
@@ -136,7 +137,41 @@ For panel data, `CategoricalDriftAnalyzer` and `ContinuousDriftAnalyzer` apply
 the corresponding detector independently to each ID. See the
 [drift guide](tinyshift/drift/README.md) for detector and analyzer examples.
 
-### 3. Outlier Detection
+### 3. Performance Estimation
+
+`DirectLossEstimator` learns squared prediction loss from labeled reference
+data, then estimates mean loss for an unlabeled current batch. For regression,
+the mean is estimated MSE. For binary 0/1 targets and predicted probabilities
+of class 1, it is estimated Brier score.
+
+```python
+from sklearn.ensemble import RandomForestRegressor
+from tinyshift.performance import DirectLossEstimator
+
+dle = DirectLossEstimator(
+    learner=RandomForestRegressor(random_state=42),
+    fraction=0.25,
+    chunk_size=100,  # choose close to the usual current batch size
+    interval_method="stddev",
+).fit(X_reference, y_reference, predictions_reference)
+
+result = dle.predict(
+    X_current, predictions_current, degradation_margin=0.10
+)
+print(result.current_estimated, result.relative_delta, result.reference_limit, result.degradation)
+```
+
+`degradation_margin=0.10` requires estimated mean loss to increase by more
+than 10% relative to a held-out reference. `degradation` also requires the
+current estimate to exceed `reference_limit`, learned from the mean estimated
+loss of each reference chunk using `StatisticalInterval`. Set `chunk_size`
+close to the expected current batch size and retain enough reference rows to
+form several chunks. Each batch needs at least two observations. For panel
+data, `DirectLossAnalyzer` fits one
+estimator per ID. See the [performance guide](tinyshift/performance/README.md)
+and [DLE notebook](tinyshift/examples/dle.ipynb) for examples and assumptions.
+
+### 4. Outlier Detection
 
 TinyShift includes sklearn-compatible outlier detection algorithms:
 
@@ -162,7 +197,7 @@ pca_detector.fit(X_train)
 pca_scores = pca_detector.decision_function(X_test)
 pca_outlier_labels = pca_detector.predict(X_test)
 ```
-### 4. Binary Classification Model Evaluation
+### 5. Binary Classification Model Evaluation
 
 Evaluate and visualize classification model performance for production deployment:
 
@@ -200,7 +235,7 @@ beta_confidence_analysis(
     fig_type=None
 )
 ```
-### 5. Time Series Analysis and Diagnostics
+### 6. Time Series Analysis and Diagnostics
 
 TinyShift provides comprehensive time series analysis capabilities:
 
@@ -280,7 +315,7 @@ from tinyshift.plot import pami
 pami(time_series, nlags=20, m=3, delay=1, normalize=False)
 ```
 
-### 6. Forecast Accuracy Metrics
+### 7. Forecast Accuracy Metrics
 
 TinyShift also includes forecast evaluation utilities in the forecasting metrics
 module, implemented in
@@ -310,7 +345,7 @@ These utilities cover:
 - `forecast_instability`: revision magnitude across consecutive forecasts
 - `tail_risk`: expected cost, dispersion, VaR, CVaR, and worst-case loss
 
-### 7. Forecast Stabilization
+### 8. Forecast Stabilization
 
 TinyShift includes forecast interpolation methods and a panel instability metric:
 
@@ -338,7 +373,7 @@ smooth_forecast = hpi(y_hat, w_s=0.4)
 fully_stable_forecast = hfi(y_hat, w_s=0.5)
 ```
 
-### 8. Preprocessing, Features and Forecasting
+### 9. Preprocessing, Features and Forecasting
 
 These responsibilities are exposed through focused packages:
 
@@ -351,7 +386,7 @@ These responsibilities are exposed through focused packages:
 Use `tinyshift.preprocessing` for data transforms and `tinyshift.forecasting` for estimators and predictive
 distributions.
 
-### 9. Advanced Modeling Tools
+### 10. Advanced Modeling Tools
 
 ```python
 from tinyshift.preprocessing import FeatureResidualizer, filter_features_by_vif
@@ -379,7 +414,7 @@ confidence_interval = BootstrapBCA.compute_interval(
 )
 ```
 
-### 10. Decomposed Forecasting with DTL and DMSTL
+### 11. Decomposed Forecasting with DTL and DMSTL
 
 TinyShift includes decomposed forecasting wrappers for non-seasonal and multi-seasonal panel data. `DTLWrapper` extracts a robust LOWESS trend and models residuals with `MLForecast`:
 
@@ -442,7 +477,7 @@ preds = model.predict(h=14, stabilization_method="hfi", w_s=0.2)
 print(preds.head())
 ```
 
-### 11. Two-Stage Probabilistic Demand Forecasting
+### 12. Two-Stage Probabilistic Demand Forecasting
 
 `TwoStageForecasterWrapper` separates the point forecast from uncertainty
 calibration. An `MLForecast` model estimates the conditional mean (`lambda_t`),
@@ -567,6 +602,7 @@ links to it below; public objects are exported from the package's `__init__.py`.
 | `drift` | Categorical and continuous data-drift detection | [README](tinyshift/drift/README.md) |
 | `forecasting` | DTL/DMSTL estimators, probabilistic forecasts, metrics, and stabilization | [README](tinyshift/forecasting/README.md) |
 | `outlier` | HBOS, PCA reconstruction error, and SPAD detectors | [README](tinyshift/outlier/README.md) |
+| `performance` | Direct squared-loss estimation and per-ID monitoring | [README](tinyshift/performance/README.md) |
 | `plot` | Calibration, correlation, power, and time-series diagnostic plots | [README](tinyshift/plot/README.md) |
 | `preprocessing` | Feature residualization, VIF filtering, and robust scaling | [README](tinyshift/preprocessing/README.md) |
 | `series` | Time-series statistics and panel-oriented analyzers | [README](tinyshift/series/README.md) |
