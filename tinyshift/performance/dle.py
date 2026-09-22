@@ -302,6 +302,36 @@ class DirectLossEstimator(BaseEstimator):
         """
         return self.aggregate(self.estimate_loss(X, y_pred))
 
+    def _permutation_deltas(self, current_losses: np.ndarray) -> np.ndarray:
+        """Generate the null distribution of current-minus-reference mean loss.
+
+        Each permutation pools held-out reference and current estimated losses,
+        then reassigns observations while preserving both sample sizes.
+        """
+        pooled = np.concatenate((self.reference_estimated_losses_, current_losses))
+        rng = np.random.default_rng(self.random_state)
+        null_deltas = np.empty(self.n_resamples, dtype=float)
+        for index in range(self.n_resamples):
+            permuted = pooled[rng.permutation(pooled.size)]
+            null_deltas[index] = (
+                permuted[self.reference_size_ :].mean()
+                - permuted[: self.reference_size_].mean()
+            )
+        return null_deltas
+
+    def _calibrate(
+        self, current_losses: np.ndarray, delta: float
+    ) -> tuple[float, float, bool]:
+        """Derive the loss threshold, one-sided p-value, and alert decision."""
+        null_deltas = self._permutation_deltas(current_losses)
+        threshold = self.reference_estimated_ + float(
+            np.quantile(null_deltas, 1 - self.alpha, method="higher")
+        )
+        p_value = float(
+            (1 + np.count_nonzero(null_deltas >= delta)) / (self.n_resamples + 1)
+        )
+        return threshold, p_value, bool(delta > 0 and p_value <= self.alpha)
+
     def predict(self, X, y_pred) -> DirectLossResult:
         """Compare current estimated loss with the held-out reference.
 
@@ -340,21 +370,7 @@ class DirectLossEstimator(BaseEstimator):
         current_size = len(current_losses)
         current_estimated = self.aggregate(current_losses)
         delta = current_estimated - self.reference_estimated_
-        rng = np.random.default_rng(self.random_state)
-        pooled = np.concatenate((self.reference_estimated_losses_, current_losses))
-        null_deltas = np.empty(self.n_resamples, dtype=float)
-        for index in range(self.n_resamples):
-            permuted = pooled[rng.permutation(len(pooled))]
-            null_deltas[index] = (
-                permuted[self.reference_size_ :].mean()
-                - permuted[: self.reference_size_].mean()
-            )
-        threshold = self.reference_estimated_ + float(
-            np.quantile(null_deltas, 1 - self.alpha, method="higher")
-        )
-        p_value = float(
-            (1 + np.count_nonzero(null_deltas >= delta)) / (self.n_resamples + 1)
-        )
+        threshold, p_value, degradation = self._calibrate(current_losses, delta)
         return DirectLossResult(
             reference_estimated=self.reference_estimated_,
             reference_realized=self.reference_realized_,
@@ -363,6 +379,6 @@ class DirectLossEstimator(BaseEstimator):
             estimated_delta=delta,
             threshold=threshold,
             p_value=p_value,
-            degradation=bool(delta > 0 and p_value <= self.alpha),
+            degradation=degradation,
             current_size=current_size,
         )
