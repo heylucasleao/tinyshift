@@ -29,9 +29,11 @@ class DirectLossResult:
     estimated_delta : float
         Current estimated loss minus reference estimated loss.
     threshold : float
-        Upper reference threshold for the current batch's mean estimated loss.
+        Permutation critical value expressed as current mean estimated loss.
+    p_value : float
+        One-sided Monte Carlo p-value for an increase in mean estimated loss.
     degradation : bool
-        Whether ``current_estimated`` exceeds ``threshold``.
+        Whether ``estimated_delta`` is positive and ``p_value <= alpha``.
     current_size : int
         Number of current rows.
     """
@@ -42,6 +44,7 @@ class DirectLossResult:
     current_estimated: float
     estimated_delta: float
     threshold: float
+    p_value: float
     degradation: bool
     current_size: int
 
@@ -63,14 +66,13 @@ class DirectLossEstimator(BaseEstimator):
     fraction : float, default=0.25
         Fraction of the reference rows held out to establish the baseline.
         Must be strictly between zero and one.
-    alert_quantile : float, default=0.99
-        Upper quantile of simulated reference mean-loss differences used to
-        decide whether current estimated loss is unusually high. Must lie
-        strictly between 0.5 and 1.
+    alpha : float, default=0.05
+        Significance level for the one-sided permutation test of increased
+        mean estimated loss. Must lie strictly between zero and one.
     n_resamples : int, default=999
-        Number of reference pseudo-batch pairs used to estimate the threshold.
+        Number of random permutations used to estimate the null distribution.
     random_state : int or None, default=None
-        Seed for reproducible threshold simulation.
+        Seed for reproducible permutations.
 
     Attributes
     ----------
@@ -108,13 +110,13 @@ class DirectLossEstimator(BaseEstimator):
         self,
         learner,
         fraction: float = 0.25,
-        alert_quantile: float = 0.99,
+        alpha: float = 0.05,
         n_resamples: int = 999,
         random_state: int | None = None,
     ) -> None:
         self.learner = learner
         self.fraction = fraction
-        self.alert_quantile = alert_quantile
+        self.alpha = alpha
         self.n_resamples = n_resamples
         self.random_state = random_state
 
@@ -213,12 +215,12 @@ class DirectLossEstimator(BaseEstimator):
         ):
             raise ValueError("fraction must lie strictly between 0 and 1.")
         if (
-            isinstance(self.alert_quantile, (bool, np.bool_))
-            or not isinstance(self.alert_quantile, Real)
-            or not np.isfinite(self.alert_quantile)
-            or not 0.5 < self.alert_quantile < 1
+            isinstance(self.alpha, (bool, np.bool_))
+            or not isinstance(self.alpha, Real)
+            or not np.isfinite(self.alpha)
+            or not 0 < self.alpha < 1
         ):
-            raise ValueError("alert_quantile must lie strictly between 0.5 and 1.")
+            raise ValueError("alpha must lie strictly between 0 and 1.")
         if (
             isinstance(self.n_resamples, (bool, np.bool_))
             or not isinstance(self.n_resamples, Integral)
@@ -314,7 +316,7 @@ class DirectLossEstimator(BaseEstimator):
         -------
         DirectLossResult
             Reference losses, current estimated loss, their difference,
-            reference threshold, and alert indicator.
+            permutation threshold, one-sided p-value, and alert indicator.
 
         Raises
         ------
@@ -323,28 +325,35 @@ class DirectLossEstimator(BaseEstimator):
 
         Notes
         -----
-        Reference losses are resampled into two independent pseudo-batches of
-        sizes ``reference_size_`` and ``current_size``. The upper quantile of
-        their mean differences is added to ``reference_estimated_`` to form
-        the threshold. This characterizes variation in *predicted* loss under
-        the empirical reference distribution. It does not include uncertainty
-        in the fitted learner or confirm realized degradation.
+        Held-out reference and current predicted losses are pooled. Each
+        permutation redistributes them into groups of their original sizes.
+        The statistic is current mean minus reference mean, with the one-sided
+        alternative that current mean loss is greater. The threshold is the
+        ``1 - alpha`` quantile of permuted deltas added to reference mean.
+        The p-value uses the plus-one Monte Carlo correction and determines
+        ``degradation``. Valid inference requires exchangeable observations
+        under the null hypothesis. This tests *predicted* loss and does not
+        include uncertainty in the fitted learner or confirm realized loss.
         """
         check_is_fitted(self, "reference_estimated_")
-        current_size = len(self._vector(y_pred, "y_pred"))
-        current_estimated = self.estimate(X, y_pred)
+        current_losses = self.estimate_loss(X, y_pred)
+        current_size = len(current_losses)
+        current_estimated = self.aggregate(current_losses)
         delta = current_estimated - self.reference_estimated_
         rng = np.random.default_rng(self.random_state)
-        losses = self.reference_estimated_losses_
+        pooled = np.concatenate((self.reference_estimated_losses_, current_losses))
         null_deltas = np.empty(self.n_resamples, dtype=float)
         for index in range(self.n_resamples):
-            pseudo_current = rng.choice(losses, size=current_size, replace=True)
-            pseudo_reference = rng.choice(
-                losses, size=self.reference_size_, replace=True
+            permuted = pooled[rng.permutation(len(pooled))]
+            null_deltas[index] = (
+                permuted[self.reference_size_ :].mean()
+                - permuted[: self.reference_size_].mean()
             )
-            null_deltas[index] = pseudo_current.mean() - pseudo_reference.mean()
         threshold = self.reference_estimated_ + float(
-            np.quantile(null_deltas, self.alert_quantile, method="higher")
+            np.quantile(null_deltas, 1 - self.alpha, method="higher")
+        )
+        p_value = float(
+            (1 + np.count_nonzero(null_deltas >= delta)) / (self.n_resamples + 1)
         )
         return DirectLossResult(
             reference_estimated=self.reference_estimated_,
@@ -353,6 +362,7 @@ class DirectLossEstimator(BaseEstimator):
             current_estimated=current_estimated,
             estimated_delta=delta,
             threshold=threshold,
-            degradation=bool(current_estimated > threshold),
+            p_value=p_value,
+            degradation=bool(delta > 0 and p_value <= self.alpha),
             current_size=current_size,
         )

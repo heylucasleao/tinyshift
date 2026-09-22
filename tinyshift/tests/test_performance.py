@@ -32,6 +32,7 @@ def test_direct_loss_estimator_models_mse_and_binary_brier():
     assert result.current_estimated == pytest.approx(0.5625)
     assert result.estimated_delta == pytest.approx(0)
     assert result.threshold == pytest.approx(0.5625)
+    assert result.p_value == 1.0
     assert not result.degradation
     assert result.current_size == 3
 
@@ -58,7 +59,7 @@ def test_direct_loss_predict_requires_fit_and_valid_split():
         estimator.fit([[0.0], [1.0]], [0.0, 1.0], [0.0, 0.0])
 
 
-def test_degradation_threshold_adapts_to_current_batch_size():
+def test_permutation_test_detects_increase_with_sufficient_batch_size():
     X = np.arange(20.0).reshape(-1, 1)
     estimator = DirectLossEstimator(
         LinearRegression(), fraction=0.25, n_resamples=999, random_state=42
@@ -71,12 +72,18 @@ def test_degradation_threshold_adapts_to_current_batch_size():
     assert small.reference_estimated == large.reference_estimated
     assert small.estimated_delta > 0
     assert not small.degradation
+    assert small.p_value > estimator.alpha
+    assert large.p_value <= estimator.alpha
+    assert large.degradation
+    improved = estimator.predict(np.full((100, 1), 13.0), np.zeros(100))
+    assert not improved.degradation
+    assert improved.p_value > estimator.alpha
 
 
 @pytest.mark.parametrize(
     "kwargs, message",
     [
-        ({"alert_quantile": 0.5}, "alert_quantile"),
+        ({"alpha": 0.0}, "alpha"),
         ({"n_resamples": 0}, "n_resamples"),
     ],
 )
@@ -85,21 +92,6 @@ def test_direct_loss_rejects_invalid_alert_settings(kwargs, message):
         DirectLossEstimator(DummyRegressor(), **kwargs).fit(
             [[0.0], [1.0], [2.0], [3.0]], [0.0] * 4, [0.0] * 4
         )
-
-
-def test_high_loss_flags_compare_predicted_losses_on_the_same_scale():
-    X = np.arange(8.0).reshape(-1, 1)
-    estimator = DirectLossEstimator(LinearRegression(), fraction=0.25).fit(
-        X, np.sqrt(X.ravel()), np.zeros(8)
-    )
-
-    np.testing.assert_allclose(estimator.reference_estimated_losses_, [6.0, 7.0])
-    np.testing.assert_array_equal(
-        estimator.high_estimated_loss_mask([[4.0], [8.0]], [0.0, 0.0]),
-        [False, True],
-    )
-    with pytest.raises(ValueError, match="quantile"):
-        estimator.high_estimated_loss_mask([[8.0]], [0.0], quantile=1.1)
 
 
 def test_analyzer_uses_held_out_reference_and_independent_ids():

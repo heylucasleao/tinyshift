@@ -32,13 +32,13 @@ from tinyshift.performance import DirectLossEstimator
 dle = DirectLossEstimator(
     learner=RandomForestRegressor(random_state=42),
     fraction=0.25,
-    alert_quantile=0.99,
+    alpha=0.05,
     n_resamples=999,
     random_state=42,
 ).fit(X_reference, y_reference, predictions_reference)
 
 result = dle.predict(X_current, predictions_current)
-print(result.current_estimated, result.threshold, result.degradation)
+print(result.current_estimated, result.p_value, result.degradation)
 ```
 
 Reference rows retain their input order. The first `1 - fraction` train the
@@ -57,8 +57,9 @@ actual prediction behavior.
 | `reference_size` | Number of held-out reference rows |
 | `current_estimated` | Learner's estimated mean loss on current rows |
 | `estimated_delta` | `current_estimated - reference_estimated` |
-| `threshold` | Upper reference threshold for the current mean estimated loss |
-| `degradation` | Whether `current_estimated > threshold` |
+| `threshold` | Permutation critical value expressed as current mean estimated loss |
+| `p_value` | One-sided Monte Carlo p-value for increased estimated loss |
+| `degradation` | Whether `estimated_delta > 0` and `p_value <= alpha` |
 | `current_size` | Number of current rows |
 
 The two estimated values are compared so that the delta is measured on the
@@ -67,28 +68,21 @@ held-out labeled data. `estimate(X_current, predictions_current)` returns only
 the numeric current loss estimate; `estimate_loss(...)` returns one estimated
 loss per row.
 
-For each `predict` call, DLE resamples the held-out **estimated** losses into
-two pseudo-batches: one with `reference_size` rows and one with `current_size`
-rows. It records the difference between their mean losses over `n_resamples`
-draws. The upper `alert_quantile` of those differences, added to
-`reference_estimated`, is the threshold. This adapts the alert to the size of
-the current batch without requiring a user-supplied error increase. Set
-`random_state` to reproduce the simulated threshold. Small or dependent
-reference samples can make the threshold unreliable.
-
-To identify rows whose **predicted** loss is unusually high, DLE stores the
-learner's per-row predictions on the held-out reference. `high_estimated_loss_mask`
-compares current predicted losses with a quantile of those held-out predictions:
+For each `predict` call, DLE pools the held-out and current **estimated**
+per-row losses. It randomly permutes group assignments `n_resamples` times,
+preserving both sample sizes, and recalculates the difference between current
+and reference mean loss. The one-sided p-value uses the plus-one correction:
 
 ```python
-flags = dle.high_estimated_loss_mask(X_current, predictions_current, quantile=0.99)
+(1 + number_of_permuted_deltas_at_least_observed) / (n_resamples + 1)
 ```
 
-The result is one boolean per current row. It requires no current targets.
-The threshold uses predicted losses on both sides of the comparison, and rows
-equal to the threshold are not flagged. A flag is a forecast of high error,
-not an observed outlier or a statistical test. With a small held-out sample,
-high quantiles have limited resolution.
+The `threshold` is `reference_estimated` plus the `1 - alpha` quantile of
+permuted differences. The decision follows `p_value <= alpha`; with finite
+permutations, it need not agree exactly with comparing against the displayed
+threshold. Set `random_state` to reproduce the permutation result. As in
+`ConDrift`, the test assumes observations are exchangeable under the null
+hypothesis; temporal dependence can violate that assumption.
 
 ## Panel analyzer
 
@@ -130,23 +124,23 @@ labeled reference: X, y, y_pred
               │
               └── last fraction ───────> observed and estimated baseline loss
                                               │
-                                      resample reference means
+                                pool reference and current losses
                                               │
-                                       upper batch threshold
+                                    permute group assignments
                                               │
-current: X, y_pred ──> estimated current loss ─┴─> estimated_delta
+current: X, y_pred ──> estimated current loss ─┴─> delta and p_value
                                               │
-                                    current_estimated > threshold?
+                                 delta > 0 and p_value <= alpha?
                                                │          │
                                               yes         no
                                           degradation   no increase
 ```
 
 A positive `estimated_delta` means estimated loss increased relative to the
-estimated reference baseline. `degradation` means the increase exceeded the
-simulated reference threshold. It is **not** a p-value or confirmation that
-realized performance changed. Repeated monitoring can also produce alerts by
-chance, even if the reference regime remains stable.
+estimated reference baseline. `degradation` means that increase passed the
+one-sided permutation test. The p-value concerns **estimated** loss; it does
+not confirm that realized performance changed. Repeated monitoring can also
+produce alerts by chance, even if the reference regime remains stable.
 DLE needs the learned relationship between inputs and loss to remain useful on
 current data. For classification, changed probability calibration can break
 that relationship. Compare estimates with realized loss as current labels
