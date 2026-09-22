@@ -72,6 +72,9 @@ class DirectLossEstimator(BaseEstimator):
         Estimated and observed mean squared loss on held-out reference rows.
     reference_size_ : int
         Number of held-out reference rows.
+    reference_estimated_losses_ : numpy.ndarray
+        Per-row losses predicted for the held-out reference. Used to set a
+        threshold for unusually high predicted loss.
 
     Notes
     -----
@@ -202,7 +205,10 @@ class DirectLossEstimator(BaseEstimator):
         self.n_features_in_ = features.shape[1]
         holdout_losses = self.observed_loss(target[split:], predictions[split:])
         self.reference_realized_ = self.aggregate(holdout_losses)
-        self.reference_estimated_ = self.estimate(features[split:], predictions[split:])
+        self.reference_estimated_losses_ = self.estimate_loss(
+            features[split:], predictions[split:]
+        )
+        self.reference_estimated_ = self.aggregate(self.reference_estimated_losses_)
         self.reference_size_ = len(holdout_losses)
         return self
 
@@ -259,6 +265,43 @@ class DirectLossEstimator(BaseEstimator):
             Estimated MSE, or binary Brier score for binary probabilities.
         """
         return self.aggregate(self.estimate_loss(X, y_pred))
+
+    def high_estimated_loss_mask(self, X, y_pred, quantile: float = 0.99) -> np.ndarray:
+        """Flag rows with predicted loss above a held-out reference quantile.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Current numeric features.
+        y_pred : array-like of shape (n_samples,)
+            Current predictions or binary class-1 probabilities.
+        quantile : float, default=0.99
+            Quantile of held-out *predicted* losses used as the threshold.
+            Must lie in ``[0, 1]``.
+
+        Returns
+        -------
+        numpy.ndarray of bool, shape (n_samples,)
+            Whether each predicted loss is strictly above the threshold.
+
+        Notes
+        -----
+        These flags identify unusually high **predicted** loss, not observed
+        errors. Their reliability depends on the loss learner remaining useful
+        for current data. Ties at the threshold are not flagged.
+        """
+        check_is_fitted(self, "reference_estimated_losses_")
+        if (
+            isinstance(quantile, (bool, np.bool_))
+            or not isinstance(quantile, Real)
+            or not np.isfinite(quantile)
+            or not 0 <= quantile <= 1
+        ):
+            raise ValueError("quantile must be finite and lie in [0, 1].")
+        threshold = np.quantile(
+            self.reference_estimated_losses_, quantile, method="higher"
+        )
+        return self.estimate_loss(X, y_pred) > threshold
 
     def predict(self, X, y_pred) -> DirectLossResult:
         """Compare current estimated loss with the held-out reference.

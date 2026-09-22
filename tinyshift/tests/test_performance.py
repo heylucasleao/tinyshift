@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from sklearn.dummy import DummyRegressor
 from sklearn.exceptions import NotFittedError
+from sklearn.linear_model import LinearRegression
 
 from tinyshift.performance import DirectLossAnalyzer, DirectLossEstimator, DirectLossResult
 
@@ -54,6 +55,21 @@ def test_direct_loss_predict_requires_fit_and_valid_split():
         estimator.predict([[0.0]], [0.0])
     with pytest.raises(ValueError, match="two fitting rows"):
         estimator.fit([[0.0], [1.0]], [0.0, 1.0], [0.0, 0.0])
+
+
+def test_high_loss_flags_compare_predicted_losses_on_the_same_scale():
+    X = np.arange(8.0).reshape(-1, 1)
+    estimator = DirectLossEstimator(LinearRegression(), fraction=0.25).fit(
+        X, np.sqrt(X.ravel()), np.zeros(8)
+    )
+
+    np.testing.assert_allclose(estimator.reference_estimated_losses_, [6.0, 7.0])
+    np.testing.assert_array_equal(
+        estimator.flag_high_loss([[4.0], [8.0]], [0.0, 0.0]),
+        [False, True],
+    )
+    with pytest.raises(ValueError, match="quantile"):
+        estimator.flag_high_loss([[8.0]], [0.0], quantile=1.1)
 
 
 def test_analyzer_uses_held_out_reference_and_independent_ids():

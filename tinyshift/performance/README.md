@@ -63,6 +63,20 @@ held-out labeled data. `estimate(X_current, predictions_current)` returns only
 the numeric current loss estimate; `estimate_loss(...)` returns one estimated
 loss per row.
 
+To identify rows whose **predicted** loss is unusually high, DLE stores the
+learner's per-row predictions on the held-out reference. `flag_high_loss`
+compares current predicted losses with a quantile of those held-out predictions:
+
+```python
+flags = dle.flag_high_loss(X_current, predictions_current, quantile=0.99)
+```
+
+The result is one boolean per current row. It requires no current targets.
+The threshold uses predicted losses on both sides of the comparison, and rows
+equal to the threshold are not flagged. A flag is a forecast of high error,
+not an observed outlier or a statistical test. With a small held-out sample,
+high quantiles have limited resolution.
+
 ## Panel analyzer
 
 `DirectLossAnalyzer` clones and fits one DLE for each `unique_id`, then runs
