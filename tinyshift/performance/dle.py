@@ -64,6 +64,15 @@ class DirectLossEstimator(BaseEstimator):
     labels encoded as 0 and 1 and predicted probabilities for class 1, it is
     the binary Brier score.
 
+    The approach follows the Direct Loss Estimation (DLE) principle used in
+    NannyML: an auxiliary model is trained to estimate the monitored model's
+    per-observation loss from model inputs and predictions. Reference chunk
+    variability is then used to establish a monitoring threshold.
+
+    This implementation is not a reproduction of NannyML's DLE. It uses
+    squared loss exclusively and additionally supports an explicit relative
+    degradation margin.
+
     Parameters
     ----------
     learner : sklearn-compatible regressor
@@ -273,7 +282,9 @@ class DirectLossEstimator(BaseEstimator):
             self.reference_estimated_losses_,
             max(1, self.reference_size_ // self.chunk_size),
         )
-        self.reference_chunk_losses_ = np.array([self.aggregate(chunk) for chunk in chunks])
+        self.reference_chunk_losses_ = np.array(
+            [self.aggregate(chunk) for chunk in chunks]
+        )
         _, upper = StatisticalInterval.compute_interval(
             self.reference_chunk_losses_, self.interval_method
         )
