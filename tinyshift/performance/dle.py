@@ -128,6 +128,49 @@ class DirectLossEstimator(BaseEstimator):
         self.n_resamples = n_resamples
         self.random_state = random_state
 
+    def _validate_params(self) -> None:
+        """Validate configuration used when fitting the reference."""
+        if (
+            isinstance(self.fraction, (bool, np.bool_))
+            or not isinstance(self.fraction, Real)
+            or not np.isfinite(self.fraction)
+            or not 0 < self.fraction < 1
+        ):
+            raise ValueError("fraction must lie strictly between 0 and 1.")
+        if (
+            isinstance(self.alpha, (bool, np.bool_))
+            or not isinstance(self.alpha, Real)
+            or not np.isfinite(self.alpha)
+            or not 0 < self.alpha < 1
+        ):
+            raise ValueError("alpha must lie strictly between 0 and 1.")
+        if (
+            isinstance(self.n_resamples, (bool, np.bool_))
+            or not isinstance(self.n_resamples, Integral)
+            or self.n_resamples < 1
+        ):
+            raise ValueError("n_resamples must be a positive integer.")
+
+    @staticmethod
+    def _validate_margin(degradation_margin: float) -> None:
+        """Require a finite, nonnegative relative degradation margin."""
+        if (
+            isinstance(degradation_margin, (bool, np.bool_))
+            or not isinstance(degradation_margin, Real)
+            or not np.isfinite(degradation_margin)
+            or degradation_margin < 0
+        ):
+            raise ValueError("degradation_margin must be finite and nonnegative.")
+
+    def _reference_split(self, n_samples: int) -> int:
+        """Return the fitting split after checking both reference partitions."""
+        split = int(np.floor(n_samples * (1 - self.fraction)))
+        if split < 2 or split == n_samples:
+            raise ValueError(
+                "Reference needs at least two fitting rows and one held-out row."
+            )
+        return split
+
     @staticmethod
     def _inputs(X, y_pred):
         features = check_array(X, ensure_2d=True, dtype=float)
@@ -215,33 +258,10 @@ class DirectLossEstimator(BaseEstimator):
         fit the learner and the remaining rows establish the reference
         baseline. For time series, order rows before calling this method.
         """
-        if (
-            isinstance(self.fraction, (bool, np.bool_))
-            or not isinstance(self.fraction, Real)
-            or not np.isfinite(self.fraction)
-            or not 0 < self.fraction < 1
-        ):
-            raise ValueError("fraction must lie strictly between 0 and 1.")
-        if (
-            isinstance(self.alpha, (bool, np.bool_))
-            or not isinstance(self.alpha, Real)
-            or not np.isfinite(self.alpha)
-            or not 0 < self.alpha < 1
-        ):
-            raise ValueError("alpha must lie strictly between 0 and 1.")
-        if (
-            isinstance(self.n_resamples, (bool, np.bool_))
-            or not isinstance(self.n_resamples, Integral)
-            or self.n_resamples < 1
-        ):
-            raise ValueError("n_resamples must be a positive integer.")
+        self._validate_params()
         features, predictions = self._inputs(X, y_pred)
         target = self._target(y_true, len(features))
-        split = int(np.floor(len(features) * (1 - self.fraction)))
-        if split < 2 or split == len(features):
-            raise ValueError(
-                "Reference needs at least two fitting rows and one held-out row."
-            )
+        split = self._reference_split(len(features))
         losses = self.observed_loss(target[:split], predictions[:split])
         model = clone(self.learner)
         model.fit(np.column_stack((features[:split], predictions[:split])), losses)
@@ -311,10 +331,8 @@ class DirectLossEstimator(BaseEstimator):
         return self.aggregate(self.estimate_loss(X, y_pred))
 
     @staticmethod
-    def _studentized_mean_difference(
-        reference: np.ndarray, current: np.ndarray
-    ) -> float:
-        """Return current-minus-reference mean divided by its standard error."""
+    def _welch_t_statistic(reference: np.ndarray, current: np.ndarray) -> float:
+        """Return Welch's t statistic for current minus reference means."""
         difference = float(np.mean(current) - np.mean(reference))
         reference_var = float(np.var(reference, ddof=1)) if len(reference) > 1 else 0.0
         current_var = float(np.var(current, ddof=1)) if len(current) > 1 else 0.0
@@ -326,13 +344,13 @@ class DirectLossEstimator(BaseEstimator):
         return difference / standard_error
 
     def _permutation_statistics(self, adjusted_current: np.ndarray) -> np.ndarray:
-        """Generate studentized statistics under permuted group assignments."""
+        """Generate Welch t statistics under permuted group assignments."""
         pooled = np.concatenate((self.reference_estimated_losses_, adjusted_current))
         rng = np.random.default_rng(self.random_state)
         statistics = np.empty(self.n_resamples, dtype=float)
         for index in range(self.n_resamples):
             permuted = pooled[rng.permutation(pooled.size)]
-            statistics[index] = self._studentized_mean_difference(
+            statistics[index] = self._welch_t_statistic(
                 permuted[: self.reference_size_], permuted[self.reference_size_ :]
             )
         return statistics
@@ -343,9 +361,9 @@ class DirectLossEstimator(BaseEstimator):
         degradation_margin: float,
         relative_delta: float,
     ) -> tuple[float, bool]:
-        """Test the relative increase using a studentized permutation statistic."""
+        """Test the relative increase using a permuted Welch t statistic."""
         adjusted_current = current_losses / (1.0 + degradation_margin)
-        observed = self._studentized_mean_difference(
+        observed = self._welch_t_statistic(
             self.reference_estimated_losses_, adjusted_current
         )
         null_statistics = self._permutation_statistics(adjusted_current)
@@ -354,6 +372,12 @@ class DirectLossEstimator(BaseEstimator):
         )
         degradation = relative_delta > degradation_margin and p_value <= self.alpha
         return p_value, bool(degradation)
+
+    def _relative_delta(self, current_estimated: float) -> float:
+        """Return relative loss change, including a zero-reference baseline."""
+        if self.reference_estimated_ == 0:
+            return float("inf") if current_estimated > 0 else 0.0
+        return current_estimated / self.reference_estimated_ - 1.0
 
     def predict(self, X, y_pred, degradation_margin: float = 0.0) -> DirectLossResult:
         """Test whether current estimated loss exceeds a relative margin.
@@ -385,29 +409,21 @@ class DirectLossEstimator(BaseEstimator):
         -----
         Dividing current losses by ``1 + degradation_margin`` transforms the
         boundary of the relative-margin hypothesis into equality of means.
-        The permutation statistic is the studentized difference between group
-        means. The plus-one correction gives the one-sided Monte Carlo p-value.
+        The permutation statistic is Welch's t statistic for the difference
+        between group means. The plus-one correction gives the one-sided
+        Monte Carlo p-value.
         Exact finite-sample validity requires exchangeability under the null;
         with unequal variances, studentization supports an asymptotic
         approximation for independent observations. This tests *predicted*
         loss and does not confirm realized degradation.
         """
         check_is_fitted(self, "reference_estimated_")
-        if (
-            isinstance(degradation_margin, (bool, np.bool_))
-            or not isinstance(degradation_margin, Real)
-            or not np.isfinite(degradation_margin)
-            or degradation_margin < 0
-        ):
-            raise ValueError("degradation_margin must be finite and nonnegative.")
+        self._validate_margin(degradation_margin)
         current_losses = self.estimate_loss(X, y_pred)
         current_size = len(current_losses)
         current_estimated = self.aggregate(current_losses)
         delta = current_estimated - self.reference_estimated_
-        if self.reference_estimated_ == 0:
-            relative_delta = float("inf") if current_estimated > 0 else 0.0
-        else:
-            relative_delta = current_estimated / self.reference_estimated_ - 1.0
+        relative_delta = self._relative_delta(current_estimated)
         p_value, degradation = self._calibrate(
             current_losses, degradation_margin, relative_delta
         )

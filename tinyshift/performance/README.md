@@ -74,12 +74,12 @@ loss per row.
 `degradation_margin` changes the hypothesis being tested. With a margin `m`,
 the null is that current mean estimated loss has increased by **at most** `m`
 relative to reference. DLE divides current per-row losses by `1 + m`, then
-compares their adjusted mean with the reference mean. A studentized statistic
+compares their adjusted mean with the reference mean. Welch's t statistic
 divides the difference between means by its estimated standard error.
 
 For each `predict` call, DLE pools the held-out and adjusted current
 **estimated** losses. It randomly permutes group assignments `n_resamples`
-times, preserving both sample sizes, and recalculates the studentized
+times, preserving both sample sizes, and recalculates Welch's t
 statistic. The one-sided p-value uses the plus-one correction:
 
 ```python

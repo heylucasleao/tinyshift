@@ -64,7 +64,7 @@ def test_direct_loss_predict_requires_fit_and_valid_split():
         estimator.fit([[0.0], [1.0]], [0.0, 1.0], [0.0, 0.0])
 
 
-def test_studentized_permutation_tests_relative_degradation_margin():
+def test_welch_permutation_tests_relative_degradation_margin():
     X = np.arange(20.0).reshape(-1, 1)
     estimator = DirectLossEstimator(
         LinearRegression(), fraction=0.25, n_resamples=999, random_state=42
