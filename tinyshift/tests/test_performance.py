@@ -10,10 +10,13 @@ from tinyshift.performance import DirectLossAnalyzer, DirectLossEstimator
 
 
 def test_direct_loss_estimator_models_mse_and_binary_brier():
+    with pytest.raises(TypeError, match="learner"):
+        DirectLossEstimator()
+
     X = np.arange(8, dtype=float).reshape(-1, 1)
     y_pred = np.full(8, 0.25)
     y_true = np.ones(8)
-    estimator = DirectLossEstimator(estimator=DummyRegressor(strategy="mean"))
+    estimator = DirectLossEstimator(learner=DummyRegressor(strategy="mean"))
     estimator.fit(X, y_true, y_pred)
 
     np.testing.assert_allclose(estimator.observed_loss(y_true, y_pred), 0.5625)
@@ -35,12 +38,12 @@ def test_analyzer_uses_held_out_reference_and_independent_ids():
         {"unique_id": ["B", "A"], "x": [20.0, 21.0], "y_pred": [0.0, 0.0]}
     )
     analyzer = DirectLossAnalyzer(
-        DirectLossEstimator(estimator=DummyRegressor(strategy="mean"))
+        DirectLossEstimator(learner=DummyRegressor(strategy="mean")), fraction=0.25
     ).fit(reference, feature_cols=["x"])
 
     result = analyzer.predict(current)
     assert result["unique_id"].tolist() == ["B", "A"]
-    assert result["metric"].tolist() == ["mse", "mse"]
+    assert "metric" not in result.columns
     assert result["reference_realized"].tolist() == [9.0, 1.0]
     assert result["current_estimated"].tolist() == [9.0, 1.0]
     assert result["reference_size"].tolist() == [2, 2]
@@ -53,6 +56,14 @@ def test_analyzer_uses_held_out_reference_and_independent_ids():
     analyzer.fit(reference, feature_cols=["x"])
     with pytest.raises(NotFittedError):
         analyzer.summary()
+
+
+def test_analyzer_validates_fraction():
+    reference = pd.DataFrame(
+        {"unique_id": ["A"] * 4, "x": [0, 1, 2, 3], "y": [0] * 4, "y_pred": [0] * 4}
+    )
+    with pytest.raises(ValueError, match="fraction"):
+        DirectLossAnalyzer(fraction=0).fit(reference, feature_cols=["x"])
 
 
 def test_analyzer_requires_fitted_ids_and_current_predictions():
@@ -89,11 +100,11 @@ def test_analyzer_estimates_binary_brier_without_current_labels():
     )
     current = pd.DataFrame({"unique_id": ["A"], "x": [10.0], "y_pred": [0.5]})
     analyzer = DirectLossAnalyzer(
-        DirectLossEstimator(estimator=DummyRegressor(strategy="mean"))
+        DirectLossEstimator(learner=DummyRegressor(strategy="mean"))
     ).fit(reference, feature_cols=["x"])
 
     row = analyzer.predict(current).iloc[0]
     assert row["reference_realized"] == pytest.approx(0.04)
     assert row["current_estimated"] == pytest.approx(0.04)
-    assert row["metric"] == "mse"
+    assert "metric" not in row.index
     assert not bool(row["degradation"])

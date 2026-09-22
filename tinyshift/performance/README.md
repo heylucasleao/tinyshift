@@ -7,15 +7,18 @@ and the predicted probability of class 1; the same calculation is the binary
 Brier score. It uses numeric features and the prediction to model per-row loss.
 
 ```python
+from sklearn.ensemble import RandomForestRegressor
 from tinyshift.performance import DirectLossEstimator
 
-dle = DirectLossEstimator().fit(X_reference, y_reference, predictions_reference)
+dle = DirectLossEstimator(learner=RandomForestRegressor()).fit(
+    X_reference, y_reference, predictions_reference
+)
 estimated_mse = dle.estimate(X_current, predictions_current)
 ```
 
 `DirectLossAnalyzer` fits one cloned estimator per panel ID. Each reference ID
 needs at least two fitting rows and one held-out row. The last
-`validation_fraction` of each ID forms the baseline, so order rows within an
+`fraction` of each ID forms the baseline, so order rows within an
 ID as intended. Current targets are not required.
 
 ```python

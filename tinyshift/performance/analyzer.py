@@ -7,31 +7,69 @@
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.utils.validation import check_is_fitted
 
 from .dle import DirectLossEstimator
 
 
 class DirectLossAnalyzer(BaseEstimator):
-    """Estimate squared loss independently for each panel ID.
+    """Estimate model loss independently for each panel ID.
 
-    The first ``1 - validation_fraction`` of each reference group fits its loss
-    model. The remaining observations form a held-out baseline. Order rows
-    chronologically within each ID when using the split for time series.
+    The analyzer clones one :class:`DirectLossEstimator` per reference ID. The
+    first ``1 - fraction`` of each ID fits its loss model; the remaining rows
+    form a held-out baseline. :meth:`predict` estimates loss for current rows
+    without observed targets.
 
-    ``degradation`` indicates a positive change in estimated metric, not a
-    statistical hypothesis test or a verified change in realized performance.
+    Parameters
+    ----------
+    estimator : DirectLossEstimator or None, default=None
+        Estimator template cloned for each ID. By default, use a DLE with a
+        random forest regressor as its learner.
+    fraction : float, default=0.25
+        Fraction of each reference ID reserved for the held-out baseline.
+        Must be strictly between zero and one.
+
+    Attributes
+    ----------
+    estimators_ : dict
+        Fitted DLE for each reference ID.
+    baselines_ : dict
+        Held-out estimated loss, realized loss, and sample size for each ID.
+    results_ : dict
+        Most recent prediction result keyed by ID. Created by :meth:`predict`.
+
+    Notes
+    -----
+    Reference rows retain their input order. For time series, order rows
+    chronologically within each ID before fitting. ``degradation`` indicates
+    a positive change in estimated loss; it is not a significance test or
+    confirmation of realized degradation.
+
+    Examples
+    --------
+    >>> analyzer = DirectLossAnalyzer(fraction=0.25)
+    >>> analyzer.fit(reference_df, feature_cols=["feature_a", "feature_b"])
+    >>> result = analyzer.predict(current_df)
     """
 
     def __init__(
         self,
         estimator: DirectLossEstimator | None = None,
-        validation_fraction: float = 0.25,
+        fraction: float = 0.25,
     ) -> None:
         if estimator is not None and not isinstance(estimator, DirectLossEstimator):
             raise TypeError("estimator must be a DirectLossEstimator.")
-        self.estimator = DirectLossEstimator() if estimator is None else estimator
-        self.validation_fraction = validation_fraction
+        self.estimator = (
+            DirectLossEstimator(
+                learner=RandomForestRegressor(
+                    n_estimators=100, min_samples_leaf=3, random_state=42
+                )
+            )
+            if estimator is None
+            else estimator
+        )
+        self.fraction = fraction
 
     @staticmethod
     def _validate_frame(df, required, id_col):
@@ -53,9 +91,36 @@ class DirectLossAnalyzer(BaseEstimator):
         target_col: str = "y",
         prediction_col: str = "y_pred",
     ) -> "DirectLossAnalyzer":
-        """Fit one loss estimator per ID on labeled reference predictions."""
-        if not 0 < self.validation_fraction < 1:
-            raise ValueError("validation_fraction must lie strictly between 0 and 1.")
+        """Fit one loss estimator and held-out baseline per reference ID.
+
+        Parameters
+        ----------
+        reference : pandas.DataFrame
+            Labeled reference panel in long format.
+        feature_cols : list of str
+            Distinct numeric feature columns supplied to the loss model.
+        id_col : str, default="unique_id"
+            Column identifying independent panel groups.
+        target_col : str, default="y"
+            Column with observed targets.
+        prediction_col : str, default="y_pred"
+            Column with monitored model predictions or class-1 probabilities.
+
+        Returns
+        -------
+        DirectLossAnalyzer
+            Fitted analyzer.
+
+        Raises
+        ------
+        TypeError
+            If ``reference`` is not a pandas DataFrame.
+        ValueError
+            If the panel, column choices, or ``fraction`` are invalid, or an ID
+            lacks two training rows and one held-out row.
+        """
+        if not 0 < self.fraction < 1:
+            raise ValueError("fraction must lie strictly between 0 and 1.")
         if not feature_cols or len(feature_cols) != len(set(feature_cols)):
             raise ValueError("feature_cols must contain distinct feature names.")
         if set(feature_cols) & {id_col, target_col, prediction_col}:
@@ -82,7 +147,7 @@ class DirectLossAnalyzer(BaseEstimator):
 
     def _fit_single(self, unique_id, group, feature_cols, target_col, prediction_col):
         """Fit one ID's loss model and calculate its held-out baseline."""
-        split = int(np.floor(len(group) * (1 - self.validation_fraction)))
+        split = int(np.floor(len(group) * (1 - self.fraction)))
         if split < 2 or split == len(group):
             raise ValueError(
                 f"ID {unique_id!r} needs at least two fitting rows and one held-out row."
@@ -110,7 +175,6 @@ class DirectLossAnalyzer(BaseEstimator):
         )
         delta = estimated - baseline["reference_estimated"]
         return {
-            "metric": "mse",
             **baseline,
             "current_estimated": estimated,
             "estimated_delta": delta,
@@ -124,10 +188,30 @@ class DirectLossAnalyzer(BaseEstimator):
         id_col: str | None = None,
         prediction_col: str | None = None,
     ) -> pd.DataFrame:
-        """Return estimated loss and change for each current ID.
+        """Estimate current loss and its change from the held-out baseline.
 
-        Optional column names let the current frame use different ID and
-        prediction columns from the reference frame. Feature names are shared.
+        Parameters
+        ----------
+        current : pandas.DataFrame
+            Unlabeled current panel containing the fitted feature columns.
+        id_col : str or None, default=None
+            Current identifier column; defaults to the reference column.
+        prediction_col : str or None, default=None
+            Current prediction column; defaults to the reference column.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per current ID in first-appearance order. Includes the
+            reference estimated and realized loss, current estimated loss,
+            estimated delta, degradation flag, and sample sizes.
+
+        Raises
+        ------
+        sklearn.exceptions.NotFittedError
+            If :meth:`fit` has not been called.
+        ValueError
+            If current data are invalid or contain an ID without a reference.
         """
         check_is_fitted(self, "estimators_")
         id_col = self.id_col_ if id_col is None else id_col
@@ -150,7 +234,30 @@ class DirectLossAnalyzer(BaseEstimator):
         return self.summary()
 
     def summary(self) -> pd.DataFrame:
-        """Return a copy of the most recent prediction result."""
+        """Return the most recent per-ID prediction as a table.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Same rows and columns as the latest :meth:`predict` result.
+
+        Columns
+        -------
+        **reference_estimated**, **reference_realized** : ``float``
+            Estimated and observed loss on held-out reference rows.
+        **current_estimated**, **estimated_delta** : ``float``
+            Estimated current loss and its difference from the estimated
+            reference baseline.
+        **degradation** : ``bool``
+            Whether the estimated delta is positive.
+        **reference_size**, **current_size** : ``int``
+            Number of held-out reference and current rows.
+
+        Raises
+        ------
+        sklearn.exceptions.NotFittedError
+            If :meth:`predict` has not been called since the latest fit.
+        """
         check_is_fitted(self, "results_")
         rows = [
             {self.result_id_col_: unique_id, **result}
