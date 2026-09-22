@@ -37,7 +37,7 @@ def test_direct_loss_estimator_models_mse_and_binary_brier():
     assert result.estimated_delta == pytest.approx(0)
     assert result.relative_delta == pytest.approx(0)
     assert result.degradation_margin == 0.0
-    assert result.p_value == 1.0
+    assert result.reference_limit == pytest.approx(0.5625)
     assert not result.degradation
     assert result.current_size == 3
 
@@ -70,22 +70,21 @@ def test_direct_loss_predict_requires_fit_and_valid_split():
         fitted.predict([[0.0]], [0.0])
 
 
-def test_welch_permutation_tests_relative_degradation_margin():
+@pytest.mark.parametrize("method", ["stddev", "mad", "iqr"])
+def test_reference_chunk_interval_and_relative_degradation_margin(method):
     X = np.arange(20.0).reshape(-1, 1)
     estimator = DirectLossEstimator(
-        LinearRegression(), fraction=0.25, n_resamples=999, random_state=42
+        LinearRegression(), fraction=0.25, chunk_size=2, interval_method=method
     ).fit(X, np.sqrt(X.ravel()), np.zeros(20))
 
     small = estimator.predict([[18.0], [18.0]], [0.0, 0.0])
     large = estimator.predict(np.full((1000, 1), 18.0), np.zeros(1000))
-    assert small.p_value == estimator.predict([[18.0], [18.0]], [0.0, 0.0]).p_value
+    assert len(estimator.reference_chunk_losses_) == 2
+    assert small.reference_limit == estimator.reference_limit_
     assert small.reference_estimated == large.reference_estimated
     assert small.estimated_delta > 0
     assert small.relative_delta == pytest.approx(1 / 17)
-    assert not small.degradation
-    assert small.p_value > estimator.alpha
-    assert large.p_value <= estimator.alpha
-    assert large.degradation
+    assert small.degradation == large.degradation
     above_margin = estimator.predict(
         np.full((1000, 1), 20.0), np.zeros(1000), degradation_margin=0.10
     )
@@ -94,11 +93,10 @@ def test_welch_permutation_tests_relative_degradation_margin():
     )
     assert above_margin.relative_delta == pytest.approx(3 / 17)
     assert above_margin.degradation_margin == 0.10
-    assert above_margin.degradation
+    assert above_margin.degradation == (above_margin.current_estimated > above_margin.reference_limit)
     assert not below_margin.degradation
     improved = estimator.predict(np.full((100, 1), 13.0), np.zeros(100))
     assert not improved.degradation
-    assert improved.p_value > estimator.alpha
     with pytest.raises(ValueError, match="degradation_margin"):
         estimator.predict([[20.0], [20.0]], [0.0, 0.0], degradation_margin=-0.1)
 
@@ -106,9 +104,10 @@ def test_welch_permutation_tests_relative_degradation_margin():
 @pytest.mark.parametrize(
     "kwargs, message",
     [
-        ({"alpha": 0.0}, "alpha"),
-        ({"n_resamples": 0}, "n_resamples"),
-        ({"n_resamples": 18}, "n_resamples"),
+        ({"chunk_size": 0}, "chunk_size"),
+        ({"chunk_size": True}, "chunk_size"),
+        ({"interval_method": "invalid"}, "Unsupported method"),
+        ({"interval_method": (None, None)}, "finite upper bound"),
     ],
 )
 def test_direct_loss_rejects_invalid_alert_settings(kwargs, message):
@@ -118,10 +117,29 @@ def test_direct_loss_rejects_invalid_alert_settings(kwargs, message):
         )
 
 
-def test_direct_loss_accepts_minimum_resamples_for_alpha():
-    estimator = DirectLossEstimator(DummyRegressor(), n_resamples=19, alpha=0.05)
-    estimator.fit(np.arange(8.0).reshape(-1, 1), [1.0] * 8, [0.0] * 8)
-    assert estimator.predict([[0.0], [1.0]], [0.0, 0.0]).p_value >= 0.05
+def test_reference_limit_uses_chunk_means_not_individual_losses():
+    estimator = DirectLossEstimator(LinearRegression(), fraction=0.5, chunk_size=2)
+    X = np.arange(12.0).reshape(-1, 1)
+    estimator.fit(X, np.sqrt(X.ravel()), np.zeros(12))
+    np.testing.assert_allclose(estimator.reference_chunk_losses_, [6.5, 8.5, 10.5])
+    assert estimator.reference_limit_ == pytest.approx(
+        np.mean([6.5, 8.5, 10.5]) + 3 * np.std([6.5, 8.5, 10.5])
+    )
+
+
+def test_chunk_size_can_match_operational_batch_size():
+    assert DirectLossEstimator(LinearRegression()).chunk_size == 50
+    X = np.arange(800.0).reshape(-1, 1)
+    estimator = DirectLossEstimator(
+        LinearRegression(), fraction=0.5, chunk_size=100
+    ).fit(X, np.sqrt(X.ravel()), np.zeros(800))
+
+    assert len(estimator.reference_chunk_losses_) == 4
+    expected = estimator.reference_estimated_losses_.reshape(4, 100).mean(axis=1)
+    np.testing.assert_allclose(estimator.reference_chunk_losses_, expected)
+    result = estimator.predict(np.full((100, 1), 700.0), np.zeros(100))
+    assert result.current_size == 100
+    assert result.reference_limit == estimator.reference_limit_
 
 
 def test_analyzer_uses_held_out_reference_and_independent_ids():

@@ -10,7 +10,7 @@ For enterprise-grade solutions, consider [Nannyml](https://github.com/NannyML/na
 ## Features
 
 - **Data Drift Detection**: Categorical and continuous data drift monitoring with multiple distance metrics
-- **Performance Estimation**: DLE estimates regression MSE or binary Brier score before current targets arrive and tests for a material increase
+- **Performance Estimation**: DLE estimates regression MSE or binary Brier score before current targets arrive and flags material increases beyond reference chunk variability
 - **Outlier Detection**: **HBOS**, **PCA-based** and **SPAD** outlier detection algorithms  
 - **Classification Model Evaluation**: Calibration curves, confusion matrices, score distributions, and production confidence analysis
 - **Time Series Analysis**: Seasonality decomposition, trend analysis, forecasting diagnostics, and forecast stabilization
@@ -151,20 +151,23 @@ from tinyshift.performance import DirectLossEstimator
 dle = DirectLossEstimator(
     learner=RandomForestRegressor(random_state=42),
     fraction=0.25,
-    n_resamples=999,
-    random_state=42,
+    chunk_size=100,  # choose close to the usual current batch size
+    interval_method="stddev",
 ).fit(X_reference, y_reference, predictions_reference)
 
 result = dle.predict(
     X_current, predictions_current, degradation_margin=0.10
 )
-print(result.current_estimated, result.relative_delta, result.p_value, result.degradation)
+print(result.current_estimated, result.relative_delta, result.reference_limit, result.degradation)
 ```
 
-`degradation_margin=0.10` tests whether estimated mean loss increased by more
-than 10% relative to a held-out reference. The one-sided permutation p-value
-tests that margin; `degradation` also requires `p_value <= alpha`. Each batch
-needs at least two observations. For panel data, `DirectLossAnalyzer` fits one
+`degradation_margin=0.10` requires estimated mean loss to increase by more
+than 10% relative to a held-out reference. `degradation` also requires the
+current estimate to exceed `reference_limit`, learned from the mean estimated
+loss of each reference chunk using `StatisticalInterval`. Set `chunk_size`
+close to the expected current batch size and retain enough reference rows to
+form several chunks. Each batch needs at least two observations. For panel
+data, `DirectLossAnalyzer` fits one
 estimator per ID. See the [performance guide](tinyshift/performance/README.md)
 and [DLE notebook](tinyshift/examples/dle.ipynb) for examples and assumptions.
 
