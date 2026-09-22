@@ -66,25 +66,9 @@ class DirectLossAnalyzer(BaseEstimator):
         estimators = {}
         baselines = {}
         for unique_id, group in reference.groupby(id_col, sort=False, observed=True):
-            split = int(np.floor(len(group) * (1 - self.validation_fraction)))
-            if split < 2 or split == len(group):
-                raise ValueError(
-                    f"ID {unique_id!r} needs at least two fitting rows and one held-out row."
-                )
-            train, holdout = group.iloc[:split], group.iloc[split:]
-            fitted = clone(self.estimator).fit(
-                train[feature_cols], train[target_col], train[prediction_col]
+            estimators[unique_id], baselines[unique_id] = self._fit_single(
+                unique_id, group, feature_cols, target_col, prediction_col
             )
-            baselines[unique_id] = {
-                "reference_estimated": fitted.estimate(
-                    holdout[feature_cols], holdout[prediction_col]
-                ),
-                "reference_realized": fitted.aggregate(
-                    fitted.observed_loss(holdout[target_col], holdout[prediction_col])
-                ),
-                "reference_size": len(holdout),
-            }
-            estimators[unique_id] = fitted
 
         self.estimators_ = estimators
         self.baselines_ = baselines
@@ -92,7 +76,47 @@ class DirectLossAnalyzer(BaseEstimator):
         self.id_col_ = id_col
         self.target_col_ = target_col
         self.prediction_col_ = prediction_col
+        if hasattr(self, "results_"):
+            del self.results_
         return self
+
+    def _fit_single(self, unique_id, group, feature_cols, target_col, prediction_col):
+        """Fit one ID's loss model and calculate its held-out baseline."""
+        split = int(np.floor(len(group) * (1 - self.validation_fraction)))
+        if split < 2 or split == len(group):
+            raise ValueError(
+                f"ID {unique_id!r} needs at least two fitting rows and one held-out row."
+            )
+        train, holdout = group.iloc[:split], group.iloc[split:]
+        fitted = clone(self.estimator).fit(
+            train[feature_cols], train[target_col], train[prediction_col]
+        )
+        baseline = {
+            "reference_estimated": fitted.estimate(
+                holdout[feature_cols], holdout[prediction_col]
+            ),
+            "reference_realized": fitted.aggregate(
+                fitted.observed_loss(holdout[target_col], holdout[prediction_col])
+            ),
+            "reference_size": len(holdout),
+        }
+        return fitted, baseline
+
+    def _predict_single(self, unique_id, group, prediction_col):
+        """Estimate one current ID's loss relative to its reference baseline."""
+        baseline = self.baselines_[unique_id]
+        estimated = self.estimators_[unique_id].estimate(
+            group[self.feature_cols_], group[prediction_col]
+        )
+        delta = estimated - baseline["reference_estimated"]
+        return {
+            "metric": "mse",
+            **baseline,
+            "current_estimated": estimated,
+            "estimated_delta": delta,
+            "degradation": bool(delta > 0),
+            "current_size": len(group),
+        }
 
     def predict(
         self,
@@ -118,30 +142,18 @@ class DirectLossAnalyzer(BaseEstimator):
         if unknown:
             raise ValueError(f"No reference performance for IDs: {unknown!r}.")
 
-        rows = []
-        for unique_id, group in current.groupby(
-            id_col, sort=False, observed=True
-        ):
-            baseline = self.baselines_[unique_id]
-            estimated = self.estimators_[unique_id].estimate(
-                group[self.feature_cols_], group[prediction_col]
-            )
-            delta = estimated - baseline["reference_estimated"]
-            rows.append(
-                {
-                    id_col: unique_id,
-                    "metric": "mse",
-                    **baseline,
-                    "current_estimated": estimated,
-                    "estimated_delta": delta,
-                    "degradation": bool(delta > 0),
-                    "current_size": len(group),
-                }
-            )
-        self.results_ = pd.DataFrame(rows)
-        return self.results_.copy()
+        self.results_ = {
+            unique_id: self._predict_single(unique_id, group, prediction_col)
+            for unique_id, group in current.groupby(id_col, sort=False, observed=True)
+        }
+        self.result_id_col_ = id_col
+        return self.summary()
 
     def summary(self) -> pd.DataFrame:
         """Return a copy of the most recent prediction result."""
         check_is_fitted(self, "results_")
-        return self.results_.copy()
+        rows = [
+            {self.result_id_col_: unique_id, **result}
+            for unique_id, result in self.results_.items()
+        ]
+        return pd.DataFrame(rows)

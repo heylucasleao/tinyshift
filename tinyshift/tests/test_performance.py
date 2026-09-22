@@ -45,8 +45,14 @@ def test_analyzer_uses_held_out_reference_and_independent_ids():
     assert result["current_estimated"].tolist() == [9.0, 1.0]
     assert result["reference_size"].tolist() == [2, 2]
     assert not result["degradation"].any()
+    assert list(analyzer.results_) == ["B", "A"]
+    assert analyzer.results_["B"]["current_estimated"] == 9.0
     result.loc[0, "current_estimated"] = -10
     assert analyzer.summary().loc[0, "current_estimated"] == 9.0
+
+    analyzer.fit(reference, feature_cols=["x"])
+    with pytest.raises(NotFittedError):
+        analyzer.summary()
 
 
 def test_analyzer_requires_fitted_ids_and_current_predictions():
