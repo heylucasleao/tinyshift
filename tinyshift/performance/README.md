@@ -95,9 +95,10 @@ enough permutations for that value to be at or below `alpha`.
 
 The decision requires both a relative increase above the margin and
 `p_value <= alpha`. Set `random_state` to reproduce the permutation result.
-With identical group distributions and independent observations, permutation
-inference is exact. Studentization makes inference for equal means with
-different variances an asymptotic approximation; small samples need caution.
+If the adjusted current and reference estimated losses have identical
+distributions and observations are independent, permutation inference has
+finite-sample validity. When their distributions differ but means are equal,
+studentization gives an asymptotic approximation; small samples need caution.
 Temporal dependence can invalidate ordinary row-wise permutations.
 
 ## Panel analyzer
@@ -134,32 +135,33 @@ object per ID, and `summary()` returns the latest result table.
 ## Interpretation and monitoring flow
 
 ```text
-labeled reference: X, y, y_pred
-              │
-              ├── first 1 - fraction ──> fit learner on (y - y_pred)²
-              │
-              └── last fraction ───────> observed and estimated baseline loss
-                                              │
-                         adjust current losses by 1 + margin
-                                              │
-                                pool reference and adjusted losses
-                                              │
-                                    permute group assignments
-                                              │
-current: X, y_pred ──> estimated current loss ─┴─> relative_delta and p_value
-                                              │
-                         relative_delta > margin and p_value <= alpha?
-                                               │          │
-                                              yes         no
-                                          degradation   no increase
+labeled reference (X, y, y_pred)
+    ├── first rows: (y - y_pred)² ──> fit loss learner
+    └── held-out rows ──────────────> observed and estimated reference loss
+
+current (X, y_pred) ────────────────> estimated current losses
+                                         │
+                  ┌──────────────────────┴─────────────────────┐
+                  │                                            │
+       reference vs current means              current losses / (1 + margin)
+                  │                                            │
+            relative_delta                      permute with reference losses
+                  │                                            │
+                  └──────────────────────┬─────────────────────┘
+                                         │ p_value
+                  relative_delta > margin and p_value <= alpha?
+                                 /                  \
+                               yes                   no
+                          degradation             no alert
 ```
 
 A positive `estimated_delta` means estimated loss increased relative to the
 estimated reference baseline. `degradation` means the relative increase
-exceeded the chosen margin and passed the one-sided permutation test. The
-p-value concerns **estimated** loss; it does
-not confirm that realized performance changed. Repeated monitoring can also
-produce alerts by chance, even if the reference regime remains stable.
+exceeded the chosen margin and passed the one-sided permutation test. A
+`False` result does not establish that performance is unchanged. The p-value
+concerns **estimated** loss; it does not confirm that realized performance
+changed. Repeated monitoring can also produce alerts by chance, even if the
+reference regime remains stable.
 DLE needs the learned relationship between inputs and loss to remain useful on
 current data. For classification, changed probability calibration can break
 that relationship. Compare estimates with realized loss as current labels
