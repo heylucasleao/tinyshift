@@ -1,46 +1,123 @@
 # Performance estimation
 
-`DirectLossEstimator` learns squared error from labeled reference data and
-estimates it for current observations without their targets. For regression,
-the average squared error is MSE. For binary classification, provide labels 0/1
-and the predicted probability of class 1; the same calculation is the binary
-Brier score. It uses numeric features and the prediction to model per-row loss.
-The first `1 - fraction` of reference rows fit the loss learner; the last
-`fraction` establish a held-out baseline.
+`tinyshift.performance` estimates a model's mean squared loss before targets
+for the current batch are available. `DirectLossEstimator` (DLE) learns the
+relationship between numeric features, model predictions, and observed squared
+error in labeled reference data. It then estimates loss for new observations.
+
+The same calculation covers two tasks:
+
+| Task | `y` in the reference | `y_pred` in both batches | Mean loss |
+|---|---|---|---|
+| Regression | Numeric target | Numeric prediction | MSE |
+| Binary classification | Label encoded as 0 or 1 | Probability of class 1 | Brier score |
+
+For binary classification, supply valid probabilities in `[0, 1]` and 0/1
+labels. DLE treats these as numeric values; it does not check that they are
+probabilities or recalibrate them. Multiclass probability matrices are not
+supported.
+
+## Individual estimator
+
+The estimator accepts a two-dimensional array of numeric features, a vector
+of reference targets, and a vector of model predictions. Its `learner` is a
+scikit-learn compatible regressor that predicts **per-observation squared
+loss**. DLE clones the learner when fitting, so the supplied instance remains
+unfitted.
 
 ```python
 from sklearn.ensemble import RandomForestRegressor
 from tinyshift.performance import DirectLossEstimator
 
-dle = DirectLossEstimator(learner=RandomForestRegressor(), fraction=0.25).fit(
-    X_reference, y_reference, predictions_reference
-)
+dle = DirectLossEstimator(
+    learner=RandomForestRegressor(random_state=42),
+    fraction=0.25,
+).fit(X_reference, y_reference, predictions_reference)
+
 result = dle.predict(X_current, predictions_current)
-estimated_mse = result.current_estimated
+print(result.reference_realized, result.current_estimated, result.degradation)
 ```
 
-`predict` returns a `DirectLossResult` with held-out observed and estimated
-reference loss, current estimated loss, their difference, sample sizes, and a
-`degradation` flag. `estimate` remains available when only the numeric loss
-estimate is needed.
+Reference rows retain their input order. The first `1 - fraction` train the
+loss learner, while the last `fraction` establish a held-out baseline. At least
+two training rows and one held-out row are required. For time series, order
+reference rows chronologically before fitting. Use reference predictions made
+out of sample by the monitored model when available, so the losses reflect its
+actual prediction behavior.
 
-`DirectLossAnalyzer` clones and runs the estimator independently for each panel
-ID, then collects the results in a DataFrame. Each reference ID needs at least
-two fitting rows and one held-out row. Order rows within each ID as intended.
-Current targets are not required.
+`predict` returns a `DirectLossResult`:
+
+| Field | Meaning |
+|---|---|
+| `reference_realized` | Observed mean squared loss on held-out reference rows |
+| `reference_estimated` | Learner's estimated mean loss on those same rows |
+| `reference_size` | Number of held-out reference rows |
+| `current_estimated` | Learner's estimated mean loss on current rows |
+| `estimated_delta` | `current_estimated - reference_estimated` |
+| `degradation` | Whether `estimated_delta > 0` |
+| `current_size` | Number of current rows |
+
+The two estimated values are compared so that the delta is measured on the
+same learned scale. `reference_realized` shows how the learner performed on
+held-out labeled data. `estimate(X_current, predictions_current)` returns only
+the numeric current loss estimate; `estimate_loss(...)` returns one estimated
+loss per row.
+
+## Panel analyzer
+
+`DirectLossAnalyzer` clones and fits one DLE for each `unique_id`, then runs
+each current ID against its own reference and collects the `DirectLossResult`
+objects in a DataFrame. It is an orchestration layer; the estimator performs
+the split, baseline calculation, and comparison for each ID.
 
 ```python
 from tinyshift.performance import DirectLossAnalyzer
 
-analyzer = DirectLossAnalyzer().fit(
-    reference_df, feature_cols=["feature_a", "feature_b"]
+analyzer = DirectLossAnalyzer(fraction=0.25).fit(
+    reference_df,
+    feature_cols=["feature_a", "feature_b"],
+    id_col="unique_id",
+    target_col="y",
+    prediction_col="y_pred",
 )
 result = analyzer.predict(current_df)
 ```
 
-Both frames need `unique_id`, the listed feature columns, and `y_pred`. The
-reference also needs `y`. For binary classification, `y_pred` must be the
-probability of class 1, and `y` must be 0 or 1. Column names can be changed in
-`fit`. `degradation` means a positive change in estimated loss. This is an
-estimate, not a significance test; compare it against realized loss when
-current labels arrive.
+The reference frame needs the ID, features, target, and prediction columns.
+The current frame needs the same ID, features, and prediction columns, but no
+target. `predict` accepts `id_col` and `prediction_col` overrides for a current
+frame whose column names differ. Current IDs without a fitted reference raise
+an error; reference IDs missing from a current batch are omitted. Rows retain
+their input order within each ID, including for the reference split.
+
+`predict` returns one row per current ID, in first-appearance order, with the
+same fields as `DirectLossResult` plus the ID. `results_` holds one result
+object per ID, and `summary()` returns the latest result table.
+
+## Interpretation and monitoring flow
+
+```text
+labeled reference: X, y, y_pred
+              │
+              ├── first 1 - fraction ──> fit learner on (y - y_pred)²
+              │
+              └── last fraction ───────> observed and estimated baseline loss
+                                              │
+current: X, y_pred ──> estimated current loss ─┴─> estimated_delta
+                                                     │
+                                            estimated_delta > 0?
+                                               │          │
+                                              yes         no
+                                          degradation   no increase
+```
+
+A positive `estimated_delta` means estimated loss increased relative to the
+estimated reference baseline. `degradation` is **not** a p-value or a
+statistical test, and it does not establish that realized performance changed.
+DLE needs the learned relationship between inputs and loss to remain useful on
+current data. For classification, changed probability calibration can break
+that relationship. Compare estimates with realized loss as current labels
+arrive.
+
+For runnable regression, binary probability, and panel examples, see
+[`dle.ipynb`](../examples/dle.ipynb).
