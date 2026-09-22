@@ -40,9 +40,9 @@ class DirectLossAnalyzer(BaseEstimator):
     Notes
     -----
     Reference rows retain their input order. For time series, order rows
-    chronologically within each ID before fitting. ``degradation`` is based on
-    a one-sided permutation test of increased mean estimated loss; it does not
-    confirm realized degradation.
+    chronologically within each ID before fitting. ``degradation`` compares
+    estimated current loss with the reference chunk limit and relative margin;
+    it does not confirm realized degradation.
 
     Examples
     --------
@@ -64,7 +64,6 @@ class DirectLossAnalyzer(BaseEstimator):
                     n_estimators=100, min_samples_leaf=3, random_state=42
                 ),
                 fraction=0.25,
-                random_state=42,
             )
             if estimator is None
             else estimator
@@ -183,7 +182,7 @@ class DirectLossAnalyzer(BaseEstimator):
         prediction_col : str or None, default=None
             Current prediction column; defaults to the reference column.
         degradation_margin : float, default=0.0
-            Relative increase tested independently for each current ID.
+            Minimum relevant relative increase for each current ID.
 
         Returns
         -------
@@ -243,11 +242,11 @@ class DirectLossAnalyzer(BaseEstimator):
         **relative_delta** : ``float``
             Estimated change relative to reference estimated loss.
         **degradation_margin** : ``float``
-            Relative increase tested by the permutation test.
-        **p_value** : ``float``
-            One-sided Monte Carlo p-value for exceeding the margin.
+            Minimum relevant relative increase.
+        **reference_limit** : ``float``
+            Upper bound of the interval over reference chunk mean losses.
         **degradation** : ``bool``
-            Whether relative delta exceeds the margin and p-value <= alpha.
+            Whether current loss exceeds both the margin and reference limit.
         **reference_size**, **current_size** : ``int``
             Number of held-out reference and current rows.
 

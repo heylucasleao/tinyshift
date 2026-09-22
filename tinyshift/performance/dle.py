@@ -11,6 +11,8 @@ import numpy as np
 from sklearn.base import BaseEstimator, clone
 from sklearn.utils.validation import check_array, check_is_fitted
 
+from tinyshift.stats.statistical_interval import IntervalMethod, StatisticalInterval
+
 
 @dataclass(frozen=True)
 class DirectLossResult:
@@ -32,11 +34,11 @@ class DirectLossResult:
         Estimated change relative to reference estimated loss. Infinite when
         reference loss is zero and current loss is positive.
     degradation_margin : float
-        Minimum relative increase tested by the permutation test.
-    p_value : float
-        One-sided Monte Carlo p-value for an increase beyond the margin.
+        Minimum relevant relative increase.
+    reference_limit : float
+        Upper bound of the reference chunk mean loss interval.
     degradation : bool
-        Whether ``relative_delta`` exceeds the margin and ``p_value <= alpha``.
+        Whether the current mean exceeds both the margin and reference limit.
     current_size : int
         Number of current rows.
     """
@@ -48,7 +50,7 @@ class DirectLossResult:
     estimated_delta: float
     relative_delta: float
     degradation_margin: float
-    p_value: float
+    reference_limit: float
     degradation: bool
     current_size: int
 
@@ -62,6 +64,15 @@ class DirectLossEstimator(BaseEstimator):
     labels encoded as 0 and 1 and predicted probabilities for class 1, it is
     the binary Brier score.
 
+    The approach follows the Direct Loss Estimation (DLE) principle used in
+    NannyML: an auxiliary model is trained to estimate the monitored model's
+    per-observation loss from model inputs and predictions. Reference chunk
+    variability is then used to establish a monitoring threshold.
+
+    This implementation is not a reproduction of NannyML's DLE. It uses
+    squared loss exclusively and additionally supports an explicit relative
+    degradation margin.
+
     Parameters
     ----------
     learner : sklearn-compatible regressor
@@ -70,14 +81,13 @@ class DirectLossEstimator(BaseEstimator):
     fraction : float, default=0.25
         Fraction of the reference rows held out to establish the baseline.
         Must be strictly between zero and one.
-    alpha : float, default=0.05
-        Significance level for the one-sided permutation test of a relative
-        increase beyond ``degradation_margin``. Must lie between zero and one.
-    n_resamples : int, default=999
-        Number of random permutations used to estimate the null distribution.
-        Must allow a Monte Carlo p-value at or below ``alpha``.
-    random_state : int or None, default=None
-        Seed for reproducible permutations.
+    chunk_size : int, default=50
+        Minimum rows per contiguous reference chunk. Choose a value close to
+        the usual number of rows in each current batch so their mean losses
+        have comparable variability. The held-out reference is divided into
+        as many nearly equal chunks as this size permits.
+    interval_method : str or interval specification, default="stddev"
+        Method passed to :class:`StatisticalInterval` for reference chunk means.
 
     Attributes
     ----------
@@ -91,8 +101,11 @@ class DirectLossEstimator(BaseEstimator):
     reference_size_ : int
         Number of held-out reference rows.
     reference_estimated_losses_ : numpy.ndarray
-        Per-row losses predicted for the held-out reference. Used for
-        permutation inference.
+        Per-row losses predicted for the held-out reference.
+    reference_chunk_losses_ : numpy.ndarray
+        Mean estimated loss in each held-out reference chunk.
+    reference_limit_ : float
+        Upper bound of the interval over reference chunk means.
 
     Notes
     -----
@@ -100,9 +113,8 @@ class DirectLossEstimator(BaseEstimator):
     squared error remaining valid on current data. Current labels are not
     needed for :meth:`estimate`.
 
-    Ordinary permutation inference assumes approximately independent
-    observations. For serially dependent losses, inference may be
-    anticonservative.
+    The interval describes historical chunk variability. It is not a
+    confidence interval for the current mean. Few chunks give a fragile limit.
 
     Examples
     --------
@@ -119,15 +131,13 @@ class DirectLossEstimator(BaseEstimator):
         self,
         learner,
         fraction: float = 0.25,
-        alpha: float = 0.05,
-        n_resamples: int = 999,
-        random_state: int | None = None,
+        chunk_size: int = 50,
+        interval_method: IntervalMethod = "stddev",
     ) -> None:
         self.learner = learner
         self.fraction = fraction
-        self.alpha = alpha
-        self.n_resamples = n_resamples
-        self.random_state = random_state
+        self.chunk_size = chunk_size
+        self.interval_method = interval_method
 
     def _validate_params(self) -> None:
         """Validate configuration used when fitting the reference."""
@@ -139,20 +149,11 @@ class DirectLossEstimator(BaseEstimator):
         ):
             raise ValueError("fraction must lie strictly between 0 and 1.")
         if (
-            isinstance(self.alpha, (bool, np.bool_))
-            or not isinstance(self.alpha, Real)
-            or not np.isfinite(self.alpha)
-            or not 0 < self.alpha < 1
+            isinstance(self.chunk_size, (bool, np.bool_))
+            or not isinstance(self.chunk_size, Integral)
+            or self.chunk_size < 1
         ):
-            raise ValueError("alpha must lie strictly between 0 and 1.")
-        if (
-            isinstance(self.n_resamples, (bool, np.bool_))
-            or not isinstance(self.n_resamples, Integral)
-            or self.n_resamples < 1
-        ):
-            raise ValueError("n_resamples must be a positive integer.")
-        if 1 / (self.n_resamples + 1) > self.alpha:
-            raise ValueError("n_resamples is too small for the requested alpha.")
+            raise ValueError("chunk_size must be a positive integer.")
 
     @staticmethod
     def _validate_margin(degradation_margin: float) -> None:
@@ -277,6 +278,19 @@ class DirectLossEstimator(BaseEstimator):
         )
         self.reference_estimated_ = self.aggregate(self.reference_estimated_losses_)
         self.reference_size_ = len(holdout_losses)
+        chunks = np.array_split(
+            self.reference_estimated_losses_,
+            max(1, self.reference_size_ // self.chunk_size),
+        )
+        self.reference_chunk_losses_ = np.array(
+            [self.aggregate(chunk) for chunk in chunks]
+        )
+        _, upper = StatisticalInterval.compute_interval(
+            self.reference_chunk_losses_, self.interval_method
+        )
+        if upper is None or not np.isfinite(upper):
+            raise ValueError("interval_method must yield a finite upper bound.")
+        self.reference_limit_ = float(upper)
         return self
 
     def estimate_loss(self, X, y_pred) -> np.ndarray:
@@ -333,49 +347,6 @@ class DirectLossEstimator(BaseEstimator):
         """
         return self.aggregate(self.estimate_loss(X, y_pred))
 
-    @staticmethod
-    def _welch_t_statistic(reference: np.ndarray, current: np.ndarray) -> float:
-        """Return Welch's t statistic for current minus reference means."""
-        difference = float(np.mean(current) - np.mean(reference))
-        reference_var = float(np.var(reference, ddof=1)) if len(reference) > 1 else 0.0
-        current_var = float(np.var(current, ddof=1)) if len(current) > 1 else 0.0
-        standard_error = np.sqrt(
-            reference_var / len(reference) + current_var / len(current)
-        )
-        if standard_error <= np.finfo(float).eps:
-            return float(np.sign(difference) * np.inf) if difference else 0.0
-        return difference / standard_error
-
-    def _permutation_statistics(self, adjusted_current: np.ndarray) -> np.ndarray:
-        """Generate Welch t statistics under permuted group assignments."""
-        pooled = np.concatenate((self.reference_estimated_losses_, adjusted_current))
-        rng = np.random.default_rng(self.random_state)
-        statistics = np.empty(self.n_resamples, dtype=float)
-        for index in range(self.n_resamples):
-            permuted = pooled[rng.permutation(pooled.size)]
-            statistics[index] = self._welch_t_statistic(
-                permuted[: self.reference_size_], permuted[self.reference_size_ :]
-            )
-        return statistics
-
-    def _calibrate(
-        self,
-        current_losses: np.ndarray,
-        degradation_margin: float,
-        relative_delta: float,
-    ) -> tuple[float, bool]:
-        """Test the relative increase using a permuted Welch t statistic."""
-        adjusted_current = current_losses / (1.0 + degradation_margin)
-        observed = self._welch_t_statistic(
-            self.reference_estimated_losses_, adjusted_current
-        )
-        null_statistics = self._permutation_statistics(adjusted_current)
-        p_value = float(
-            (1 + np.count_nonzero(null_statistics >= observed)) / (self.n_resamples + 1)
-        )
-        degradation = relative_delta > degradation_margin and p_value <= self.alpha
-        return p_value, bool(degradation)
-
     def _relative_delta(self, current_estimated: float) -> float:
         """Return relative loss change, including a zero-reference baseline."""
         if self.reference_estimated_ == 0:
@@ -383,7 +354,7 @@ class DirectLossEstimator(BaseEstimator):
         return current_estimated / self.reference_estimated_ - 1.0
 
     def predict(self, X, y_pred, degradation_margin: float = 0.0) -> DirectLossResult:
-        """Test whether current estimated loss exceeds a relative margin.
+        """Compare current estimated loss with margin and reference variability.
 
         Parameters
         ----------
@@ -392,14 +363,14 @@ class DirectLossEstimator(BaseEstimator):
         y_pred : array-like of shape (n_samples,)
             Current predictions or binary class-1 probabilities.
         degradation_margin : float, default=0.0
-            Nonnegative relative increase to test. For example, ``0.10``
-            tests whether current mean estimated loss rose by more than 10%.
+            Minimum relevant relative increase. For example, ``0.10``
+            requires current mean estimated loss to rise by more than 10%.
 
         Returns
         -------
         DirectLossResult
             Reference and current estimated losses, absolute and relative
-            changes, tested margin, one-sided p-value, and alert indicator.
+            changes, reference limit, margin, and alert indicator.
 
         Raises
         ------
@@ -411,15 +382,9 @@ class DirectLossEstimator(BaseEstimator):
 
         Notes
         -----
-        Dividing current losses by ``1 + degradation_margin`` transforms the
-        boundary of the relative-margin hypothesis into equality of means.
-        The permutation statistic is Welch's t statistic for the difference
-        between group means. The plus-one correction gives the one-sided
-        Monte Carlo p-value.
-        Exact finite-sample validity requires exchangeability under the null;
-        with unequal variances, studentization supports an asymptotic
-        approximation for independent observations. This tests *predicted*
-        loss and does not confirm realized degradation.
+        The reference limit is computed from means of contiguous held-out
+        reference chunks. The decision concerns predicted loss and does not
+        confirm realized degradation.
         """
         check_is_fitted(self, "reference_estimated_")
         self._validate_margin(degradation_margin)
@@ -430,8 +395,9 @@ class DirectLossEstimator(BaseEstimator):
         current_estimated = self.aggregate(current_losses)
         delta = current_estimated - self.reference_estimated_
         relative_delta = self._relative_delta(current_estimated)
-        p_value, degradation = self._calibrate(
-            current_losses, degradation_margin, relative_delta
+        degradation = (
+            relative_delta > degradation_margin
+            and current_estimated > self.reference_limit_
         )
         return DirectLossResult(
             reference_estimated=self.reference_estimated_,
@@ -441,7 +407,7 @@ class DirectLossEstimator(BaseEstimator):
             estimated_delta=delta,
             relative_delta=relative_delta,
             degradation_margin=float(degradation_margin),
-            p_value=p_value,
-            degradation=degradation,
+            reference_limit=self.reference_limit_,
+            degradation=bool(degradation),
             current_size=current_size,
         )

@@ -31,25 +31,25 @@ from tinyshift.performance import DirectLossEstimator
 
 dle = DirectLossEstimator(
     learner=RandomForestRegressor(random_state=42),
-    fraction=0.25,
-    alpha=0.05,
-    n_resamples=999,
-    random_state=42,
+    fraction=0.5,
+    chunk_size=100,  # close to the usual size of a current batch
+    interval_method="stddev",
 ).fit(X_reference, y_reference, predictions_reference)
 
 result = dle.predict(
     X_current, predictions_current, degradation_margin=0.10
 )
-print(result.relative_delta, result.p_value, result.degradation)
+print(result.relative_delta, result.reference_limit, result.degradation)
 ```
 
-Reference rows retain their input order. The first `1 - fraction` train the
-loss learner, while the last `fraction` establish a held-out baseline. At least
-two training rows and two held-out rows are required. Each current batch (per
-ID in the analyzer) must also contain at least two rows. For time series, order
-reference rows chronologically before fitting. Use reference predictions made
-out of sample by the monitored model when available, so the losses reflect its
-actual prediction behavior.
+Reference rows retain their input order. The split occurs after
+`floor(reference_size * (1 - fraction))` rows: the first part trains the loss
+learner and the rest establish a held-out baseline. At least two rows are
+required in each part. Each current batch (per ID in the analyzer) must also
+contain at least two rows. For time series, order reference rows
+chronologically before fitting. Use reference predictions made out of sample
+by the monitored model when available, so the losses reflect its actual
+prediction behavior.
 
 `predict` returns a `DirectLossResult`:
 
@@ -61,9 +61,9 @@ actual prediction behavior.
 | `current_estimated` | Learner's estimated mean loss on current rows |
 | `estimated_delta` | `current_estimated - reference_estimated` |
 | `relative_delta` | `current_estimated / reference_estimated - 1`; infinite for a positive current loss when reference loss is zero |
-| `degradation_margin` | Minimum relative increase tested; `0.10` means 10% |
-| `p_value` | One-sided Monte Carlo p-value for exceeding the margin |
-| `degradation` | Whether `relative_delta > degradation_margin` and `p_value <= alpha` |
+| `degradation_margin` | Minimum relevant relative increase; `0.10` means 10% |
+| `reference_limit` | Upper bound of the interval over reference chunk mean losses |
+| `degradation` | Whether `relative_delta > degradation_margin` and `current_estimated > reference_limit` |
 | `current_size` | Number of current rows |
 
 The two estimated values are compared so that the delta is measured on the
@@ -72,34 +72,30 @@ held-out labeled data. `estimate(X_current, predictions_current)` returns only
 the numeric current loss estimate; `estimate_loss(...)` returns one estimated
 loss per row.
 
-`degradation_margin` changes the hypothesis being tested. With a margin `m`,
-the null is that current mean estimated loss has increased by **at most** `m`
-relative to reference. DLE divides current per-row losses by `1 + m`, then
-compares their adjusted mean with the reference mean. Welch's t statistic
-divides the difference between means by its estimated standard error.
+The held-out reference is divided into
+`max(1, reference_size // chunk_size)` contiguous, nearly equal chunks. Here
+`reference_size` is the number of **held-out** rows, not all rows supplied to
+`fit`. When the holdout has at least `chunk_size` rows, each chunk has at
+least that many rows; otherwise the entire holdout becomes one smaller chunk.
+DLE computes the mean **estimated** loss of each chunk and passes those means
+to `StatisticalInterval`. The default `"stddev"` method sets the upper limit
+to the mean of chunk losses plus three standard deviations. `"mad"` and
+`"iqr"` are also supported.
+
+Choose `chunk_size` close to the expected current batch size. For example,
+1,200 reference rows with `fraction=0.5` and `chunk_size=100` produce six
+100-row held-out chunks, suitable for comparison with a current batch of
+roughly 100 rows. The default is `chunk_size=50`. With one chunk, the limit
+equals its mean and cannot describe historical variability; several chunks
+are needed for that purpose. If current batch sizes vary substantially, the
+fixed reference limit is less directly comparable across batches.
+
+An alert requires both an increase above `degradation_margin` and current
+estimated mean loss above the reference limit. The decision is deterministic
+for the same fitted estimator and current batch; it is not a hypothesis test.
 Relative changes can be numerically large when the reference mean loss is
 close to zero, even if the absolute change is small. Inspect `estimated_delta`
 alongside `relative_delta` in that case.
-
-For each `predict` call, DLE pools the held-out and adjusted current
-**estimated** losses. It randomly permutes group assignments `n_resamples`
-times, preserving both sample sizes, and recalculates Welch's t
-statistic. The one-sided p-value uses the plus-one correction:
-
-```python
-(1 + number_of_permuted_statistics_at_least_observed) / (n_resamples + 1)
-```
-
-The smallest possible p-value is `1 / (n_resamples + 1)`, so `fit` requires
-enough permutations for that value to be at or below `alpha`.
-
-The decision requires both a relative increase above the margin and
-`p_value <= alpha`. Set `random_state` to reproduce the permutation result.
-If the adjusted current and reference estimated losses have identical
-distributions and observations are independent, permutation inference has
-finite-sample validity. When their distributions differ but means are equal,
-studentization gives an asymptotic approximation; small samples need caution.
-Temporal dependence can invalidate ordinary row-wise permutations.
 
 ## Panel analyzer
 
@@ -136,32 +132,26 @@ object per ID, and `summary()` returns the latest result table.
 
 ```text
 labeled reference (X, y, y_pred)
-    ├── first rows: (y - y_pred)² ──> fit loss learner
-    └── held-out rows ──────────────> observed and estimated reference loss
+    ├── first rows: observed squared loss ──> fit loss learner
+    └── held-out rows ──> estimated per-row losses
+                            ├── mean of all rows ──> reference_estimated
+                            └── means by chunk ──> StatisticalInterval
+                                                    └── reference_limit
 
-current (X, y_pred) ────────────────> estimated current losses
-                                         │
-                  ┌──────────────────────┴─────────────────────┐
-                  │                                            │
-       reference vs current means              current losses / (1 + margin)
-                  │                                            │
-            relative_delta                      permute with reference losses
-                  │                                            │
-                  └──────────────────────┬─────────────────────┘
-                                         │ p_value
-                  relative_delta > margin and p_value <= alpha?
-                                 /                  \
-                               yes                   no
-                          degradation             no alert
+current (X, y_pred) ──> estimated per-row losses
+                            └── mean ──> current_estimated
+
+relative_delta = current_estimated / reference_estimated - 1
+                 (if reference_estimated = 0: 0 for current = 0, else infinity)
+degradation = relative_delta > degradation_margin
+              and current_estimated > reference_limit
 ```
 
 A positive `estimated_delta` means estimated loss increased relative to the
 estimated reference baseline. `degradation` means the relative increase
-exceeded the chosen margin and passed the one-sided permutation test. A
-`False` result does not establish that performance is unchanged. The p-value
-concerns **estimated** loss; it does not confirm that realized performance
-changed. Repeated monitoring can also produce alerts by chance, even if the
-reference regime remains stable.
+exceeded both the chosen margin and the reference chunk limit. A `False`
+result does not establish that performance is unchanged. The alert concerns
+**estimated** loss and does not confirm that realized performance changed.
 DLE needs the learned relationship between inputs and loss to remain useful on
 current data. For classification, changed probability calibration can break
 that relationship. Compare estimates with realized loss as current labels
