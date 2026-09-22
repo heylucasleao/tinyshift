@@ -37,8 +37,10 @@ dle = DirectLossEstimator(
     random_state=42,
 ).fit(X_reference, y_reference, predictions_reference)
 
-result = dle.predict(X_current, predictions_current)
-print(result.current_estimated, result.p_value, result.degradation)
+result = dle.predict(
+    X_current, predictions_current, degradation_margin=0.10
+)
+print(result.relative_delta, result.p_value, result.degradation)
 ```
 
 Reference rows retain their input order. The first `1 - fraction` train the
@@ -57,9 +59,10 @@ actual prediction behavior.
 | `reference_size` | Number of held-out reference rows |
 | `current_estimated` | Learner's estimated mean loss on current rows |
 | `estimated_delta` | `current_estimated - reference_estimated` |
-| `threshold` | Permutation critical value expressed as current mean estimated loss |
-| `p_value` | One-sided Monte Carlo p-value for increased estimated loss |
-| `degradation` | Whether `estimated_delta > 0` and `p_value <= alpha` |
+| `relative_delta` | `current_estimated / reference_estimated - 1`; infinite for a positive current loss when reference loss is zero |
+| `degradation_margin` | Minimum relative increase tested; `0.10` means 10% |
+| `p_value` | One-sided Monte Carlo p-value for exceeding the margin |
+| `degradation` | Whether `relative_delta > degradation_margin` and `p_value <= alpha` |
 | `current_size` | Number of current rows |
 
 The two estimated values are compared so that the delta is measured on the
@@ -68,21 +71,27 @@ held-out labeled data. `estimate(X_current, predictions_current)` returns only
 the numeric current loss estimate; `estimate_loss(...)` returns one estimated
 loss per row.
 
-For each `predict` call, DLE pools the held-out and current **estimated**
-per-row losses. It randomly permutes group assignments `n_resamples` times,
-preserving both sample sizes, and recalculates the difference between current
-and reference mean loss. The one-sided p-value uses the plus-one correction:
+`degradation_margin` changes the hypothesis being tested. With a margin `m`,
+the null is that current mean estimated loss has increased by **at most** `m`
+relative to reference. DLE divides current per-row losses by `1 + m`, then
+compares their adjusted mean with the reference mean. A studentized statistic
+divides the difference between means by its estimated standard error.
+
+For each `predict` call, DLE pools the held-out and adjusted current
+**estimated** losses. It randomly permutes group assignments `n_resamples`
+times, preserving both sample sizes, and recalculates the studentized
+statistic. The one-sided p-value uses the plus-one correction:
 
 ```python
-(1 + number_of_permuted_deltas_at_least_observed) / (n_resamples + 1)
+(1 + number_of_permuted_statistics_at_least_observed) / (n_resamples + 1)
 ```
 
-The `threshold` is `reference_estimated` plus the `1 - alpha` quantile of
-permuted differences. The decision follows `p_value <= alpha`; with finite
-permutations, it need not agree exactly with comparing against the displayed
-threshold. Set `random_state` to reproduce the permutation result. As in
-`ConDrift`, the test assumes observations are exchangeable under the null
-hypothesis; temporal dependence can violate that assumption.
+The decision requires both a relative increase above the margin and
+`p_value <= alpha`. Set `random_state` to reproduce the permutation result.
+With identical group distributions and independent observations, permutation
+inference is exact. Studentization makes inference for equal means with
+different variances an asymptotic approximation; small samples need caution.
+Temporal dependence can invalidate ordinary row-wise permutations.
 
 ## Panel analyzer
 
@@ -101,7 +110,7 @@ analyzer = DirectLossAnalyzer(fraction=0.25).fit(
     target_col="y",
     prediction_col="y_pred",
 )
-result = analyzer.predict(current_df)
+result = analyzer.predict(current_df, degradation_margin=0.10)
 ```
 
 The reference frame needs the ID, features, target, and prediction columns.
@@ -124,21 +133,24 @@ labeled reference: X, y, y_pred
               │
               └── last fraction ───────> observed and estimated baseline loss
                                               │
-                                pool reference and current losses
+                         adjust current losses by 1 + margin
+                                              │
+                                pool reference and adjusted losses
                                               │
                                     permute group assignments
                                               │
-current: X, y_pred ──> estimated current loss ─┴─> delta and p_value
+current: X, y_pred ──> estimated current loss ─┴─> relative_delta and p_value
                                               │
-                                 delta > 0 and p_value <= alpha?
+                         relative_delta > margin and p_value <= alpha?
                                                │          │
                                               yes         no
                                           degradation   no increase
 ```
 
 A positive `estimated_delta` means estimated loss increased relative to the
-estimated reference baseline. `degradation` means that increase passed the
-one-sided permutation test. The p-value concerns **estimated** loss; it does
+estimated reference baseline. `degradation` means the relative increase
+exceeded the chosen margin and passed the one-sided permutation test. The
+p-value concerns **estimated** loss; it does
 not confirm that realized performance changed. Repeated monitoring can also
 produce alerts by chance, even if the reference regime remains stable.
 DLE needs the learned relationship between inputs and loss to remain useful on

@@ -4,8 +4,9 @@
 
 """Panel adapter for direct loss estimation."""
 
-import pandas as pd
 from dataclasses import asdict
+
+import pandas as pd
 from sklearn.base import BaseEstimator, clone
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.utils.validation import check_is_fitted
@@ -121,7 +122,9 @@ class DirectLossAnalyzer(BaseEstimator):
         if not feature_cols or len(feature_cols) != len(set(feature_cols)):
             raise ValueError("feature_cols must contain distinct feature names.")
         if set(feature_cols) & {id_col, target_col, prediction_col}:
-            raise ValueError("feature_cols must exclude ID, target, and prediction columns.")
+            raise ValueError(
+                "feature_cols must exclude ID, target, and prediction columns."
+            )
         self._validate_frame(
             reference, [id_col, target_col, prediction_col, *feature_cols], id_col
         )
@@ -154,10 +157,12 @@ class DirectLossAnalyzer(BaseEstimator):
                 raise ValueError(f"ID {unique_id!r}: {error}") from error
             raise
 
-    def _predict_single(self, unique_id, group, prediction_col):
+    def _predict_single(self, unique_id, group, prediction_col, degradation_margin):
         """Delegate one current ID's comparison to its fitted DLE."""
         return self.estimators_[unique_id].predict(
-            group[self.feature_cols_], group[prediction_col]
+            group[self.feature_cols_],
+            group[prediction_col],
+            degradation_margin=degradation_margin,
         )
 
     def predict(
@@ -165,6 +170,7 @@ class DirectLossAnalyzer(BaseEstimator):
         current: pd.DataFrame,
         id_col: str | None = None,
         prediction_col: str | None = None,
+        degradation_margin: float = 0.0,
     ) -> pd.DataFrame:
         """Estimate current loss and its change from the held-out baseline.
 
@@ -176,6 +182,8 @@ class DirectLossAnalyzer(BaseEstimator):
             Current identifier column; defaults to the reference column.
         prediction_col : str or None, default=None
             Current prediction column; defaults to the reference column.
+        degradation_margin : float, default=0.0
+            Relative increase tested independently for each current ID.
 
         Returns
         -------
@@ -193,19 +201,24 @@ class DirectLossAnalyzer(BaseEstimator):
         """
         check_is_fitted(self, "estimators_")
         id_col = self.id_col_ if id_col is None else id_col
-        prediction_col = self.prediction_col_ if prediction_col is None else prediction_col
+        prediction_col = (
+            self.prediction_col_ if prediction_col is None else prediction_col
+        )
         self._validate_frame(
             current, [id_col, prediction_col, *self.feature_cols_], id_col
         )
         unknown = [
-            value for value in pd.unique(current[id_col])
+            value
+            for value in pd.unique(current[id_col])
             if value not in self.estimators_
         ]
         if unknown:
             raise ValueError(f"No reference performance for IDs: {unknown!r}.")
 
         self.results_ = {
-            unique_id: self._predict_single(unique_id, group, prediction_col)
+            unique_id: self._predict_single(
+                unique_id, group, prediction_col, degradation_margin
+            )
             for unique_id, group in current.groupby(id_col, sort=False, observed=True)
         }
         self.result_id_col_ = id_col
@@ -226,12 +239,14 @@ class DirectLossAnalyzer(BaseEstimator):
         **current_estimated**, **estimated_delta** : ``float``
             Estimated current loss and its difference from the estimated
             reference baseline.
-        **threshold** : ``float``
-            Permutation critical value for the current mean estimated loss.
+        **relative_delta** : ``float``
+            Estimated change relative to reference estimated loss.
+        **degradation_margin** : ``float``
+            Relative increase tested by the permutation test.
         **p_value** : ``float``
-            One-sided Monte Carlo p-value for increased estimated loss.
+            One-sided Monte Carlo p-value for exceeding the margin.
         **degradation** : ``bool``
-            Whether the estimated delta is positive and p-value <= alpha.
+            Whether relative delta exceeds the margin and p-value <= alpha.
         **reference_size**, **current_size** : ``int``
             Number of held-out reference and current rows.
 

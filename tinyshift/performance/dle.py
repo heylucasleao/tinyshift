@@ -28,12 +28,15 @@ class DirectLossResult:
         Estimated mean loss on current rows.
     estimated_delta : float
         Current estimated loss minus reference estimated loss.
-    threshold : float
-        Permutation critical value expressed as current mean estimated loss.
+    relative_delta : float
+        Estimated change relative to reference estimated loss. Infinite when
+        reference loss is zero and current loss is positive.
+    degradation_margin : float
+        Minimum relative increase tested by the permutation test.
     p_value : float
-        One-sided Monte Carlo p-value for an increase in mean estimated loss.
+        One-sided Monte Carlo p-value for an increase beyond the margin.
     degradation : bool
-        Whether ``estimated_delta`` is positive and ``p_value <= alpha``.
+        Whether ``relative_delta`` exceeds the margin and ``p_value <= alpha``.
     current_size : int
         Number of current rows.
     """
@@ -43,7 +46,8 @@ class DirectLossResult:
     reference_size: int
     current_estimated: float
     estimated_delta: float
-    threshold: float
+    relative_delta: float
+    degradation_margin: float
     p_value: float
     degradation: bool
     current_size: int
@@ -67,8 +71,8 @@ class DirectLossEstimator(BaseEstimator):
         Fraction of the reference rows held out to establish the baseline.
         Must be strictly between zero and one.
     alpha : float, default=0.05
-        Significance level for the one-sided permutation test of increased
-        mean estimated loss. Must lie strictly between zero and one.
+        Significance level for the one-sided permutation test of a relative
+        increase beyond ``degradation_margin``. Must lie between zero and one.
     n_resamples : int, default=999
         Number of random permutations used to estimate the null distribution.
     random_state : int or None, default=None
@@ -86,8 +90,8 @@ class DirectLossEstimator(BaseEstimator):
     reference_size_ : int
         Number of held-out reference rows.
     reference_estimated_losses_ : numpy.ndarray
-        Per-row losses predicted for the held-out reference. Used to set a
-        threshold for unusually high predicted loss.
+        Per-row losses predicted for the held-out reference. Used for
+        permutation inference and unusually high predicted loss flags.
 
     Notes
     -----
@@ -95,8 +99,9 @@ class DirectLossEstimator(BaseEstimator):
     squared error remaining valid on current data. Current labels are not
     needed for :meth:`estimate`.
 
-    Ordinary permutation inference assumes approximately independent/exchangeable observations.
-    For serially dependent losses, inference may be anticonservative.
+    Ordinary permutation inference assumes approximately independent
+    observations. For serially dependent losses, inference may be
+    anticonservative.
 
     Examples
     --------
@@ -305,38 +310,53 @@ class DirectLossEstimator(BaseEstimator):
         """
         return self.aggregate(self.estimate_loss(X, y_pred))
 
-    def _permutation_deltas(self, current_losses: np.ndarray) -> np.ndarray:
-        """Generate the null distribution of current-minus-reference mean loss.
+    @staticmethod
+    def _studentized_mean_difference(
+        reference: np.ndarray, current: np.ndarray
+    ) -> float:
+        """Return current-minus-reference mean divided by its standard error."""
+        difference = float(np.mean(current) - np.mean(reference))
+        reference_var = float(np.var(reference, ddof=1)) if len(reference) > 1 else 0.0
+        current_var = float(np.var(current, ddof=1)) if len(current) > 1 else 0.0
+        standard_error = np.sqrt(
+            reference_var / len(reference) + current_var / len(current)
+        )
+        if standard_error <= np.finfo(float).eps:
+            return float(np.sign(difference) * np.inf) if difference else 0.0
+        return difference / standard_error
 
-        Each permutation pools held-out reference and current estimated losses,
-        then reassigns observations while preserving both sample sizes.
-        """
-        pooled = np.concatenate((self.reference_estimated_losses_, current_losses))
+    def _permutation_statistics(self, adjusted_current: np.ndarray) -> np.ndarray:
+        """Generate studentized statistics under permuted group assignments."""
+        pooled = np.concatenate((self.reference_estimated_losses_, adjusted_current))
         rng = np.random.default_rng(self.random_state)
-        null_deltas = np.empty(self.n_resamples, dtype=float)
+        statistics = np.empty(self.n_resamples, dtype=float)
         for index in range(self.n_resamples):
             permuted = pooled[rng.permutation(pooled.size)]
-            null_deltas[index] = (
-                permuted[self.reference_size_ :].mean()
-                - permuted[: self.reference_size_].mean()
+            statistics[index] = self._studentized_mean_difference(
+                permuted[: self.reference_size_], permuted[self.reference_size_ :]
             )
-        return null_deltas
+        return statistics
 
     def _calibrate(
-        self, current_losses: np.ndarray, delta: float
-    ) -> tuple[float, float, bool]:
-        """Derive the loss threshold, one-sided p-value, and alert decision."""
-        null_deltas = self._permutation_deltas(current_losses)
-        threshold = self.reference_estimated_ + float(
-            np.quantile(null_deltas, 1 - self.alpha, method="higher")
+        self,
+        current_losses: np.ndarray,
+        degradation_margin: float,
+        relative_delta: float,
+    ) -> tuple[float, bool]:
+        """Test the relative increase using a studentized permutation statistic."""
+        adjusted_current = current_losses / (1.0 + degradation_margin)
+        observed = self._studentized_mean_difference(
+            self.reference_estimated_losses_, adjusted_current
         )
+        null_statistics = self._permutation_statistics(adjusted_current)
         p_value = float(
-            (1 + np.count_nonzero(null_deltas >= delta)) / (self.n_resamples + 1)
+            (1 + np.count_nonzero(null_statistics >= observed)) / (self.n_resamples + 1)
         )
-        return threshold, p_value, bool(delta > 0 and p_value <= self.alpha)
+        degradation = relative_delta > degradation_margin and p_value <= self.alpha
+        return p_value, bool(degradation)
 
-    def predict(self, X, y_pred) -> DirectLossResult:
-        """Compare current estimated loss with the held-out reference.
+    def predict(self, X, y_pred, degradation_margin: float = 0.0) -> DirectLossResult:
+        """Test whether current estimated loss exceeds a relative margin.
 
         Parameters
         ----------
@@ -344,43 +364,61 @@ class DirectLossEstimator(BaseEstimator):
             Current numeric features.
         y_pred : array-like of shape (n_samples,)
             Current predictions or binary class-1 probabilities.
+        degradation_margin : float, default=0.0
+            Nonnegative relative increase to test. For example, ``0.10``
+            tests whether current mean estimated loss rose by more than 10%.
 
         Returns
         -------
         DirectLossResult
-            Reference losses, current estimated loss, their difference,
-            permutation threshold, one-sided p-value, and alert indicator.
+            Reference and current estimated losses, absolute and relative
+            changes, tested margin, one-sided p-value, and alert indicator.
 
         Raises
         ------
         sklearn.exceptions.NotFittedError
             If :meth:`fit` has not been called.
+        ValueError
+            If ``degradation_margin`` is not finite and nonnegative.
 
         Notes
         -----
-        Held-out reference and current predicted losses are pooled. Each
-        permutation redistributes them into groups of their original sizes.
-        The statistic is current mean minus reference mean, with the one-sided
-        alternative that current mean loss is greater. The threshold is the
-        ``1 - alpha`` quantile of permuted deltas added to reference mean.
-        The p-value uses the plus-one Monte Carlo correction and determines
-        ``degradation``. Valid inference requires exchangeable observations
-        under the null hypothesis. This tests *predicted* loss and does not
-        include uncertainty in the fitted learner or confirm realized loss.
+        Dividing current losses by ``1 + degradation_margin`` transforms the
+        boundary of the relative-margin hypothesis into equality of means.
+        The permutation statistic is the studentized difference between group
+        means. The plus-one correction gives the one-sided Monte Carlo p-value.
+        Exact finite-sample validity requires exchangeability under the null;
+        with unequal variances, studentization supports an asymptotic
+        approximation for independent observations. This tests *predicted*
+        loss and does not confirm realized degradation.
         """
         check_is_fitted(self, "reference_estimated_")
+        if (
+            isinstance(degradation_margin, (bool, np.bool_))
+            or not isinstance(degradation_margin, Real)
+            or not np.isfinite(degradation_margin)
+            or degradation_margin < 0
+        ):
+            raise ValueError("degradation_margin must be finite and nonnegative.")
         current_losses = self.estimate_loss(X, y_pred)
         current_size = len(current_losses)
         current_estimated = self.aggregate(current_losses)
         delta = current_estimated - self.reference_estimated_
-        threshold, p_value, degradation = self._calibrate(current_losses, delta)
+        if self.reference_estimated_ == 0:
+            relative_delta = float("inf") if current_estimated > 0 else 0.0
+        else:
+            relative_delta = current_estimated / self.reference_estimated_ - 1.0
+        p_value, degradation = self._calibrate(
+            current_losses, degradation_margin, relative_delta
+        )
         return DirectLossResult(
             reference_estimated=self.reference_estimated_,
             reference_realized=self.reference_realized_,
             reference_size=self.reference_size_,
             current_estimated=current_estimated,
             estimated_delta=delta,
-            threshold=threshold,
+            relative_delta=relative_delta,
+            degradation_margin=float(degradation_margin),
             p_value=p_value,
             degradation=degradation,
             current_size=current_size,

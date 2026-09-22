@@ -7,7 +7,11 @@ from sklearn.dummy import DummyRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LinearRegression
 
-from tinyshift.performance import DirectLossAnalyzer, DirectLossEstimator, DirectLossResult
+from tinyshift.performance import (
+    DirectLossAnalyzer,
+    DirectLossEstimator,
+    DirectLossResult,
+)
 
 
 def test_direct_loss_estimator_models_mse_and_binary_brier():
@@ -31,7 +35,8 @@ def test_direct_loss_estimator_models_mse_and_binary_brier():
     assert result.reference_size == 2
     assert result.current_estimated == pytest.approx(0.5625)
     assert result.estimated_delta == pytest.approx(0)
-    assert result.threshold == pytest.approx(0.5625)
+    assert result.relative_delta == pytest.approx(0)
+    assert result.degradation_margin == 0.0
     assert result.p_value == 1.0
     assert not result.degradation
     assert result.current_size == 3
@@ -59,7 +64,7 @@ def test_direct_loss_predict_requires_fit_and_valid_split():
         estimator.fit([[0.0], [1.0]], [0.0, 1.0], [0.0, 0.0])
 
 
-def test_permutation_test_detects_increase_with_sufficient_batch_size():
+def test_studentized_permutation_tests_relative_degradation_margin():
     X = np.arange(20.0).reshape(-1, 1)
     estimator = DirectLossEstimator(
         LinearRegression(), fraction=0.25, n_resamples=999, random_state=42
@@ -67,17 +72,29 @@ def test_permutation_test_detects_increase_with_sufficient_batch_size():
 
     small = estimator.predict([[18.0]], [0.0])
     large = estimator.predict(np.full((1000, 1), 18.0), np.zeros(1000))
-    assert small.threshold > large.threshold
-    assert small.threshold == estimator.predict([[18.0]], [0.0]).threshold
+    assert small.p_value == estimator.predict([[18.0]], [0.0]).p_value
     assert small.reference_estimated == large.reference_estimated
     assert small.estimated_delta > 0
+    assert small.relative_delta == pytest.approx(1 / 17)
     assert not small.degradation
     assert small.p_value > estimator.alpha
     assert large.p_value <= estimator.alpha
     assert large.degradation
+    above_margin = estimator.predict(
+        np.full((1000, 1), 20.0), np.zeros(1000), degradation_margin=0.10
+    )
+    below_margin = estimator.predict(
+        np.full((1000, 1), 20.0), np.zeros(1000), degradation_margin=0.25
+    )
+    assert above_margin.relative_delta == pytest.approx(3 / 17)
+    assert above_margin.degradation_margin == 0.10
+    assert above_margin.degradation
+    assert not below_margin.degradation
     improved = estimator.predict(np.full((100, 1), 13.0), np.zeros(100))
     assert not improved.degradation
     assert improved.p_value > estimator.alpha
+    with pytest.raises(ValueError, match="degradation_margin"):
+        estimator.predict([[20.0]], [0.0], degradation_margin=-0.1)
 
 
 @pytest.mark.parametrize(
@@ -110,12 +127,13 @@ def test_analyzer_uses_held_out_reference_and_independent_ids():
         DirectLossEstimator(learner=DummyRegressor(strategy="mean")), fraction=0.25
     ).fit(reference, feature_cols=["x"])
 
-    result = analyzer.predict(current)
+    result = analyzer.predict(current, degradation_margin=0.10)
     assert result["unique_id"].tolist() == ["B", "A"]
     assert "metric" not in result.columns
     assert result["reference_realized"].tolist() == [9.0, 1.0]
     assert result["current_estimated"].tolist() == [9.0, 1.0]
     assert result["reference_size"].tolist() == [2, 2]
+    assert result["degradation_margin"].tolist() == [0.10, 0.10]
     assert not result["degradation"].any()
     assert list(analyzer.results_) == ["B", "A"]
     assert isinstance(analyzer.results_["B"], DirectLossResult)
@@ -145,7 +163,12 @@ def test_analyzer_requires_fitted_ids_and_current_predictions():
         analyzer.predict(pd.DataFrame({"unique_id": ["A"]}))
 
     reference = pd.DataFrame(
-        {"unique_id": ["A"] * 8, "x": np.arange(8), "y": np.ones(8), "y_pred": np.zeros(8)}
+        {
+            "unique_id": ["A"] * 8,
+            "x": np.arange(8),
+            "y": np.ones(8),
+            "y_pred": np.zeros(8),
+        }
     )
     analyzer.fit(reference, feature_cols=["x"])
     with pytest.raises(ValueError, match="No reference performance"):
