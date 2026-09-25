@@ -378,29 +378,77 @@ class TwoStageForecasterEvaluator:
         return scale_frame.groupby(id_col, observed=True)[target_col].std()
 
     @staticmethod
-    def _aggregate_distribution_scores(
-        series_ids,
+    def _distribution_row_scores(
+        evaluation_df: pd.DataFrame,
         row_crps: np.ndarray,
         train_scales: pd.Series,
         id_col: str,
+        time_col: str,
     ) -> pd.DataFrame:
-        """Aggregate row CRPS and normalize each series by its training scale."""
-        row_scores = pd.DataFrame({id_col: np.asarray(series_ids), "crps": row_crps})
-        per_series = (
-            row_scores.groupby(id_col, observed=True, sort=False)["crps"]
-            .agg(crps="mean", n_obs="size")
-            .reset_index()
+        """Build unaggregated CRPS and nCRPS rows with inferred horizons."""
+        row_scores = evaluation_df[[id_col, time_col]].copy()
+        row_scores["horizon"] = (
+            row_scores.groupby(id_col, observed=True, sort=False).cumcount() + 1
         )
-        per_series["target_std"] = per_series[id_col].map(train_scales)
-        valid_scale = np.isfinite(per_series["target_std"]) & (
-            per_series["target_std"] > 0.0
+        row_scores["crps"] = row_crps
+        row_scores["target_std"] = row_scores[id_col].map(train_scales)
+        valid_scale = np.isfinite(row_scores["target_std"]) & (
+            row_scores["target_std"] > 0.0
         )
-        per_series["ncrps"] = np.where(
+        row_scores["ncrps"] = np.where(
             valid_scale,
-            per_series["crps"] / per_series["target_std"],
+            row_scores["crps"] / row_scores["target_std"],
             np.nan,
         )
-        return per_series[[id_col, "crps", "target_std", "ncrps", "n_obs"]]
+        return row_scores
+
+    @staticmethod
+    def _aggregate_distribution_scores(
+        row_scores: pd.DataFrame,
+        agg: str | None,
+        id_col: str,
+    ) -> pd.DataFrame:
+        """Aggregate row-level distribution scores at the requested level."""
+        if agg is None:
+            return row_scores.reset_index(drop=True)
+
+        group_columns = {
+            "series": [id_col],
+            "horizon": ["horizon"],
+            "overall": [],
+        }
+        if agg not in group_columns:
+            raise ValueError(
+                "agg must be one of: 'series', 'horizon', 'overall', or None."
+            )
+
+        columns = group_columns[agg]
+        if columns:
+            result = (
+                row_scores.groupby(columns, observed=True, sort=False)
+                .agg(
+                    crps=("crps", "mean"),
+                    ncrps=("ncrps", "mean"),
+                    n_obs=("crps", "size"),
+                )
+                .reset_index()
+            )
+        else:
+            result = pd.DataFrame(
+                {
+                    "crps": [row_scores["crps"].mean()],
+                    "ncrps": [row_scores["ncrps"].mean()],
+                    "n_obs": [len(row_scores)],
+                }
+            )
+
+        if agg == "series":
+            scales = row_scores.groupby(id_col, observed=True, sort=False)[
+                "target_std"
+            ].first()
+            result.insert(2, "target_std", result[id_col].map(scales))
+            return result[[id_col, "crps", "target_std", "ncrps", "n_obs"]]
+        return result
 
     @classmethod
     def evaluate_distribution(
@@ -411,8 +459,9 @@ class TwoStageForecasterEvaluator:
         target_col: str = "y",
         id_col: str = "unique_id",
         time_col: str = "ds",
+        agg: str | None = "series",
     ) -> pd.DataFrame:
-        """Evaluate a predictive distribution with CRPS and per-series nCRPS.
+        """Evaluate a predictive distribution with CRPS and nCRPS.
 
         Parameters
         ----------
@@ -430,13 +479,18 @@ class TwoStageForecasterEvaluator:
             Series identifier column.
         time_col : str, default='ds'
             Timestamp column used to validate positional alignment.
+        agg : {'series', 'horizon', 'overall', None}, default='series'
+            Aggregation level. ``'series'`` preserves the original one-row-per-
+            series result. ``'horizon'`` aggregates series at each inferred
+            forecast step, ``'overall'`` returns one row, and ``None`` returns
+            one row per forecast observation. Horizons are inferred from row
+            order within each series, starting at one.
         Returns
         -------
         pandas.DataFrame
-            One row per evaluated series with mean CRPS, training-target
-            standard deviation, nCRPS, and number of evaluated observations.
-            nCRPS is undefined when the series is absent from training or its
-            training standard deviation is zero or non-finite.
+            CRPS and nCRPS at the requested aggregation level. nCRPS is
+            undefined for observations whose series is absent from training or
+            has a zero or non-finite training standard deviation.
 
         Columns
         -------
@@ -452,6 +506,10 @@ class TwoStageForecasterEvaluator:
         **n_obs** : ``int``
             Number of evaluated forecast-target pairs for the series.
         """
+        if agg not in {"series", "horizon", "overall", None}:
+            raise ValueError(
+                "agg must be one of: 'series', 'horizon', 'overall', or None."
+            )
         _require_columns(evaluation_df, (id_col, time_col, target_col), "evaluation_df")
         _require_columns(train_df, (id_col, target_col), "train_df")
         forecast_frame = forecast.to_frame()
@@ -464,9 +522,10 @@ class TwoStageForecasterEvaluator:
         )
         row_crps = cls._crps(forecast.distribution, y_true)
         train_scales = cls._target_scales(train_df, target_col, id_col)
-        return cls._aggregate_distribution_scores(
-            evaluation_df[id_col], row_crps, train_scales, id_col
+        row_scores = cls._distribution_row_scores(
+            evaluation_df, row_crps, train_scales, id_col, time_col
         )
+        return cls._aggregate_distribution_scores(row_scores, agg, id_col)
 
     @classmethod
     def evaluate_interval(
