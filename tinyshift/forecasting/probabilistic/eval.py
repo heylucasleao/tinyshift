@@ -16,24 +16,12 @@ def _require_columns(
         raise KeyError(f"Columns not found in {frame_name}: {missing}")
 
 
-class FirstStageForecasterEvaluator:
-    r"""Evaluator utility for the first stage conditional expectation (lambda_t).
+class MeanForecasterEvaluator:
+    r"""Evaluate out-of-sample conditional-mean forecasts.
 
-    Notes on Metrics & Interpretation
-    -------------------------------
-    - **WAPE**: Total absolute error divided by total observed demand. Lower is better.
-    - **Score**: Composite operational loss defined as WAPE + |PBias|. Lower is better.
-    - **Forecast Instability**: Relative change between consecutive forecasts. Lower is better.
-        - **PBias (Bias)**: Measures the fractional global volume deviation ($\frac{\sum \hat{\lambda} - \sum y}{\sum y}$).
-            * *Interpretation*: Should be close to 0. A negative bias indicates overall under-forecasting (risk of stockouts),
-        while a positive bias indicates over-forecasting (excess holding costs).
-    - **False Demand on Zero-Days (Avg Pred)**: Average predicted $\lambda_t$ specifically on days where true demand is strictly zero ($y = 0$).
-      * *Interpretation*: Measures the model's tendency to "smear" or leak intermittent demand into non-active periods,
-        creating false expectations of activity.
-    - **Peak Demand Deviation**: Fractional error of predicted values relative to true values restricted to periods of positive/peak demand ($y > 0$).
-      * *Interpretation*: Tracks the model's smoothing bias on positive-demand days. Negative values indicate that the model
-        under-forecasts realized peaks. Since this conditions on the observed target, it is an operational diagnostic rather
-        than a direct test of conditional-mean calibration.
+    Mean squared error is the primary statistical score because squared error
+    is consistent for the mean functional. MAE, WAPE, and percentage bias are
+    included as complementary error and aggregate-volume diagnostics.
     """
 
     @classmethod
@@ -42,41 +30,34 @@ class FirstStageForecasterEvaluator:
         df_res: pd.DataFrame,
         target_col: str = "y",
         lambda_col: str = "lambda_t",
-        id_col: str = "unique_id",
-        time_col: str = "ds",
     ) -> pd.DataFrame:
-        """Evaluate the operational quality of out-of-sample mean forecasts.
+        """Evaluate the accuracy and aggregate bias of mean forecasts.
 
         Returns
         -------
         pandas.DataFrame
-            One-row operational evaluation summary.
+            One-row conditional-mean evaluation summary.
 
         Columns
         -------
+        **mse** : ``float``
+            Mean squared error. Lower is better.
+        **mae** : ``float``
+            Mean absolute error. Lower is better.
         **wape** : ``float``
             Total absolute error divided by total observed demand.
         **pbias** : ``float``
             Aggregate predicted volume minus observed volume, divided by
             observed volume.
-        **score** : ``float``
-            Composite operational loss computed as ``wape + abs(pbias)``.
-        **forecast_instability** : ``float``
-            Relative revisions between adjacent forecasts within each series.
-        **false_demand_on_zero_days_avg_pred** : ``float``
-            Mean prediction on observations whose target is zero.
-        **peak_demand_deviation** : ``float``
-            Relative difference between mean predicted and observed demand on
-            positive-target observations.
 
         Notes
         -----
         Input predictions should come from temporal cross-validation or a held-
         out period. Evaluating fitted values would give optimistic results.
-        Rows must already be ordered chronologically within each series; the
-        evaluator does not reorder them.
+        WAPE and PBias are undefined when total observed demand is zero unless
+        both their respective numerator and denominator are zero.
         """
-        required = [target_col, lambda_col, id_col, time_col]
+        required = [target_col, lambda_col]
         _require_columns(df_res, required, "the input DataFrame")
 
         valid = df_res[required].dropna().copy()
@@ -89,7 +70,10 @@ class FirstStageForecasterEvaluator:
 
         total_true = np.sum(y_true)
         total_pred = np.sum(y_pred)
-        total_abs_error = np.sum(np.abs(y_pred - y_true))
+        errors = y_pred - y_true
+        total_abs_error = np.sum(np.abs(errors))
+        mse = np.mean(np.square(errors))
+        mae = np.mean(np.abs(errors))
         if total_true > 0:
             wape = total_abs_error / total_true
             pbias = (total_pred - total_true) / total_true
@@ -97,34 +81,12 @@ class FirstStageForecasterEvaluator:
             wape = 0.0 if total_abs_error == 0 else np.nan
             pbias = 0.0 if total_pred == 0 else np.nan
 
-        zero_mask = y_true == 0
-        pos_mask = y_true > 0
-
-        false_alarm_zeros = np.mean(y_pred[zero_mask]) if np.sum(zero_mask) > 0 else 0.0
-        peak_underestimation = (
-            (np.mean(y_pred[pos_mask]) - np.mean(y_true[pos_mask]))
-            / np.mean(y_true[pos_mask])
-            if np.sum(pos_mask) > 0
-            else 0.0
-        )
-
         return pd.DataFrame(
             {
+                "mse": [round(mse, 4)],
+                "mae": [round(mae, 4)],
                 "wape": [round(wape, 4)],
                 "pbias": [round(pbias, 4)],
-                "score": [round(wape + abs(pbias), 4)],
-                "forecast_instability": [
-                    round(
-                        cls._forecast_instability(
-                            valid,
-                            lambda_col=lambda_col,
-                            id_col=id_col,
-                        ),
-                        4,
-                    )
-                ],
-                "false_demand_on_zero_days_avg_pred": [round(false_alarm_zeros, 4)],
-                "peak_demand_deviation": [round(peak_underestimation, 4)],
             }
         )
 
@@ -141,25 +103,6 @@ class FirstStageForecasterEvaluator:
                 f"Conditional mean column '{prediction_name}' must be strictly positive."
             )
 
-    @staticmethod
-    def _forecast_instability(
-        df_res: pd.DataFrame,
-        lambda_col: str,
-        id_col: str,
-    ) -> float:
-        previous = df_res.groupby(id_col, observed=True)[lambda_col].shift(1)
-        current = df_res[lambda_col]
-        paired = previous.notna()
-        if not paired.any():
-            return np.nan
-
-        prev_values = previous[paired].to_numpy(dtype=float)
-        curr_values = current[paired].to_numpy(dtype=float)
-        average_volume = 0.5 * (prev_values.sum() + curr_values.sum())
-        if average_volume == 0:
-            return 0.0
-        revisions = prev_values - curr_values
-        return float((np.abs(revisions).sum() + abs(revisions.sum())) / average_volume)
 
     @classmethod
     def calibration_table(
@@ -169,28 +112,42 @@ class FirstStageForecasterEvaluator:
         lambda_col: str = "lambda_t",
         n_bins: int = 10,
     ) -> pd.DataFrame:
-        """Compare observed and predicted means across quantile-based bins.
+        """Compare observed and predicted means across prediction bins.
+
+        Parameters
+        ----------
+        df_res : pandas.DataFrame
+            Out-of-sample observations and conditional-mean forecasts.
+        target_col : str, default="y"
+            Name of the observed target column.
+        lambda_col : str, default="lambda_t"
+            Name of the conditional-mean forecast column.
+        n_bins : int, default=10
+            Requested number of quantile-based prediction bins. Duplicate
+            edges are dropped when forecasts have insufficient variation.
 
         Returns
         -------
         pandas.DataFrame
-            Calibration summary with one row per realized prediction bin.
+            One row per realized prediction bin with its count, mean
+            prediction, mean observation, and mean residual. Constant
+            predictions produce a single bin named ``"all"``.
 
-        Columns
-        -------
-        **calibration_bin** : ``object``
-            Quantile interval of the predictions, or ``"all"`` when every
-            prediction is identical.
-        **count** : ``int``
-            Number of valid target-prediction pairs in the bin.
-        **mean_prediction** : ``float``
-            Mean conditional prediction in the bin.
-        **mean_observed** : ``float``
-            Mean observed target in the bin.
-        **mean_residual** : ``float``
-            Mean observed target minus mean prediction.
+        Raises
+        ------
+        KeyError
+            If a required column is missing.
+        ValueError
+            If ``n_bins`` is invalid, no valid pairs remain, or the values
+            violate the conditional-mean requirements.
+
+        Notes
+        -----
+        This is a calibration diagnostic, not an additional scalar metric
+        returned by :meth:`evaluate`. Well-calibrated bins have mean residuals
+        close to zero.
         """
-        if not isinstance(n_bins, int) or n_bins < 2:
+        if isinstance(n_bins, bool) or not isinstance(n_bins, int) or n_bins < 2:
             raise ValueError("n_bins must be an integer greater than or equal to 2.")
         _require_columns(df_res, (target_col, lambda_col), "the input DataFrame")
 
@@ -221,7 +178,7 @@ class FirstStageForecasterEvaluator:
         return result
 
 
-class TwoStageForecasterEvaluator:
+class ProbabilisticForecasterEvaluator:
     r"""Evaluator utility for complete probabilistic forecasts.
 
     A pair of symmetric forecast quantiles, such as ``Q(0.05)`` and

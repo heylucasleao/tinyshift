@@ -491,9 +491,9 @@ import pandas as pd
 from mlforecast import MLForecast
 from sklearn.ensemble import RandomForestRegressor
 from tinyshift.forecasting import (
-    FirstStageForecasterEvaluator,
+    MeanForecasterEvaluator,
     NewsvendorOptimizer,
-    TwoStageForecasterEvaluator,
+    ProbabilisticForecasterEvaluator,
     TwoStageForecasterWrapper,
 )
 
@@ -558,17 +558,17 @@ continuous_model = TwoStageForecasterWrapper(fcst, distribution=GammaFamily())
 ```
 
 Evaluate only held-out or rolling-origin predictions after joining their actual
-targets. The first-stage evaluator covers conditional-mean diagnostics and its
-calibration table; the two-stage evaluator evaluates symmetric quantile pairs
+targets. The mean evaluator reports MSE, MAE, WAPE, and PBias and provides a
+separate calibration table; the probabilistic evaluator evaluates symmetric quantile pairs
 derived from a panel predictive distribution using MWIS, empirical coverage,
 and interval width:
 
 ```python
-mean_metrics = FirstStageForecasterEvaluator.evaluate(backtest_df)
-calibration = FirstStageForecasterEvaluator.calibration_table(
+mean_metrics = MeanForecasterEvaluator.evaluate(backtest_df)
+mean_calibration = MeanForecasterEvaluator.calibration_table(
     backtest_df, n_bins=10
 )
-probabilistic_metrics = TwoStageForecasterEvaluator.evaluate_interval(
+probabilistic_metrics = ProbabilisticForecasterEvaluator.evaluate_interval(
     backtest_df,
     forecast,
     coverages=(0.8, 0.9, 0.95),
