@@ -2,6 +2,33 @@
 
 The `plot` module provides comprehensive visualization tools for exploratory data analysis, correlation analysis, time series diagnostics, and classification model evaluation. Built on Plotly for interactive, publication-ready visualizations that support both statistical analysis and MLOps monitoring workflows.
 
+## Probabilistic forecast calibration
+
+`ProbabilisticCalibrationPlot` combines a PIT histogram, a within-series PIT
+ACF, and a reliability curve for the exceedance event `Y > threshold`.
+Continuous distributions use `F(y)` as the PIT; discrete distributions use the
+randomized PIT and accept `random_state` for reproducibility.
+
+```python
+from tinyshift.plot import ProbabilisticCalibrationPlot
+
+diagnostics = ProbabilisticCalibrationPlot(
+    forecast,
+    evaluation_df,
+    random_state=42,
+)
+
+diagnostics.pit_histogram(n_bins=10)
+diagnostics.pit_acf(max_lag=20)
+diagnostics.calibration_curve(threshold=15.0, n_bins=10)
+
+fig = diagnostics.summary(threshold=15.0, n_bins=10, max_lag=20)
+fig.show()
+```
+
+A complete synthetic continuous example is available in
+[`../examples/probabilistic_calibration.ipynb`](../examples/probabilistic_calibration.ipynb).
+
 ## Features
 
 ### 1. Classification Model Evaluation (`calibration.py`)
