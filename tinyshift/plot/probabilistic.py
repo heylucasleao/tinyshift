@@ -1,4 +1,7 @@
-"""Calibration plots for panel probabilistic forecasts."""
+# Copyright (c) 2024-2026 Lucas Leão
+# tinyshift - A small toolbox for mlops
+# Licensed under the MIT License
+
 
 from __future__ import annotations
 
