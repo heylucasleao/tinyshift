@@ -163,6 +163,41 @@ class ProbabilisticCalibrationPlot:
         random = np.random.default_rng(self.random_state).uniform(size=len(upper))
         return lower + random * (upper - lower)
 
+    def _pit_summary_text(self) -> str:
+        """Format empirical PIT moments with their uniform references."""
+        return (
+            f"<b>PIT Summary</b><br>"
+            f"n={len(self.pit_)}<br>"
+            f"Mean={np.mean(self.pit_):.3f} (expected 0.500)<br>"
+            f"Std={np.std(self.pit_):.3f} (expected {np.sqrt(1 / 12):.3f})"
+        )
+
+    def _pit_yaxis_upper(self, counts: np.ndarray, n_bins: int) -> float:
+        """Reserve the upper 40% of the PIT axis for its summary annotation."""
+        highest_value = max(float(np.max(counts)), len(self.pit_) / n_bins)
+        return highest_value / 0.6
+
+    def _add_pit_summary(self, fig, *, row: int | None = None, col: int | None = None):
+        """Add the PIT moment summary to a standalone or subplot figure."""
+        annotation = {
+            "x": 0.02,
+            "y": 0.98,
+            "xref": "x domain",
+            "yref": "y domain",
+            "text": self._pit_summary_text(),
+            "showarrow": False,
+            "align": "left",
+            "xanchor": "left",
+            "yanchor": "top",
+            "bgcolor": "rgba(255, 255, 255, 0.85)",
+            "bordercolor": "gray",
+            "borderwidth": 1,
+        }
+        if row is None or col is None:
+            fig.add_annotation(**annotation)
+        else:
+            fig.add_annotation(**annotation, row=row, col=col)
+
     @staticmethod
     def _validate_bins(
         n_bins: int,
@@ -270,7 +305,9 @@ class ProbabilisticCalibrationPlot:
         -------
         plotly.graph_objects.Figure
             Bar chart of PIT counts. The dashed horizontal line shows the
-            expected count per bin under a uniform distribution.
+            expected count per bin under a uniform distribution. An annotation
+            compares the empirical PIT mean and standard deviation with the
+            theoretical values ``0.5`` and ``sqrt(1/12)``.
 
         Raises
         ------
@@ -297,10 +334,12 @@ class ProbabilisticCalibrationPlot:
             )
         )
         fig.add_hline(y=len(self.pit_) / n_bins, line_dash="dash", line_color="gray")
+        self._add_pit_summary(fig)
         fig.update_layout(
             title="PIT Histogram",
             xaxis_title="PIT",
             yaxis_title="Frequency",
+            yaxis_range=[0, self._pit_yaxis_upper(counts, n_bins)],
             width=width,
             height=height,
             bargap=0.03,
@@ -534,13 +573,20 @@ class ProbabilisticCalibrationPlot:
             for shape in source.layout.shapes or ():
                 fig.add_shape(shape, row=1, col=column)
         fig.update_xaxes(title_text="PIT", range=[0, 1], row=1, col=1)
-        fig.update_yaxes(title_text="Frequency", row=1, col=1)
+        counts, _ = np.histogram(self.pit_, bins=n_bins, range=(0.0, 1.0))
+        fig.update_yaxes(
+            title_text="Frequency",
+            range=[0, self._pit_yaxis_upper(counts, n_bins)],
+            row=1,
+            col=1,
+        )
         fig.update_xaxes(title_text="Lag", row=1, col=2)
         fig.update_yaxes(title_text="ACF", row=1, col=2)
         fig.update_xaxes(title_text="Forecast probability", range=[0, 1], row=1, col=3)
         fig.update_yaxes(
             title_text="Observed relative frequency", range=[0, 1], row=1, col=3
         )
+        self._add_pit_summary(fig, row=1, col=1)
         fig.update_layout(width=width, height=height, title="Probabilistic Calibration")
         if fig_type is None:
             return fig

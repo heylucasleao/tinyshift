@@ -107,12 +107,18 @@ def test_probabilistic_calibration_continuous_plots_and_summary():
     diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation)
 
     assert np.all((diagnostics.pit_ >= 0.0) & (diagnostics.pit_ <= 1.0))
-    assert isinstance(diagnostics.pit_histogram(), go.Figure)
+    histogram = diagnostics.pit_histogram()
+    assert isinstance(histogram, go.Figure)
+    assert "Mean=" in histogram.layout.annotations[0].text
+    assert "Std=" in histogram.layout.annotations[0].text
+    assert histogram.layout.yaxis.range[1] > max(histogram.data[0].y)
     assert isinstance(diagnostics.pit_acf(max_lag=3), go.Figure)
     assert isinstance(diagnostics.calibration_curve(threshold=5), go.Figure)
     summary = diagnostics.summary(threshold=5, max_lag=3)
     assert isinstance(summary, go.Figure)
     assert len(summary.data) == 4
+    assert any("PIT Summary" in item.text for item in summary.layout.annotations)
+    assert summary.layout.yaxis.range[1] > max(summary.data[0].y)
 
 
 def test_probabilistic_calibration_discrete_pit_is_reproducible():
