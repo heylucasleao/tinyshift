@@ -18,15 +18,15 @@ evaluation helpers, and Newsvendor decisions exported from
 | `PanelPredictiveForecast` | Expose CDFs, survival probabilities, quantiles and central intervals on the forecast panel |
 | `DiscretePanelPredictiveForecast` | Additionally expose probability masses and integer quantiles |
 | `NewsvendorOptimizer` | Convert predictive distributions into inventory decisions |
-| `FirstStageForecasterEvaluator` | Evaluate the conditional-mean forecasting stage |
-| `TwoStageForecasterEvaluator` | Evaluate the complete probabilistic forecast |
+| `MeanForecasterEvaluator` | Evaluate conditional means and inspect their calibration table |
+| `ProbabilisticForecasterEvaluator` | Evaluate the complete probabilistic forecast |
 
 Users should normally import these objects from `tinyshift.forecasting`:
 
 ```python
 from mlforecast import MLForecast
 from sklearn.linear_model import LinearRegression
-from tinyshift.forecasting import TwoStageForecasterEvaluator, TwoStageForecasterWrapper
+from tinyshift.forecasting import ProbabilisticForecasterEvaluator, TwoStageForecasterWrapper
 
 point_forecaster = MLForecast(
     models=[LinearRegression()],
@@ -54,7 +54,7 @@ masses = forecast.pmf([0, 1, 2])  # P(Y=0), P(Y=1), and P(Y=2)
 # Targets are aligned to the forecast by unique_id and ds.
 evaluation_frame = forecast.to_frame()[["unique_id", "ds"]]
 evaluation_frame["y"] = observed_values
-probabilistic_metrics = TwoStageForecasterEvaluator.evaluate_interval(
+probabilistic_metrics = ProbabilisticForecasterEvaluator.evaluate_interval(
     evaluation_frame,
     forecast,
     coverages=(0.8, 0.9, 0.95),
@@ -63,7 +63,7 @@ probabilistic_metrics = TwoStageForecasterEvaluator.evaluate_interval(
 # Full-distribution scoring and calibration preserve panel identity.
 evaluation_df = forecast.to_frame()[["unique_id", "ds"]]
 evaluation_df["y"] = observed_values
-distribution_metrics = TwoStageForecasterEvaluator.evaluate_distribution(
+distribution_metrics = ProbabilisticForecasterEvaluator.evaluate_distribution(
     forecast,
     evaluation_df,
     train_df,

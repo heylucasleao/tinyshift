@@ -4,9 +4,16 @@
 
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
+from tinyshift.forecasting.probabilistic.distribution import (
+    GammaPredictiveDistribution,
+    NegativeBinomialPredictiveDistribution,
+)
+from tinyshift.forecasting.probabilistic.forecast import PanelPredictiveForecast
+from tinyshift.plot import ProbabilisticCalibrationPlot
 from tinyshift.plot.calibration import beta_confidence_analysis
 from tinyshift.plot.correlation import corr_heatmap
 from tinyshift.plot.mstl import MSTLDiagnostics
@@ -73,3 +80,81 @@ def test_mstl_rejects_invalid_nlags(nlags):
 def test_mstl_rejects_periods_too_large_for_the_series():
     with pytest.raises(ValueError, match="less than half.*invalid periods:.*365"):
         MSTLDiagnostics(periods=[7, 365]).fit(np.arange(80, dtype=float))
+
+
+def _probabilistic_forecast(distribution):
+    n_obs = len(distribution)
+    frame = pd.DataFrame(
+        {
+            "unique_id": ["a"] * (n_obs // 2) + ["b"] * (n_obs - n_obs // 2),
+            "ds": list(range(n_obs // 2)) + list(range(n_obs - n_obs // 2)),
+            "lambda_t": distribution.means,
+        }
+    )
+    return PanelPredictiveForecast(
+        frame, distribution, "model", "unique_id", "ds"
+    )
+
+
+def test_probabilistic_calibration_continuous_plots_and_summary():
+    means = np.full(20, 5.0)
+    forecast = _probabilistic_forecast(
+        GammaPredictiveDistribution(means, np.full(20, 2.0))
+    )
+    evaluation = forecast.to_frame()[["unique_id", "ds"]].assign(
+        y=np.linspace(1.0, 10.0, 20)
+    )
+    diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation)
+
+    assert np.all((diagnostics.pit_ >= 0.0) & (diagnostics.pit_ <= 1.0))
+    histogram = diagnostics.pit_histogram()
+    assert isinstance(histogram, go.Figure)
+    assert "Mean=" in histogram.layout.annotations[0].text
+    assert "Std=" in histogram.layout.annotations[0].text
+    assert histogram.layout.yaxis.range[1] > max(histogram.data[0].y)
+    assert isinstance(diagnostics.pit_acf(max_lag=3), go.Figure)
+    assert isinstance(diagnostics.calibration_curve(threshold=5), go.Figure)
+    summary = diagnostics.summary(threshold=5, max_lag=3)
+    assert isinstance(summary, go.Figure)
+    assert len(summary.data) == 4
+    assert any("PIT Summary" in item.text for item in summary.layout.annotations)
+    assert summary.layout.yaxis.range[1] > max(summary.data[0].y)
+
+
+def test_probabilistic_calibration_discrete_pit_is_reproducible():
+    means = np.full(20, 4.0)
+    forecast = _probabilistic_forecast(
+        NegativeBinomialPredictiveDistribution(means, np.full(20, 3.0))
+    )
+    evaluation = forecast.to_frame()[["unique_id", "ds"]].assign(
+        y=np.tile(np.arange(5), 4)
+    )
+
+    first = ProbabilisticCalibrationPlot(forecast, evaluation, random_state=7)
+    second = ProbabilisticCalibrationPlot(forecast, evaluation, random_state=7)
+
+    np.testing.assert_allclose(first.pit_, second.pit_)
+    lower = forecast.distribution.cdf(evaluation["y"].to_numpy()[:, None] - 1).ravel()
+    upper = forecast.distribution.cdf(evaluation["y"].to_numpy()[:, None]).ravel()
+    assert np.all(first.pit_ >= lower)
+    assert np.all(first.pit_ <= upper)
+
+
+def test_probabilistic_calibration_uses_requested_renderer(monkeypatch):
+    means = np.full(20, 5.0)
+    forecast = _probabilistic_forecast(
+        GammaPredictiveDistribution(means, np.full(20, 2.0))
+    )
+    evaluation = forecast.to_frame()[["unique_id", "ds"]].assign(
+        y=np.linspace(1.0, 10.0, 20)
+    )
+    diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation)
+    monkeypatch.setattr(
+        go.Figure,
+        "show",
+        lambda self, *args, **kwargs: (args, kwargs),
+    )
+
+    result = diagnostics.summary(threshold=5.0, fig_type="png")
+
+    assert result == (("png",), {})

@@ -7,12 +7,12 @@ from sklearn.linear_model import LinearRegression
 
 import tinyshift.forecasting.probabilistic.family as tsf_family_module
 from tinyshift.forecasting import (
-    FirstStageForecasterEvaluator,
     GammaFamily,
     LogNormalFamily,
+    MeanForecasterEvaluator,
     NegativeBinomialFamily,
     NewsvendorOptimizer,
-    TwoStageForecasterEvaluator,
+    ProbabilisticForecasterEvaluator,
     TwoStageForecasterWrapper,
     WeibullFamily,
 )
@@ -698,7 +698,7 @@ def test_pmf_rejects_negative_max_k(sample_train_data):
         _pmf(wrapper, h=1, max_k=-1)
 
 
-def test_first_stage_evaluator_metrics():
+def test_mean_evaluator_metrics():
     df = pd.DataFrame(
         {
             "unique_id": ["a", "a", "a"],
@@ -707,45 +707,31 @@ def test_first_stage_evaluator_metrics():
             "lambda_t": [1.0, 1.0, 5.0],
         }
     )
-    result = FirstStageForecasterEvaluator.evaluate(df)
+    result = MeanForecasterEvaluator.evaluate(df)
 
+    assert result.columns.tolist() == ["mse", "mae", "wape", "pbias"]
+    assert result.loc[0, "mse"] == pytest.approx(1.0)
+    assert result.loc[0, "mae"] == pytest.approx(1.0)
     assert result.loc[0, "wape"] == pytest.approx(0.5)
     assert result.loc[0, "pbias"] == pytest.approx(0.1667)
-    assert result.loc[0, "score"] == pytest.approx(0.6667)
-    assert result.loc[0, "forecast_instability"] == pytest.approx(2.0)
-    assert result.loc[0, "false_demand_on_zero_days_avg_pred"] == 1.0
-    assert result.loc[0, "peak_demand_deviation"] == 0.0
 
 
-def test_first_stage_forecast_instability_does_not_cross_series():
-    df = pd.DataFrame(
+def test_mean_evaluator_calibration_table():
+    data = pd.DataFrame(
         {
-            "unique_id": ["a", "a", "b", "b"],
-            "ds": [1, 2, 1, 2],
-            "y": [1.0, 1.0, 10.0, 10.0],
-            "lambda_t": [1.0, 1.0, 10.0, 10.0],
-        }
-    )
-    result = FirstStageForecasterEvaluator.evaluate(df)
-
-    assert result.loc[0, "forecast_instability"] == pytest.approx(0.0)
-
-
-def test_first_stage_calibration_table():
-    df = pd.DataFrame(
-        {
-            "h": [1, 1, 2, 2],
             "y": [0.0, 2.0, 4.0, 6.0],
             "lambda_t": [0.5, 1.5, 4.5, 5.5],
         }
     )
-    calibration = FirstStageForecasterEvaluator.calibration_table(df, n_bins=2)
-    assert calibration["count"].sum() == len(df)
+
+    calibration = MeanForecasterEvaluator.calibration_table(data, n_bins=2)
+
+    assert calibration["count"].sum() == len(data)
     assert len(calibration) == 2
     assert calibration.iloc[0]["mean_residual"] == pytest.approx(0.0)
 
 
-def test_first_stage_evaluator_rejects_non_positive_mean():
+def test_mean_evaluator_rejects_non_positive_mean():
     df = pd.DataFrame(
         {
             "unique_id": ["a", "a"],
@@ -755,7 +741,7 @@ def test_first_stage_evaluator_rejects_non_positive_mean():
         }
     )
     with pytest.raises(ValueError, match="strictly positive"):
-        FirstStageForecasterEvaluator.evaluate(df)
+        MeanForecasterEvaluator.evaluate(df)
 
 
 def test_tsf_evaluator_reports_distribution_derived_intervals(gamma_distribution):
@@ -776,7 +762,7 @@ def test_tsf_evaluator_reports_distribution_derived_intervals(gamma_distribution
     y_true = frame[["unique_id", "ds"]].iloc[::-1].copy()
     y_true["y"] = [4.0, 2.0]
 
-    result = TwoStageForecasterEvaluator.evaluate_interval(
+    result = ProbabilisticForecasterEvaluator.evaluate_interval(
         y_true, forecast, coverages=[0.9]
     )
 
@@ -798,7 +784,9 @@ def test_tsf_evaluator_rejects_invalid_coverage(gamma_distribution):
     y_true = frame[["unique_id", "ds"]].assign(y=[2.0, 4.0])
 
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
-        TwoStageForecasterEvaluator.evaluate_interval(y_true, forecast, coverages=[1.0])
+        ProbabilisticForecasterEvaluator.evaluate_interval(
+            y_true, forecast, coverages=[1.0]
+        )
 
 
 def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
@@ -825,7 +813,7 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
         }
     )
 
-    result = TwoStageForecasterEvaluator.evaluate_distribution(
+    result = ProbabilisticForecasterEvaluator.evaluate_distribution(
         forecast, evaluation, train
     )
 
@@ -861,7 +849,9 @@ def test_tsf_distribution_evaluator_requires_forecast_alignment(gamma_distributi
     train = pd.DataFrame({"unique_id": ["A", "A"], "y": [1.0, 2.0]})
 
     with pytest.raises(ValueError, match="aligned with forecast"):
-        TwoStageForecasterEvaluator.evaluate_distribution(forecast, evaluation, train)
+        ProbabilisticForecasterEvaluator.evaluate_distribution(
+            forecast, evaluation, train
+        )
 
 
 @pytest.mark.parametrize("family", [NegativeBinomialFamily(), GammaFamily()])
@@ -1093,11 +1083,11 @@ def test_predict_distribution_uses_fallback_for_unknown_series(
     )
 
 
-def test_first_stage_evaluator_rejects_missing_or_empty_data():
+def test_mean_evaluator_rejects_missing_or_empty_data():
     with pytest.raises(KeyError, match="Columns not found"):
-        FirstStageForecasterEvaluator.evaluate(pd.DataFrame({"y": [1.0]}))
+        MeanForecasterEvaluator.evaluate(pd.DataFrame({"y": [1.0]}))
     with pytest.raises(ValueError, match="No valid"):
-        FirstStageForecasterEvaluator.evaluate(
+        MeanForecasterEvaluator.evaluate(
             pd.DataFrame(
                 {
                     "unique_id": ["a"],
@@ -1109,7 +1099,7 @@ def test_first_stage_evaluator_rejects_missing_or_empty_data():
         )
 
 
-def test_first_stage_evaluator_handles_all_zero_target():
+def test_mean_evaluator_handles_all_zero_target():
     data = pd.DataFrame(
         {
             "unique_id": ["a", "a"],
@@ -1119,24 +1109,26 @@ def test_first_stage_evaluator_handles_all_zero_target():
         }
     )
 
-    result = FirstStageForecasterEvaluator.evaluate(data)
+    result = MeanForecasterEvaluator.evaluate(data)
 
+    assert result.loc[0, "mse"] == pytest.approx(1.0)
+    assert result.loc[0, "mae"] == pytest.approx(1.0)
     assert np.isnan(result.loc[0, "wape"])
     assert np.isnan(result.loc[0, "pbias"])
 
 
-@pytest.mark.parametrize("n_bins", [1, 1.5])
-def test_calibration_table_rejects_invalid_bins(n_bins):
+@pytest.mark.parametrize("n_bins", [True, 1, 1.5])
+def test_mean_calibration_table_rejects_invalid_bins(n_bins):
     data = pd.DataFrame({"y": [1.0, 2.0], "lambda_t": [1.0, 2.0]})
 
     with pytest.raises(ValueError, match="greater than or equal to 2"):
-        FirstStageForecasterEvaluator.calibration_table(data, n_bins=n_bins)
+        MeanForecasterEvaluator.calibration_table(data, n_bins=n_bins)
 
 
-def test_calibration_table_handles_constant_predictions():
+def test_mean_calibration_table_handles_constant_predictions():
     data = pd.DataFrame({"y": [1.0, 2.0], "lambda_t": [1.5, 1.5]})
 
-    result = FirstStageForecasterEvaluator.calibration_table(data, n_bins=5)
+    result = MeanForecasterEvaluator.calibration_table(data, n_bins=5)
 
     assert len(result) == 1
     assert result.loc[0, "calibration_bin"] == "all"
@@ -1151,7 +1143,7 @@ def test_two_stage_interval_evaluator_requires_panel_target(gamma_distribution):
     )
 
     with pytest.raises(KeyError, match="Columns not found in y_true"):
-        TwoStageForecasterEvaluator.evaluate_interval(
+        ProbabilisticForecasterEvaluator.evaluate_interval(
             frame[["unique_id", "ds"]], forecast
         )
 
@@ -1345,7 +1337,7 @@ def test_two_stage_interval_evaluator_rejects_missing_targets(gamma_distribution
     y_true = frame[["unique_id", "ds"]].assign(y=[np.nan, 4.0])
 
     with pytest.raises(ValueError, match="target for every forecast row"):
-        TwoStageForecasterEvaluator.evaluate_interval(y_true, forecast)
+        ProbabilisticForecasterEvaluator.evaluate_interval(y_true, forecast)
 
 
 def test_wrapper_supports_custom_column_names():

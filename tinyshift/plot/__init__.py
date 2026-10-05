@@ -14,9 +14,11 @@ from .correlation import corr_heatmap
 from .diagnostic import forest_plot, pami, residual_analysis, stationarity_analysis
 from .mstl import MSTLDiagnostics
 from .power import power_curve, power_vs_allocation
+from .probabilistic import ProbabilisticCalibrationPlot
 
 __all__ = [
     "MSTLDiagnostics",
+    "ProbabilisticCalibrationPlot",
     "beta_confidence_analysis",
     "confusion_matrix",
     "corr_heatmap",
