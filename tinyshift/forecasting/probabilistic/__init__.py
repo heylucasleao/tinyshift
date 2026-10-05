@@ -4,7 +4,7 @@
 
 
 from .decision import NewsvendorOptimizer
-from .eval import FirstStageForecasterEvaluator, TwoStageForecasterEvaluator
+from .eval import MeanForecasterEvaluator, ProbabilisticForecasterEvaluator
 from .family import (
     GammaFamily,
     LogNormalFamily,
@@ -16,13 +16,13 @@ from .wrapper import TwoStageForecasterWrapper
 
 __all__ = [
     "DiscretePanelPredictiveForecast",
-    "FirstStageForecasterEvaluator",
     "GammaFamily",
     "LogNormalFamily",
+    "MeanForecasterEvaluator",
     "NegativeBinomialFamily",
     "NewsvendorOptimizer",
     "PanelPredictiveForecast",
-    "TwoStageForecasterEvaluator",
+    "ProbabilisticForecasterEvaluator",
     "TwoStageForecasterWrapper",
     "WeibullFamily",
 ]

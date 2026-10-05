@@ -76,7 +76,7 @@ class ProbabilisticCalibrationPlot:
 
     See Also
     --------
-    tinyshift.forecasting.probabilistic.TwoStageForecasterEvaluator :
+    tinyshift.forecasting.probabilistic.ProbabilisticForecasterEvaluator :
         Numerical evaluation with interval scores and CRPS.
     """
 

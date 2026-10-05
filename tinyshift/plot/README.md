@@ -26,8 +26,8 @@ fig = diagnostics.summary(threshold=15.0, n_bins=10, max_lag=20)
 fig.show()
 ```
 
-A complete synthetic continuous example is available in
-[`../examples/probabilistic_calibration.ipynb`](../examples/probabilistic_calibration.ipynb).
+A complete example using the two-stage forecasting workflow is available in
+[`../examples/tsf.ipynb`](../examples/tsf.ipynb).
 
 ## Features
 
