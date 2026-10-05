@@ -132,3 +132,23 @@ def test_probabilistic_calibration_discrete_pit_is_reproducible():
     upper = forecast.distribution.cdf(evaluation["y"].to_numpy()[:, None]).ravel()
     assert np.all(first.pit_ >= lower)
     assert np.all(first.pit_ <= upper)
+
+
+def test_probabilistic_calibration_uses_requested_renderer(monkeypatch):
+    means = np.full(20, 5.0)
+    forecast = _probabilistic_forecast(
+        GammaPredictiveDistribution(means, np.full(20, 2.0))
+    )
+    evaluation = forecast.to_frame()[["unique_id", "ds"]].assign(
+        y=np.linspace(1.0, 10.0, 20)
+    )
+    diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation)
+    monkeypatch.setattr(
+        go.Figure,
+        "show",
+        lambda self, *args, **kwargs: (args, kwargs),
+    )
+
+    result = diagnostics.summary(threshold=5.0, fig_type="png")
+
+    assert result == (("png",), {})

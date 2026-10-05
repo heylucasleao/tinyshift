@@ -249,6 +249,7 @@ class ProbabilisticCalibrationPlot:
         n_bins: int = 10,
         width=600,
         height=400,
+        fig_type: str | None = None,
     ):
         """
         Plot the PIT histogram and its uniform reference frequency.
@@ -261,6 +262,9 @@ class ProbabilisticCalibrationPlot:
             Figure width in pixels.
         height : int, default=400
             Figure height in pixels.
+        fig_type : str or None, default=None
+            Plotly renderer passed to ``Figure.show``. If ``None``, the figure
+            is returned without being displayed.
 
         Returns
         -------
@@ -301,7 +305,9 @@ class ProbabilisticCalibrationPlot:
             height=height,
             bargap=0.03,
         )
-        return fig
+        if fig_type is None:
+            return fig
+        return fig.show(fig_type)
 
     @requires_extra("plot")
     def pit_acf(
@@ -309,6 +315,7 @@ class ProbabilisticCalibrationPlot:
         max_lag: int = 30,
         width=600,
         height=400,
+        fig_type: str | None = None,
     ):
         """
         Plot the pooled within-series autocorrelation of the PIT.
@@ -321,6 +328,9 @@ class ProbabilisticCalibrationPlot:
             Figure width in pixels.
         height : int, default=400
             Figure height in pixels.
+        fig_type : str or None, default=None
+            Plotly renderer passed to ``Figure.show``. If ``None``, the figure
+            is returned without being displayed.
 
         Returns
         -------
@@ -363,7 +373,9 @@ class ProbabilisticCalibrationPlot:
             height=height,
             showlegend=False,
         )
-        return fig
+        if fig_type is None:
+            return fig
+        return fig.show(fig_type)
 
     @requires_extra("plot")
     def calibration_curve(
@@ -372,6 +384,7 @@ class ProbabilisticCalibrationPlot:
         n_bins: int = 10,
         width=600,
         height=400,
+        fig_type: str | None = None,
     ):
         """
         Plot the calibration curve for the event ``Y > threshold``.
@@ -388,6 +401,9 @@ class ProbabilisticCalibrationPlot:
             Figure width in pixels.
         height : int, default=400
             Figure height in pixels.
+        fig_type : str or None, default=None
+            Plotly renderer passed to ``Figure.show``. If ``None``, the figure
+            is returned without being displayed.
 
         Returns
         -------
@@ -447,7 +463,9 @@ class ProbabilisticCalibrationPlot:
             width=width,
             height=height,
         )
-        return fig
+        if fig_type is None:
+            return fig
+        return fig.show(fig_type)
 
     @requires_extra("plot")
     def summary(
@@ -457,6 +475,7 @@ class ProbabilisticCalibrationPlot:
         max_lag: int = 30,
         width=1200,
         height=400,
+        fig_type: str | None = None,
     ):
         """
         Plot all probabilistic calibration diagnostics in one figure.
@@ -474,6 +493,9 @@ class ProbabilisticCalibrationPlot:
             Combined figure width in pixels.
         height : int, default=400
             Combined figure height in pixels.
+        fig_type : str or None, default=None
+            Plotly renderer passed to ``Figure.show``. If ``None``, the figure
+            is returned without being displayed.
 
         Returns
         -------
@@ -520,4 +542,6 @@ class ProbabilisticCalibrationPlot:
             title_text="Observed relative frequency", range=[0, 1], row=1, col=3
         )
         fig.update_layout(width=width, height=height, title="Probabilistic Calibration")
-        return fig
+        if fig_type is None:
+            return fig
+        return fig.show(fig_type)
