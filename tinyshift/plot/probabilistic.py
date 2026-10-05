@@ -14,15 +14,67 @@ __all__ = ["ProbabilisticCalibrationPlot"]
 
 
 class ProbabilisticCalibrationPlot:
-    """Visual diagnostics for a row-aligned probabilistic forecast.
+    """
+    Inspect calibration for a row-aligned probabilistic panel forecast.
 
     The PIT histogram assesses distributional calibration, while the PIT ACF
-    checks whether calibration errors retain temporal dependence.  The event
+    checks whether calibration errors retain temporal dependence. The event
     calibration curve compares forecast probabilities of ``Y > threshold``
     with observed exceedance frequencies.
 
-    Discrete distributions use the randomized PIT; continuous distributions
-    use ``F(y)`` directly.
+    Parameters
+    ----------
+    forecast : PanelPredictiveForecast
+        Probabilistic forecast exposing ``distribution`` and ``to_frame``.
+        Its rows must identify unique series and timestamps and must be aligned
+        with the underlying batch of predictive distributions.
+    y_true : pandas.DataFrame
+        Observed panel containing the identifier, timestamp, and numeric target
+        columns. Every forecast row must have exactly one observed target.
+    target_col : str, default="y"
+        Name of the observed target column in ``y_true``.
+    id_col : str, default="unique_id"
+        Name of the series identifier column in both inputs.
+    time_col : str, default="ds"
+        Name of the timestamp column in both inputs.
+    random_state : int or None, default=None
+        Seed used by the randomized PIT for discrete distributions. It is
+        ignored for continuous distributions.
+
+    Attributes
+    ----------
+    forecast : PanelPredictiveForecast
+        Forecast supplied at construction.
+    pit_ : numpy.ndarray
+        Row-aligned PIT values. Continuous forecasts use ``F(y)`` directly;
+        discrete forecasts use the randomized PIT within each CDF jump.
+
+    Examples
+    --------
+    Create the diagnostics once and reuse them in individual or combined
+    plots:
+
+    >>> diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation_df)
+    >>> diagnostics.pit_histogram(n_bins=10)
+    >>> diagnostics.pit_acf(max_lag=20)
+    >>> diagnostics.calibration_curve(threshold=15.0)
+    >>> diagnostics.summary(threshold=15.0, max_lag=20)
+
+    Notes
+    -----
+    The class is intended for out-of-sample forecasts. For a calibrated
+    continuous predictive distribution, PIT values should be approximately
+    uniform and serially independent. For a discrete predictive distribution,
+    the randomized PIT is used so that the same reference remains applicable.
+
+    The PIT ACF sorts rows by ``id_col`` and ``time_col`` and constructs lagged
+    pairs within each series. It never links the final observation of one
+    series to the first observation of another.
+
+    See Also
+    --------
+    tinyshift.forecasting.probabilistic.TwoStageForecasterEvaluator :
+        Numerical evaluation with interval scores and CRPS.
     """
 
     def __init__(
@@ -49,6 +101,7 @@ class ProbabilisticCalibrationPlot:
         self.pit_ = self._compute_pit()
 
     def _align(self, y_true: pd.DataFrame) -> pd.DataFrame:
+        """Align observed targets to the forecast row order by panel keys."""
         keys = [self.id_col, self.time_col]
         forecast_frame = self.forecast.to_frame()
         for frame, required, name in (
@@ -84,6 +137,7 @@ class ProbabilisticCalibrationPlot:
         self,
         values: np.ndarray,
     ) -> np.ndarray:
+        """Evaluate one CDF value for each row-aligned distribution."""
         result = np.asarray(
             self.forecast.distribution.cdf(np.asarray(values)[:, None]), dtype=float
         )
@@ -92,6 +146,7 @@ class ProbabilisticCalibrationPlot:
     def _compute_pit(
         self,
     ) -> np.ndarray:
+        """Compute continuous or randomized discrete row-wise PIT values."""
         distribution = self.forecast.distribution
         upper = self._row_cdf(self._observed)
         if not isinstance(distribution, DiscretePredictiveDistribution):
@@ -109,6 +164,7 @@ class ProbabilisticCalibrationPlot:
     def _validate_bins(
         n_bins: int,
     ) -> None:
+        """Require at least two histogram or probability bins."""
         if isinstance(n_bins, bool) or not isinstance(n_bins, int) or n_bins < 2:
             raise ValueError("n_bins must be an integer greater than or equal to 2.")
 
@@ -116,6 +172,7 @@ class ProbabilisticCalibrationPlot:
         self,
         max_lag: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Calculate pooled correlations from within-series lagged PIT pairs."""
         if isinstance(max_lag, bool) or not isinstance(max_lag, int) or max_lag < 1:
             raise ValueError("max_lag must be a positive integer.")
 
@@ -148,6 +205,7 @@ class ProbabilisticCalibrationPlot:
         threshold: float,
         n_bins: int,
     ) -> pd.DataFrame:
+        """Aggregate exceedance probabilities and outcomes into fixed bins."""
         self._validate_bins(n_bins)
         if not np.isscalar(threshold) or not np.isfinite(threshold):
             raise ValueError("threshold must be a finite scalar.")
@@ -189,7 +247,34 @@ class ProbabilisticCalibrationPlot:
         width=600,
         height=400,
     ):
-        """Return a PIT histogram with the uniform reference frequency."""
+        """
+        Plot the PIT histogram and its uniform reference frequency.
+
+        Parameters
+        ----------
+        n_bins : int, default=10
+            Number of equal-width bins over ``[0, 1]``. Must be at least 2.
+        width : int, default=600
+            Figure width in pixels.
+        height : int, default=400
+            Figure height in pixels.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            Bar chart of PIT counts. The dashed horizontal line shows the
+            expected count per bin under a uniform distribution.
+
+        Raises
+        ------
+        ValueError
+            If ``n_bins`` is not an integer greater than or equal to 2.
+
+        Notes
+        -----
+        A U-shaped histogram suggests underdispersion, while concentration near
+        0.5 suggests overdispersion. Asymmetry can indicate forecast bias.
+        """
         import plotly.graph_objects as go
 
         self._validate_bins(n_bins)
@@ -222,7 +307,35 @@ class ProbabilisticCalibrationPlot:
         width=600,
         height=400,
     ):
-        """Return the pooled within-series autocorrelation of the PIT."""
+        """
+        Plot the pooled within-series autocorrelation of the PIT.
+
+        Parameters
+        ----------
+        max_lag : int, default=30
+            Largest within-series lag to display. Must be positive.
+        width : int, default=600
+            Figure width in pixels.
+        height : int, default=400
+            Figure height in pixels.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            PIT autocorrelation bars with approximate 95% reference bounds.
+
+        Raises
+        ------
+        ValueError
+            If ``max_lag`` is not a positive integer.
+
+        Notes
+        -----
+        Lagged pairs are formed independently within each series and then
+        pooled. A lag is shown as missing when fewer than two valid pairs exist
+        or either side of the pooled pair has zero variance. The reference
+        bounds are the approximation ``+/- 1.96 / sqrt(n)``.
+        """
         import plotly.graph_objects as go
 
         lags, correlations, pair_counts = self._acf(max_lag)
@@ -257,7 +370,39 @@ class ProbabilisticCalibrationPlot:
         width=600,
         height=400,
     ):
-        """Return the reliability curve for the event ``Y > threshold``."""
+        """
+        Plot the calibration curve for the event ``Y > threshold``.
+
+        Parameters
+        ----------
+        threshold : float
+            Finite threshold defining the strict exceedance event. Forecast
+            probabilities are obtained from the predictive survival function.
+        n_bins : int, default=10
+            Number of equal-width probability bins over ``[0, 1]``. Empty bins
+            are omitted. Must be at least 2.
+        width : int, default=600
+            Figure width in pixels.
+        height : int, default=400
+            Figure height in pixels.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            Reliability curve comparing mean forecast probability with the
+            observed exceedance frequency in each populated bin.
+
+        Raises
+        ------
+        ValueError
+            If ``threshold`` is not finite or ``n_bins`` is invalid.
+
+        Notes
+        -----
+        The diagonal represents perfect event calibration. Vertical error bars
+        use the normal approximation to a 95% binomial confidence interval.
+        For discrete targets, the event remains strictly ``Y > threshold``.
+        """
         import plotly.graph_objects as go
 
         calibration = self._calibration_data(threshold, n_bins)
@@ -310,7 +455,44 @@ class ProbabilisticCalibrationPlot:
         width=1200,
         height=400,
     ):
-        """Return PIT histogram, PIT ACF, and event calibration in one figure."""
+        """
+        Plot all probabilistic calibration diagnostics in one figure.
+
+        Parameters
+        ----------
+        threshold : float
+            Finite threshold defining the strict event ``Y > threshold`` in
+            the calibration-curve panel.
+        n_bins : int, default=10
+            Number of bins used by the PIT histogram and calibration curve.
+        max_lag : int, default=30
+            Largest within-series lag displayed by the PIT ACF.
+        width : int, default=1200
+            Combined figure width in pixels.
+        height : int, default=400
+            Combined figure height in pixels.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            Three-panel figure containing the PIT histogram, PIT ACF, and
+            exceedance calibration curve.
+
+        Raises
+        ------
+        ValueError
+            If ``threshold``, ``n_bins``, or ``max_lag`` is invalid.
+
+        Examples
+        --------
+        >>> diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation_df)
+        >>> figure = diagnostics.summary(
+        ...     threshold=15.0,
+        ...     n_bins=10,
+        ...     max_lag=20,
+        ... )
+        >>> figure.show()
+        """
         from plotly.subplots import make_subplots
 
         histogram = self.pit_histogram(n_bins=n_bins)
