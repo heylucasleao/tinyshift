@@ -15,6 +15,8 @@ from tinyshift.utils.imports import requires_extra
 
 __all__ = ["ProbabilisticCalibrationPlot"]
 
+_DEFAULT_COVERAGES = np.arange(0.05, 1.0, 0.05)
+
 
 class ProbabilisticCalibrationPlot:
     """
@@ -22,7 +24,7 @@ class ProbabilisticCalibrationPlot:
 
     The PIT histogram assesses distributional calibration, while the PIT ACF
     checks whether calibration errors retain temporal dependence. The event
-    calibration curve compares forecast probabilities of ``Y > threshold``
+    exceedance calibration compares forecast probabilities of ``Y > threshold``
     with observed exceedance frequencies.
 
     Parameters
@@ -58,10 +60,11 @@ class ProbabilisticCalibrationPlot:
     plots:
 
     >>> diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation_df)
+    >>> diagnostics.coverage_calibration(coverages=(0.5, 0.8, 0.9, 0.95))
     >>> diagnostics.pit_histogram(n_bins=10)
     >>> diagnostics.pit_acf(max_lag=20)
-    >>> diagnostics.calibration_curve(threshold=15.0)
-    >>> diagnostics.summary(threshold=15.0, max_lag=20)
+    >>> diagnostics.exceedance_calibration(threshold=15.0)
+    >>> diagnostics.summary(max_lag=20)
 
     Notes
     -----
@@ -270,13 +273,46 @@ class ProbabilisticCalibrationPlot:
             )
             .reset_index(drop=True)
         )
-        standard_error = np.sqrt(
-            result["observed_frequency"]
-            * (1.0 - result["observed_frequency"])
-            / result["count"]
-        )
-        result["ci95"] = 1.96 * standard_error
         return result
+
+    def _coverage_data(self, coverages) -> pd.DataFrame:
+        """Calculate empirical coverage for central predictive intervals."""
+        try:
+            values = np.asarray(tuple(coverages), dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "coverages must be a non-empty iterable of numbers."
+            ) from exc
+        if values.ndim != 1 or values.size == 0:
+            raise ValueError("coverages must be a non-empty one-dimensional iterable.")
+        if not np.all(np.isfinite(values)) or np.any((values <= 0.0) | (values >= 1.0)):
+            raise ValueError(
+                "coverages must contain finite values strictly between 0 and 1."
+            )
+        if len(np.unique(values)) != len(values):
+            raise ValueError("coverages must not contain duplicate values.")
+
+        empirical = []
+        for coverage in values:
+            bounds = np.asarray(
+                self.forecast.distribution.interval(float(coverage)), dtype=float
+            )
+            if bounds.shape != (len(self._observed), 2):
+                raise ValueError(
+                    "Predictive interval bounds must have shape (n_observations, 2)."
+                )
+            lower, upper = bounds[:, 0], bounds[:, 1]
+            empirical.append(
+                float(np.mean((self._observed >= lower) & (self._observed <= upper)))
+            )
+
+        order = np.argsort(values)
+        return pd.DataFrame(
+            {
+                "nominal_coverage": values[order],
+                "empirical_coverage": np.asarray(empirical)[order],
+            }
+        )
 
     @requires_extra("plot")
     def pit_histogram(
@@ -417,7 +453,7 @@ class ProbabilisticCalibrationPlot:
         return fig.show(fig_type)
 
     @requires_extra("plot")
-    def calibration_curve(
+    def exceedance_calibration(
         self,
         threshold: float,
         n_bins: int = 10,
@@ -426,7 +462,7 @@ class ProbabilisticCalibrationPlot:
         fig_type: str | None = None,
     ):
         """
-        Plot the calibration curve for the event ``Y > threshold``.
+        Plot calibration for the exceedance event ``Y > threshold``.
 
         Parameters
         ----------
@@ -457,9 +493,8 @@ class ProbabilisticCalibrationPlot:
 
         Notes
         -----
-        The diagonal represents perfect event calibration. Vertical error bars
-        use the normal approximation to a 95% binomial confidence interval.
-        For discrete targets, the event remains strictly ``Y > threshold``.
+        The diagonal represents perfect event calibration. For discrete
+        targets, the event remains strictly ``Y > threshold``.
         """
         import plotly.graph_objects as go
 
@@ -479,11 +514,6 @@ class ProbabilisticCalibrationPlot:
             go.Scatter(
                 x=calibration["forecast_probability"],
                 y=calibration["observed_frequency"],
-                error_y={
-                    "type": "data",
-                    "array": calibration["ci95"],
-                    "visible": True,
-                },
                 customdata=calibration["count"],
                 mode="lines+markers",
                 name=f"Y > {threshold:g}",
@@ -494,7 +524,7 @@ class ProbabilisticCalibrationPlot:
             )
         )
         fig.update_layout(
-            title=f"Calibration Curve: P(Y > {threshold:g})",
+            title=f"Exceedance Calibration: P(Y > {threshold:g})",
             xaxis_title="Forecast probability",
             yaxis_title="Observed relative frequency",
             xaxis_range=[0, 1],
@@ -507,9 +537,89 @@ class ProbabilisticCalibrationPlot:
         return fig.show(fig_type)
 
     @requires_extra("plot")
+    def coverage_calibration(
+        self,
+        coverages=_DEFAULT_COVERAGES,
+        width=600,
+        height=400,
+        fig_type: str | None = None,
+    ):
+        """
+        Plot empirical against nominal central-interval coverage.
+
+        Parameters
+        ----------
+        coverages : iterable of float, default=np.arange(0.05, 1.0, 0.05)
+            Nominal central-interval coverage levels. Values must be unique,
+            finite, and strictly between zero and one.
+        width : int, default=600
+            Figure width in pixels.
+        height : int, default=400
+            Figure height in pixels.
+        fig_type : str or None, default=None
+            Plotly renderer passed to ``Figure.show``. If ``None``, the figure
+            is returned without being displayed.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            Coverage curve with nominal coverage on the horizontal axis and
+            empirical coverage on the vertical axis.
+
+        Notes
+        -----
+        A calibrated forecast follows the diagonal. Points below the diagonal
+        indicate undercoverage, while points above it indicate overcoverage.
+        This diagnostic assesses marginal interval coverage over all aligned
+        observations; it does not show variation between forecast windows.
+        """
+        import plotly.graph_objects as go
+
+        coverage = self._coverage_data(coverages)
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=[0.0, 1.0],
+                y=[0.0, 1.0],
+                mode="lines",
+                name="Perfect calibration",
+                line={"color": "gray", "dash": "dash"},
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=coverage["nominal_coverage"],
+                y=coverage["empirical_coverage"],
+                mode="lines+markers",
+                name="Forecast",
+                customdata=(
+                    coverage["empirical_coverage"] - coverage["nominal_coverage"]
+                ),
+                hovertemplate=(
+                    "Nominal: %{x:.1%}<br>Empirical: %{y:.1%}"
+                    "<br>Difference: %{customdata:+.1%}<extra></extra>"
+                ),
+            )
+        )
+        fig.update_layout(
+            title="Prediction Interval Coverage",
+            xaxis_title="Nominal coverage",
+            yaxis_title="Empirical coverage",
+            xaxis={"range": [0, 1], "tickformat": ".0%"},
+            yaxis={"range": [0, 1], "tickformat": ".0%"},
+            width=width,
+            height=height,
+        )
+        if fig_type is None:
+            return fig
+        return fig.show(fig_type)
+
+    @requires_extra("plot")
     def summary(
         self,
-        threshold: float,
+        threshold: float | None = None,
+        coverages=_DEFAULT_COVERAGES,
         n_bins: int = 10,
         max_lag: int = 30,
         width=1200,
@@ -521,11 +631,16 @@ class ProbabilisticCalibrationPlot:
 
         Parameters
         ----------
-        threshold : float
-            Finite threshold defining the strict event ``Y > threshold`` in
-            the calibration-curve panel.
+        threshold : float or None, default=None
+            Optional finite threshold defining the strict event
+            ``Y > threshold``. When supplied, an exceedance-calibration panel
+            is appended to the three general diagnostics.
+        coverages : iterable of float, default=np.arange(0.05, 1.0, 0.05)
+            Nominal central-interval coverage levels displayed by the coverage
+            calibration panel.
         n_bins : int, default=10
-            Number of bins used by the PIT histogram and calibration curve.
+            Number of bins used by the PIT histogram and, when requested,
+            exceedance calibration.
         max_lag : int, default=30
             Largest within-series lag displayed by the PIT ACF.
         width : int, default=1200
@@ -539,19 +654,20 @@ class ProbabilisticCalibrationPlot:
         Returns
         -------
         plotly.graph_objects.Figure
-            Three-panel figure containing the PIT histogram, PIT ACF, and
-            exceedance calibration curve.
+            Figure containing the PIT histogram, PIT ACF, and coverage
+            calibration. If ``threshold`` is supplied, a fourth panel contains
+            exceedance calibration.
 
         Raises
         ------
         ValueError
-            If ``threshold``, ``n_bins``, or ``max_lag`` is invalid.
+            If ``threshold``, ``coverages``, ``n_bins``, or ``max_lag`` is
+            invalid.
 
         Examples
         --------
         >>> diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation_df)
         >>> figure = diagnostics.summary(
-        ...     threshold=15.0,
         ...     n_bins=10,
         ...     max_lag=20,
         ... )
@@ -561,13 +677,20 @@ class ProbabilisticCalibrationPlot:
 
         histogram = self.pit_histogram(n_bins=n_bins)
         acf = self.pit_acf(max_lag=max_lag)
-        curve = self.calibration_curve(threshold=threshold, n_bins=n_bins)
+        coverage = self.coverage_calibration(coverages=coverages)
+        panels = [histogram, acf, coverage]
+        titles = ["PIT Histogram", "ACF of PIT", "Coverage Calibration"]
+        if threshold is not None:
+            panels.append(
+                self.exceedance_calibration(threshold=threshold, n_bins=n_bins)
+            )
+            titles.append("Exceedance Calibration")
         fig = make_subplots(
             rows=1,
-            cols=3,
-            subplot_titles=("PIT Histogram", "ACF of PIT", "Calibration Curve"),
+            cols=len(panels),
+            subplot_titles=titles,
         )
-        for column, source in enumerate((histogram, acf, curve), start=1):
+        for column, source in enumerate(panels, start=1):
             for trace in source.data:
                 fig.add_trace(trace, row=1, col=column)
             for shape in source.layout.shapes or ():
@@ -582,10 +705,30 @@ class ProbabilisticCalibrationPlot:
         )
         fig.update_xaxes(title_text="Lag", row=1, col=2)
         fig.update_yaxes(title_text="ACF", row=1, col=2)
-        fig.update_xaxes(title_text="Forecast probability", range=[0, 1], row=1, col=3)
-        fig.update_yaxes(
-            title_text="Observed relative frequency", range=[0, 1], row=1, col=3
+        fig.update_xaxes(
+            title_text="Nominal coverage",
+            range=[0, 1],
+            tickformat=".0%",
+            row=1,
+            col=3,
         )
+        fig.update_yaxes(
+            title_text="Empirical coverage",
+            range=[0, 1],
+            tickformat=".0%",
+            row=1,
+            col=3,
+        )
+        if threshold is not None:
+            fig.update_xaxes(
+                title_text="Forecast probability", range=[0, 1], row=1, col=4
+            )
+            fig.update_yaxes(
+                title_text="Observed relative frequency",
+                range=[0, 1],
+                row=1,
+                col=4,
+            )
         self._add_pit_summary(fig, row=1, col=1)
         fig.update_layout(width=width, height=height, title="Probabilistic Calibration")
         if fig_type is None:
