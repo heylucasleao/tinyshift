@@ -24,6 +24,13 @@ from .probabilistic import (
     TwoStageForecasterWrapper,
     WeibullFamily,
 )
+from .scoring_rules import (
+    crps_distribution,
+    crps_ensemble,
+    crps_quantile,
+    mwis,
+    ncrps,
+)
 from .stabilization import hfi, hpi, vi
 
 __all__ = [
@@ -39,11 +46,16 @@ __all__ = [
     "ProbabilisticForecasterEvaluator",
     "TwoStageForecasterWrapper",
     "WeibullFamily",
+    "crps_distribution",
+    "crps_ensemble",
+    "crps_quantile",
     "economic_loss",
     "forecast_instability",
     "fva",
     "hfi",
     "hpi",
+    "mwis",
+    "ncrps",
     "pbias",
     "rmae",
     "score",
