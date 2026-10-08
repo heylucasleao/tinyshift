@@ -20,9 +20,10 @@ diagnostics = ProbabilisticCalibrationPlot(
 
 diagnostics.pit_histogram(n_bins=10)
 diagnostics.pit_acf(max_lag=20)
+diagnostics.coverage_calibration()
 diagnostics.exceedance_calibration(threshold=15.0, n_bins=10)
 
-fig = diagnostics.summary(threshold=15.0, n_bins=10, max_lag=20)
+fig = diagnostics.summary(n_bins=10, max_lag=20)
 fig.show()
 ```
 
