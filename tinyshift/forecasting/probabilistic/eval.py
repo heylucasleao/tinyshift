@@ -4,7 +4,8 @@
 
 import numpy as np
 import pandas as pd
-from numpy.polynomial.legendre import leggauss
+
+from ..scoring_rules import crps_distribution, mwis, ncrps
 
 
 def _require_columns(
@@ -190,24 +191,6 @@ class ProbabilisticForecasterEvaluator:
     """
 
     @staticmethod
-    def mwis(
-        y_true: np.ndarray, lower: np.ndarray, upper: np.ndarray, alpha: float
-    ) -> float:
-        """Compute the mean Winkler interval score for a central interval."""
-        y_true = np.asarray(y_true, dtype=float)
-        lower = np.asarray(lower, dtype=float)
-        upper = np.asarray(upper, dtype=float)
-        valid = ~(np.isnan(y_true) | np.isnan(lower) | np.isnan(upper))
-        if not valid.any():
-            return np.nan
-
-        y_true, lower, upper = y_true[valid], lower[valid], upper[valid]
-        width = upper - lower
-        penalty_lower = (2.0 / alpha) * (lower - y_true) * (y_true < lower)
-        penalty_upper = (2.0 / alpha) * (y_true - upper) * (y_true > upper)
-        return float(np.mean(width + penalty_lower + penalty_upper))
-
-    @staticmethod
     def _align_targets(
         y_true: pd.DataFrame,
         forecast_frame: pd.DataFrame,
@@ -259,30 +242,9 @@ class ProbabilisticForecasterEvaluator:
                 float(((observed >= lower) & (observed <= upper)).mean()), 4
             ),
             "interval_width_mean": round(float(np.mean(upper - lower)), 4),
-            "mwis": round(cls.mwis(observed, lower, upper, 1.0 - coverage), 4),
+            "mwis": round(mwis(observed, lower, upper, 1.0 - coverage), 4),
             "n_obs": len(observed),
         }
-
-    @staticmethod
-    def _crps(distribution, y_true: np.ndarray) -> np.ndarray:
-        """Approximate row-wise CRPS from the predictive quantile function."""
-        nodes, weights = leggauss(100)
-        probabilities = 0.5 * (nodes + 1.0)
-        weights = 0.5 * weights
-        quantiles = np.asarray(distribution.ppf(probabilities), dtype=float)
-        expected_shape = (len(y_true), len(probabilities))
-        if quantiles.shape != expected_shape:
-            raise ValueError(
-                "The predictive distribution is not aligned with evaluation_df."
-            )
-
-        errors = y_true[:, None] - quantiles
-        quantile_loss = np.where(
-            errors >= 0.0,
-            probabilities * errors,
-            (probabilities - 1.0) * errors,
-        )
-        return 2.0 * np.sum(quantile_loss * weights, axis=1)
 
     @staticmethod
     def _numeric_target(
@@ -349,13 +311,8 @@ class ProbabilisticForecasterEvaluator:
             .reset_index()
         )
         per_series["target_std"] = per_series[id_col].map(train_scales)
-        valid_scale = np.isfinite(per_series["target_std"]) & (
-            per_series["target_std"] > 0.0
-        )
-        per_series["ncrps"] = np.where(
-            valid_scale,
-            per_series["crps"] / per_series["target_std"],
-            np.nan,
+        per_series["ncrps"] = ncrps(
+            per_series["crps"].to_numpy(), per_series["target_std"].to_numpy()
         )
         return per_series[[id_col, "crps", "target_std", "ncrps", "n_obs"]]
 
@@ -419,7 +376,7 @@ class ProbabilisticForecasterEvaluator:
         y_true = cls._numeric_target(
             evaluation_df, target_col, "evaluation_df", require_finite=True
         )
-        row_crps = cls._crps(forecast.distribution, y_true)
+        row_crps = crps_distribution(y_true, forecast.distribution)
         train_scales = cls._target_scales(train_df, target_col, id_col)
         return cls._aggregate_distribution_scores(
             evaluation_df[id_col], row_crps, train_scales, id_col

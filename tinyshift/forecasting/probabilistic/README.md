@@ -70,6 +70,12 @@ distribution_metrics = ProbabilisticForecasterEvaluator.evaluate_distribution(
 )
 ```
 
+The scoring rules `crps_distribution`, `crps_ensemble`, `crps_quantile`,
+`ncrps`, and `mwis` also live in `tinyshift.forecasting`. Their names make the
+forecast representation explicit: complete distribution, empirical samples,
+or predicted quantiles. `ProbabilisticForecasterEvaluator` uses the same rules
+while handling panel alignment and aggregation by series.
+
 Interval summaries report the number of valid target-bound triples used at
 each level. When `unique_id` is present,
 interval coverage, width, and MWIS are reported independently for every series.

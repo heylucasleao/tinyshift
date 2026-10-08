@@ -15,6 +15,10 @@ from tinyshift.forecasting import (
     ProbabilisticForecasterEvaluator,
     TwoStageForecasterWrapper,
     WeibullFamily,
+    crps_distribution,
+    crps_ensemble,
+    crps_quantile,
+    ncrps,
 )
 from tinyshift.forecasting.probabilistic.calibration import Calibration, Calibrator
 from tinyshift.forecasting.probabilistic.distribution import (
@@ -832,6 +836,50 @@ def test_tsf_evaluator_reports_crps_and_ncrps_by_series(gamma_distribution):
     assert result.loc[1, "unique_id"] == "C"
     assert np.isnan(result.loc[1, "target_std"])
     assert np.isnan(result.loc[1, "ncrps"])
+
+
+def test_public_quantile_crps_and_ncrps_scoring_rules():
+    probabilities = np.array([0.1, 0.5, 0.9])
+    y_true = np.array([2.0, 4.0])
+    quantiles = np.array([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]])
+
+    row_crps = crps_quantile(y_true, quantiles, probabilities)
+    normalized = ncrps(row_crps, scale=2.0)
+
+    assert row_crps.shape == (2,)
+    assert np.all(row_crps >= 0.0)
+    assert normalized == pytest.approx(row_crps / 2.0)
+
+
+def test_public_quantile_crps_validates_quantile_grid():
+    with pytest.raises(ValueError, match="strictly increasing"):
+        crps_quantile(
+            np.array([1.0]),
+            np.array([[1.0, 1.0]]),
+            np.array([0.9, 0.1]),
+        )
+
+
+def test_public_ensemble_crps_matches_direct_identity():
+    y_true = np.array([1.0, 3.0])
+    samples = np.array([[0.0, 1.0, 2.0], [1.0, 3.0, 5.0]])
+    expected = []
+    for observed, row in zip(y_true, samples):
+        expected.append(
+            np.mean(np.abs(row - observed))
+            - 0.5 * np.mean(np.abs(row[:, None] - row[None, :]))
+        )
+
+    assert crps_ensemble(y_true, samples) == pytest.approx(expected)
+
+
+def test_public_distribution_crps_matches_evaluator(gamma_distribution):
+    y_true = np.array([2.0, 5.0])
+
+    scores = crps_distribution(y_true, gamma_distribution)
+
+    assert scores.shape == (2,)
+    assert np.all(scores >= 0.0)
 
 
 def test_tsf_distribution_evaluator_requires_forecast_alignment(gamma_distribution):
