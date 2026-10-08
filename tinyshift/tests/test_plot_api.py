@@ -91,9 +91,7 @@ def _probabilistic_forecast(distribution):
             "lambda_t": distribution.means,
         }
     )
-    return PanelPredictiveForecast(
-        frame, distribution, "model", "unique_id", "ds"
-    )
+    return PanelPredictiveForecast(frame, distribution, "model", "unique_id", "ds")
 
 
 def test_probabilistic_calibration_continuous_plots_and_summary():
@@ -113,7 +111,14 @@ def test_probabilistic_calibration_continuous_plots_and_summary():
     assert "Std=" in histogram.layout.annotations[0].text
     assert histogram.layout.yaxis.range[1] > max(histogram.data[0].y)
     assert isinstance(diagnostics.pit_acf(max_lag=3), go.Figure)
-    assert isinstance(diagnostics.calibration_curve(threshold=5), go.Figure)
+    exceedance = diagnostics.exceedance_calibration(threshold=5)
+    assert isinstance(exceedance, go.Figure)
+    assert exceedance.data[1].error_y.array is None
+    coverage = diagnostics.coverage_curve(coverages=(0.9, 0.5, 0.8))
+    assert isinstance(coverage, go.Figure)
+    np.testing.assert_allclose(coverage.data[1].x, [0.5, 0.8, 0.9])
+    assert np.all(np.asarray(coverage.data[1].y) >= 0.0)
+    assert np.all(np.asarray(coverage.data[1].y) <= 1.0)
     summary = diagnostics.summary(threshold=5, max_lag=3)
     assert isinstance(summary, go.Figure)
     assert len(summary.data) == 4
@@ -158,3 +163,33 @@ def test_probabilistic_calibration_uses_requested_renderer(monkeypatch):
     result = diagnostics.summary(threshold=5.0, fig_type="png")
 
     assert result == (("png",), {})
+
+
+def test_probabilistic_calibration_curve_is_deprecated_alias():
+    means = np.full(20, 5.0)
+    forecast = _probabilistic_forecast(
+        GammaPredictiveDistribution(means, np.full(20, 2.0))
+    )
+    evaluation = forecast.to_frame()[["unique_id", "ds"]].assign(y=means)
+    diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation)
+
+    with pytest.deprecated_call(match="exceedance_calibration"):
+        figure = diagnostics.calibration_curve(threshold=5)
+
+    assert isinstance(figure, go.Figure)
+
+
+@pytest.mark.parametrize(
+    "coverages",
+    [(), (0.0, 0.9), (0.5, 1.0), (0.8, 0.8), (0.8, np.nan)],
+)
+def test_probabilistic_coverage_curve_rejects_invalid_coverages(coverages):
+    means = np.full(20, 5.0)
+    forecast = _probabilistic_forecast(
+        GammaPredictiveDistribution(means, np.full(20, 2.0))
+    )
+    evaluation = forecast.to_frame()[["unique_id", "ds"]].assign(y=means)
+    diagnostics = ProbabilisticCalibrationPlot(forecast, evaluation)
+
+    with pytest.raises(ValueError, match="coverages"):
+        diagnostics.coverage_curve(coverages=coverages)
