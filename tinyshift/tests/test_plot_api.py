@@ -13,7 +13,7 @@ from tinyshift.forecasting.probabilistic.distribution import (
     NegativeBinomialPredictiveDistribution,
 )
 from tinyshift.forecasting.probabilistic.forecast import PanelPredictiveForecast
-from tinyshift.plot import ProbabilisticCalibrationPlot
+from tinyshift.plot import ProbabilisticCalibrationPlot, trend_dynamics
 from tinyshift.plot.calibration import beta_confidence_analysis
 from tinyshift.plot.correlation import corr_heatmap
 from tinyshift.plot.mstl import MSTLDiagnostics
@@ -45,6 +45,63 @@ def test_plot_functions_show_when_renderer_is_provided(monkeypatch):
     result = power_curve(effect_size=0.5, fig_type="png")
 
     assert result == (("png",), {})
+
+
+def test_trend_dynamics_returns_three_diagnostic_panels():
+    steps = np.arange(31, dtype=float)
+    frame = pd.DataFrame(
+        {
+            "unique_id": "a",
+            "ds": pd.date_range("2025-01-01", periods=len(steps), freq="D"),
+            "y": 2 + 0.5 * steps + 0.1 * steps**2,
+        }
+    )
+
+    fig = trend_dynamics(
+        frame,
+        window_length=9,
+        polyorder=2,
+        time_unit="day",
+    )
+
+    assert isinstance(fig, go.Figure)
+    assert [trace.name for trace in fig.data] == [
+        "Observed",
+        "Local trend",
+        "Slope",
+        "Acceleration",
+    ]
+    np.testing.assert_allclose(fig.data[1].y, frame["y"], atol=1e-10)
+    np.testing.assert_allclose(fig.data[2].y, 0.5 + 0.2 * steps, atol=1e-10)
+    np.testing.assert_allclose(fig.data[3].y, 0.2, atol=1e-10)
+    assert fig.layout.yaxis2.title.text == "y / day"
+    assert fig.layout.yaxis3.title.text == "y / day²"
+
+
+def test_trend_dynamics_requires_series_selection_for_panel():
+    frame = pd.DataFrame(
+        {
+            "unique_id": ["a"] * 7 + ["b"] * 7,
+            "ds": list(range(7)) * 2,
+            "y": np.arange(14, dtype=float),
+        }
+    )
+
+    with pytest.raises(ValueError, match="unique_id must be provided"):
+        trend_dynamics(frame, window_length=5, polyorder=2)
+
+
+def test_trend_dynamics_rejects_irregular_time():
+    frame = pd.DataFrame(
+        {
+            "unique_id": "a",
+            "ds": [0, 1, 2, 4, 5, 6, 7],
+            "y": np.arange(7, dtype=float),
+        }
+    )
+
+    with pytest.raises(ValueError, match="regularly spaced"):
+        trend_dynamics(frame, window_length=5, polyorder=2)
 
 
 def test_mstl_class_reuses_fitted_components():

@@ -15,6 +15,7 @@ from .diagnostic import forest_plot, pami, residual_analysis, stationarity_analy
 from .mstl import MSTLDiagnostics
 from .power import power_curve, power_vs_allocation
 from .probabilistic import ProbabilisticCalibrationPlot
+from .trend import trend_dynamics
 
 __all__ = [
     "MSTLDiagnostics",
@@ -31,4 +32,5 @@ __all__ = [
     "residual_analysis",
     "score_distribution",
     "stationarity_analysis",
+    "trend_dynamics",
 ]
