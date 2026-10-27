@@ -96,6 +96,25 @@ def test_economic_loss_accepts_scalar_costs():
     assert result.loc[0, "model_b"] == pytest.approx(5.0)
 
 
+def test_economic_loss_rounds_results_to_two_decimal_places():
+    df = pd.DataFrame(
+        {
+            "unique_id": ["a", "a"],
+            "y": [10.0, 5.0],
+            "model": [8.123, 5.456],
+        }
+    )
+
+    result = economic_loss(
+        df,
+        models=["model"],
+        underage_cost=1.111,
+        overage_cost=2.222,
+    )
+
+    assert result.loc[0, "model"] == 3.10
+
+
 def test_constant_signal_has_exactly_zero_detrended_spectral_power():
     _, power, _ = _prepare_spectrum(np.ones(32), detrend="linear", method="fft")
 

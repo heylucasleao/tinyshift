@@ -607,6 +607,7 @@ def economic_loss(
     overstock = df[models].sub(df[target_col], axis=0).clip(lower=0)
     loss_per_row = (understock.mul(cu, axis=0)) + (overstock.mul(co, axis=0))
     res = loss_per_row.groupby(df[id_col], observed=True).sum().reset_index()
+    res[models] = res[models].round(2)
 
     res.insert(1, "metric", "economic_loss")
     return res
